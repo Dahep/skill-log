@@ -46,7 +46,7 @@ database.
 from std.os import getenv
 
 from skill_log.errors import EXIT_USAGE, Outcome
-from skill_log.json import json_string, json_string_array
+from skill_log.render import render_row_json
 from skill_log.store import (
     Filters,
     Invocation,
@@ -257,28 +257,11 @@ def shorten(path: String) -> String:
 def render_json(row: Invocation) -> String:
     """One row as a flat JSON object.
 
-    Every ADR-0002 column is flat, plus the marker and the problems
-    array. The key order is fixed, so a caller can read the output
-    without parsing it into a guess about order.
+    The shape is the one `add --json` writes, so a consumer that reads
+    one of them reads the other: every ADR-0002 column is flat, plus the
+    marker and the problems array, in a fixed key order.
     """
-    var out = "{\"id\":" + String(row.id)
-    out += ",\"ts\":" + json_string(row.ts)
-    out += ",\"skill\":" + json_string(row.skill)
-    out += ",\"harness\":" + json_string(row.harness)
-    out += ",\"session\":" + json_string(row.session)
-    out += ",\"parent\":" + json_string(row.parent)
-    out += ",\"model\":" + json_string(row.model)
-    out += ",\"repo\":" + json_string(row.repo)
-    out += ",\"worktree\":" + json_string(row.worktree)
-    out += ",\"project\":" + json_string(row.project)
-    out += ",\"t3_thread\":" + json_string(row.t3_thread)
-    out += ",\"machine\":" + json_string(row.machine)
-    out += ",\"fix\":" + json_string(row.fix)
-    out += ",\"resolved_at\":" + json_string(row.resolved_at)
-    out += ",\"marker\":" + json_string(row.marker())
-    out += ",\"problems\":" + json_string_array(row.problems)
-    out += "}"
-    return out
+    return render_row_json(row)
 
 
 # The table's columns, in the order they are printed. Each one is the
