@@ -33,8 +33,12 @@ record local, and close friction by naming the change that fixed it.
 - **Fix commit** — the commit that carried the report file (or last changed it
   in the scanned range). That commit is the stamp.
 - **Template** — user-owned markdown rendered by the tool: `usage-log.md`, the
-  block adopted into every skill, and `skill-friction-review.md`, the review
-  skill's body. A user copy under XDG config wins over the shipped default.
+  block adopted into every skill, and `skill-friction-review.md`, the body of
+  the `skill-friction-review` skill. A user copy under XDG config wins over the
+  shipped default. Placeholders: `<name>` (the skill's name) and `<command>`
+  (the resolved binary). The review skill's installed body is its template
+  rendered, followed by the usage-log block for `skill-friction-review`, so the
+  review logs its own runs.
 - **Fence** — the `<!-- skill-log:usage-log ... -->` delimiters around an
   adopted block. The tool owns every byte inside it and nothing outside it.
   The fence carries the template hash and the content hash, which is what makes
@@ -50,6 +54,11 @@ record local, and close friction by naming the change that fixed it.
 - Store: `${XDG_STATE_HOME:-~/.local/state}/skill-log/skills.db`.
 - Templates: `${XDG_CONFIG_HOME:-~/.config}/skill-log/templates/`.
 - Store location overrides: `--db`, then `SKILL_LOG_DB`.
+- Template resolution: `--template-dir`, then `SKILL_LOG_TEMPLATE_DIR`, then
+  the user directory, then the shipped defaults.
+- Before rendering, `audit` rejects a `usage-log.md` that lacks `<name>` or an
+  invocation of `<command> add`: a typo there would silently stop every skill
+  from logging.
 
 ## Invariants
 
@@ -71,7 +80,12 @@ record local, and close friction by naming the change that fixed it.
   is read. Neither changes the other's contract.
 - A skill's usage-log block is rendered from the user's template inside a
   fence. The tool never edits a byte outside the fence, and never overwrites a
-  hand-edited block without `--force`.
+  hand-edited block or converts an unfenced one without `--force`.
+- A moved default template is reported, never applied. The state directory
+  records the hash of the default each user copy was seeded from; `audit` and
+  `setup --check` name it and print the two commands that adopt it. Every
+  release that changes the default carries the previous one in the binary's
+  known-templates list.
 - One CLI, one store, no daemon, and no network beyond SSH sync.
 
 ## Boundaries
@@ -79,4 +93,8 @@ record local, and close friction by naming the change that fixed it.
 Out of scope: a UI or hosted service, multi-user stores, Windows,
 non-POSIX shells, automatic selection of which rows a change fixes, encrypting
 problem text, pruning reports, a rebase hook, a peers/config file, forge APIs,
-and — for 1.0 — macOS, aarch64 and musl builds.
+and — for 1.0 — macOS, aarch64, and musl or static builds.
+
+Two #1 boundaries are amended, not dropped: editing other skills' files is now
+in scope through `skills adopt` (still printing the snippet for skills outside
+the swept directory), and the compiled rewrite it excluded is ADR-0001.

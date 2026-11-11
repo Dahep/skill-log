@@ -28,10 +28,9 @@ that cannot carry one, a marker trailer) naming `machine#id` markers. A
 post-merge hook stamps the resolved rows, so the log records when and where
 the friction closed.
 
-Reading is a skill, and so is the review: a bundled `skill-friction-review`
-skill clusters the logged problems into themes and decides what to fix. It
-never marks a row resolved — only the merge hook does that, when the change
-lands.
+A bundled `skill-friction-review` skill reads the log and decides what to fix;
+CONTEXT.md defines that session and the rule that only the merge hook closes a
+row.
 
 ## Install (planned)
 
@@ -56,8 +55,8 @@ and both bundled skills. `setup --check` verifies the result without writing.
 | `sync` | Pull another machine's store over SSH and merge it. |
 | `setup` | Provision or verify the store, hook, report directory, and skills. |
 | `skills audit` | Report each skill's usage-log state (`ok`, `missing`, `stale`, `edited`, `legacy`, `unowned`, `vendored`). |
-| `skills adopt` | Append missing blocks and re-render stale ones; never touch edited ones without `--force`. |
-| `skills template` | Show, seed, reset, or override the user-owned templates. |
+| `skills adopt` | Append missing blocks and re-render stale ones; leave `edited`, `legacy` and `unowned` untouched unless `--force`. |
+| `skills template` | Show, seed, reset, or override the user-owned templates; reports when the shipped default moved. |
 | `--version` | Print the release version. |
 
 Exit codes: `0` success or nothing to do, `1` operational failure, `2` usage.
@@ -73,9 +72,6 @@ JSON goes to stdout; one-line diagnostics go to stderr; no tracebacks.
 - Per-machine resolution is the core invariant: the owner's store is the only
   writer of its rows, and an aggregate never claims a resolution its owner
   would overwrite.
-- Skills carry the reporting instruction as a fenced block rendered from a
-  user-owned template. The tool owns the bytes inside the fence and nothing
-  outside it.
 
 ## Documentation
 

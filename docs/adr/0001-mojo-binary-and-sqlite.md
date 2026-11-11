@@ -1,9 +1,11 @@
 # ADR-0001: a Mojo binary with a vendored SQLite binding
 
 **Status:** accepted, 2026-11-11.
-**Amends:** the implementation clauses of [issue #1](../../../issues/1) (language,
-distribution, test suite). The behavior contract there is unchanged.
-**Spec:** [issue #3](../../../issues/3).
+**Amends:** the implementation clauses of
+[issue #1](https://github.com/Dahep/skill-log/issues/1) — language,
+distribution, test suite, `--version` semantics, and consumer integration.
+The behavior contract there is unchanged.
+**Spec:** [issue #3](https://github.com/Dahep/skill-log/issues/3).
 
 ## Context
 
@@ -51,8 +53,8 @@ command.
   Copying them into `lib/` and repointing the rpath was verified by renaming
   the entire toolchain away and running the binary successfully.
 - **`ubi:` is deprecated** (mise 2026.4, removed 2027.1). The `github:` backend
-  replaces it and verifies release digests, which is a better guarantee than
-  the local checksum ubi recorded.
+  replaces it and verifies the release's digest, a stronger guarantee than the
+  local checksum ubi recorded.
 - **Keeping SQLite keeps the tested contract.** The schema, the origin-id
   merge rule, transactions and the WAL/busy behaviour are already implemented
   and covered; a custom store would have re-derived all of it.
@@ -66,7 +68,8 @@ command.
 - No store migration: the existing database file is the same schema.
 - `add` stays transactional; the vendored binding gives prepared statements
   and automatic rollback.
-- Release archives are attestation-verifiable by mise.
+- The `github:` backend verifies the release digest at install time; the
+  release workflow separately attaches a provenance attestation.
 
 **Negative**
 
@@ -85,11 +88,12 @@ command.
 
 ## Enforced by
 
-- Packaging spike ([#4](../../../issues/4)): a bundled `libsqlite3.so.0` must
-  resolve through the rpath with no toolchain, no conda prefix and no system
-  SQLite present.
-- Packaging test in CI: install the release archive into a clean container and
-  run `--version` and `setup --dry-run`.
+- Packaging spike ([#4](https://github.com/Dahep/skill-log/issues/4)) answers
+  whether a bundled `libsqlite3.so.0` resolves through the rpath with no
+  toolchain, no conda prefix and no system SQLite. If it does not, the vendored
+  binding carries an `$ORIGIN`-relative probe and this record is amended.
+- Packaging test in CI, as specified in
+  [#3](https://github.com/Dahep/skill-log/issues/3).
 
 ## Alternatives rejected
 
