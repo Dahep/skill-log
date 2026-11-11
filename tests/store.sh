@@ -143,8 +143,8 @@ check "json exits 0" "$STATUS" "0"
 check "json is one flat object" \
     "$(printf '%s' "$OUT" | grep -c '^{.*}$')" "1"
 check "json carries every column" \
-    "$(printf '%s' "$OUT" | grep -o '"\(id\|ts\|skill\|parent\|model\|project\|t3_thread\|opencode_thread\|worktree\|machine\|fix\|resolved_at\|marker\|problems\)":' | wc -l)" \
-    "14"
+    "$(printf '%s' "$OUT" | grep -o '"\(id\|ts\|skill\|harness\|session\|parent\|model\|repo\|worktree\|project\|t3_thread\|machine\|fix\|resolved_at\|marker\|problems\)":' | wc -l)" \
+    "16"
 check "json carries the problems array" \
     "$(printf '%s' "$OUT" | grep -c '"problems":\["one"\]')" "1"
 
@@ -175,6 +175,46 @@ check "a newer store exits 1" "$STATUS" "1"
 check "a newer store is named with both versions" \
     "$(printf '%s' "$ERR" | grep -c 'has schema version 99.*understands 1')" "1"
 check "a newer store is one line" "$(err_lines)" "1"
+
+# The Python-era store: the two tables exist, the columns are the old ones.
+# It is a skill-log store and it is not this schema, so it is named as
+# older and left exactly as found (ADR-0002).
+sqlite3 "$SCRATCH/older.db" <<'SQL'
+CREATE TABLE invocations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts TEXT NOT NULL,
+    skill TEXT NOT NULL,
+    parent TEXT NOT NULL DEFAULT '',
+    model TEXT NOT NULL DEFAULT '',
+    project TEXT NOT NULL DEFAULT '',
+    t3_thread TEXT NOT NULL DEFAULT '',
+    opencode_thread TEXT NOT NULL DEFAULT '',
+    worktree TEXT NOT NULL DEFAULT '',
+    machine TEXT NOT NULL DEFAULT '',
+    fix TEXT NOT NULL DEFAULT '',
+    resolved_at TEXT NOT NULL DEFAULT '',
+    origin_id INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE problems (
+    invocation_id INTEGER NOT NULL,
+    ordinal INTEGER NOT NULL,
+    problem TEXT NOT NULL,
+    PRIMARY KEY (invocation_id, ordinal)
+);
+INSERT INTO invocations (ts, skill, machine)
+    VALUES ('2026-01-01T00:00:00+00:00', 'old', 'other');
+SQL
+BEFORE_SUM="$(md5sum <"$SCRATCH/older.db")"
+run add --skill x --db "$SCRATCH/older.db"
+check "an older store exits 1" "$STATUS" "1"
+check "an older store is named as older" \
+    "$(printf '%s' "$ERR" | grep -c 'older store')" "1"
+check "an older store says it is not converted" \
+    "$(printf '%s' "$ERR" | grep -c 'does not convert it')" "1"
+check "an older store is one line" "$(err_lines)" "1"
+check "an older store is not converted" "$(md5sum <"$SCRATCH/older.db")" "$BEFORE_SUM"
+check "the older row is still there untouched" \
+    "$(sqlite3 "$SCRATCH/older.db" 'select count(*) from invocations')" "1"
 
 # ----------------------------------------------------------- atomic write
 
