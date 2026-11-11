@@ -10,18 +10,20 @@ record local, and close friction by naming the change that fixed it.
 
 ## Glossary
 
-- **Invocation row** — one skill run: when, which skill, model, project,
-  threads, worktree, machine.
-- **Problem row** — one piece of friction attached to an invocation. Problems
-  are separate rows, so invocation count stays the denominator of the
-  problems-per-invocation rate.
+- **Invocation row** — one skill run: when, which skill, harness, session,
+  parent, model, repo, worktree, machine.
+- **Problem row** — one piece of friction attached to an invocation, carrying
+  the agent's own sentence about what went wrong. Problems are separate rows,
+  so invocation count stays the denominator of the problems-per-invocation
+  rate.
+- **Harness** — the agent product that ran the skill (`opencode` today, later
+  others). Its session id is recorded verbatim and is opaque to the tool.
+- **Adapter** — opt-in code that fills context fields from a known harness's
+  local state (`opencode` fills the session and model, `t3` fills the project).
+  It never overrides an explicit flag, never runs by default, and fails to a
+  blank field rather than an error.
 - **Marker** — `machine#id`. The only way a row is named from outside the
   store. The machine is required because ids are per store.
-- **Owner** — the machine whose store wrote a row. Copies keep the owner's
-  machine and id.
-- **Aggregate** — a store that has merged other machines' rows.
-- **Sync** — merging another machine's store into this one over SSH. One-way:
-  the aggregate pulls, never pushes.
 - **Report** — the committed file listing the rows a change resolves. In a
   repo without a report directory, the commit-body trailer is the report.
 - **Resolution** — stamping a row with the commit that carries its fix.
@@ -62,8 +64,11 @@ record local, and close friction by naming the change that fixed it.
 
 ## Invariants
 
-- The owner is authoritative. A mirrored copy is never resolved in place, and
-  sync always takes the owner's fix and resolved-at values forward.
+- One store per machine: 1.0 has no sync, no aggregate and no merged copies.
+  Rows still carry `machine`, which the marker grammar and any external
+  consolidator need.
+- An adapter's value never beats an explicit flag or `SKILL_LOG_*` variable;
+  an adapter failure is a blank field, not an error.
 - The report never carries problem text or project details — only machine
   names and local ids.
 - Newest marker wins; scanning newest commit first makes an amended fix
@@ -73,7 +78,8 @@ record local, and close friction by naming the change that fixed it.
 - Resolution is idempotent. A second scan stamps nothing and changes nothing.
 - Reads never create the state directory, an empty database, or a missing
   store. Inspecting a machine does not change it.
-- A damaged store is named as damaged; a foreign SQLite file is refused.
+- A damaged store is named as damaged; a foreign or older store is refused by
+  name. The store is created, never inherited or converted.
 - The post-merge hook never changes a pull's exit status, and resolves the CLI
   at run time (it cannot assume a mise shim is on `PATH`).
 - The template decides what gets logged; the review session decides how the log
@@ -86,14 +92,16 @@ record local, and close friction by naming the change that fixed it.
   `setup --check` name it and print the two commands that adopt it. Every
   release that changes the default carries the previous one in the binary's
   known-templates list.
-- One CLI, one store, no daemon, and no network beyond SSH sync.
+- One CLI, one store, no daemon, and no network.
 
 ## Boundaries
 
 Out of scope: a UI or hosted service, multi-user stores, Windows,
 non-POSIX shells, automatic selection of which rows a change fixes, encrypting
 problem text, pruning reports, a rebase hook, a peers/config file, forge APIs,
-and — for 1.0 — macOS, aarch64, and musl or static builds.
+multi-machine consolidation (`sync`, an aggregate store, merged copies — the
+user's own setup handles it), and — for 1.0 — macOS, aarch64, and musl or
+static builds.
 
 Two #1 boundaries are amended, not dropped: editing other skills' files is now
 in scope through `skills adopt` (still printing the snippet for skills outside
