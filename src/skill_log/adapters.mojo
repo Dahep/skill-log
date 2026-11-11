@@ -103,15 +103,17 @@ def env_adapters() -> List[String]:
 def enabled_adapters(flags: List[String]) -> List[String]:
     """The adapters to run: the flag's names plus the variable's.
 
-    An adapter named by either is enabled. Duplicates are harmless —
-    an adapter that fills the same field twice fills it the same way
-    twice — so the list is not deduplicated here.
+    Both sources take a comma-separated list, so `--adapter opencode,t3`
+    and `--adapter opencode --adapter t3` name the same two adapters.
+    An adapter named by either is enabled. Duplicates are harmless — an
+    adapter that fills the same field twice fills it the same way twice
+    — so the list is not deduplicated here.
     """
     var names = List[String]()
     for i in range(len(flags)):
-        var name = String(flags[i].strip())
-        if name != "":
-            names.append(name)
+        var parts = split_commas(flags[i])
+        for j in range(len(parts)):
+            names.append(parts[j])
     var from_env = env_adapters()
     for i in range(len(from_env)):
         names.append(from_env[i])

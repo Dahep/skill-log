@@ -175,7 +175,7 @@ check "the flag wins over the variable" "$(field "$OUT" repo)" "flagged"
 OUT="$(SKILL_LOG_HARNESS=env-harness SKILL_LOG_SESSION=env-session \
     SKILL_LOG_PARENT=env-parent SKILL_LOG_MODEL=env/model \
     SKILL_LOG_WORKTREE=/env/worktree SKILL_LOG_PROJECT=env-project \
-    SKILL_LOG_T3_THREAD=env-thread SKILL_LOG_MACHINE=env-machine \
+    SKILL_LOG_T3_THREAD=env-thread \
     "$BIN" add --skill precedence --dry-run --json)"
 check "SKILL_LOG_HARNESS fills the harness" "$(field "$OUT" harness)" "env-harness"
 check "SKILL_LOG_SESSION fills the session" "$(field "$OUT" session)" "env-session"
@@ -184,13 +184,12 @@ check "SKILL_LOG_MODEL fills the model" "$(field "$OUT" model)" "env/model"
 check "SKILL_LOG_WORKTREE fills the worktree" "$(field "$OUT" worktree)" "/env/worktree"
 check "SKILL_LOG_PROJECT fills the project" "$(field "$OUT" project)" "env-project"
 check "SKILL_LOG_T3_THREAD fills the t3 thread" "$(field "$OUT" t3_thread)" "env-thread"
-check "SKILL_LOG_MACHINE fills the machine" "$(field "$OUT" machine)" "env-machine"
+check "the machine is the hostname" "$(field "$OUT" machine)" "$(hostname)"
 
 # The flag beats the variable, per field.
 OUT="$(SKILL_LOG_HARNESS=env-harness SKILL_LOG_MODEL=env/model \
     SKILL_LOG_PROJECT=env-project SKILL_LOG_T3_THREAD=env-thread \
-    SKILL_LOG_MACHINE=env-machine SKILL_LOG_SESSION=env-session \
-    SKILL_LOG_PARENT=env-parent \
+    SKILL_LOG_SESSION=env-session SKILL_LOG_PARENT=env-parent \
     "$BIN" add --skill precedence --dry-run --json \
     --harness flag-harness --model flag/model --project flag-project \
     --t3-thread flag-thread --machine flag-machine --session flag-session \
@@ -201,7 +200,7 @@ check "the flag beats SKILL_LOG_PARENT" "$(field "$OUT" parent)" "flag-parent"
 check "the flag beats SKILL_LOG_MODEL" "$(field "$OUT" model)" "flag/model"
 check "the flag beats SKILL_LOG_PROJECT" "$(field "$OUT" project)" "flag-project"
 check "the flag beats SKILL_LOG_T3_THREAD" "$(field "$OUT" t3_thread)" "flag-thread"
-check "the flag beats SKILL_LOG_MACHINE" "$(field "$OUT" machine)" "flag-machine"
+check "the flag beats the detected machine" "$(field "$OUT" machine)" "flag-machine"
 
 # ------------------------------------------------------------- adapters
 
@@ -234,6 +233,22 @@ check "the opencode adapter renders the model as provider/id" \
 OUT="$(HOME="$OC_HOME" OPENCODE_SESSION_ID=ses_test \
     "$BIN" add --skill adapters --dry-run --json --adapter opencode)"
 check "--adapter opencode enables the adapter" "$(field "$OUT" harness)" "opencode"
+
+# The flag takes a comma-separated list, and may be repeated.
+OUT="$(HOME="$OC_HOME" OPENCODE_SESSION_ID=ses_test \
+    "$BIN" add --skill adapters --dry-run --json --adapter opencode,t3)"
+check "--adapter takes a comma-separated list" "$(field "$OUT" harness)" "opencode"
+OUT="$(HOME="$OC_HOME" OPENCODE_SESSION_ID=ses_test \
+    "$BIN" add --skill adapters --dry-run --json --adapter opencode --adapter t3)"
+check "--adapter may be repeated" "$(field "$OUT" harness)" "opencode"
+
+# The machine is always detected: there is no SKILL_LOG_MACHINE.
+OUT="$(SKILL_LOG_MACHINE=not-the-machine \
+    "$BIN" add --skill adapters --dry-run --json)"
+check "SKILL_LOG_MACHINE does not fill the machine" "$(field "$OUT" machine)" \
+    "$(hostname)"
+OUT="$("$BIN" add --skill adapters --dry-run --json --machine named)"
+check "--machine names the machine" "$(field "$OUT" machine)" "named"
 
 # The flag beats the adapter's value.
 OUT="$(HOME="$OC_HOME" OPENCODE_SESSION_ID=ses_test \

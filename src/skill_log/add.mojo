@@ -306,9 +306,10 @@ def handle_add(args: List[String]) raises -> Outcome:
     row.t3_thread = resolve_field(
         options.t3_thread, env_or_empty("SKILL_LOG_T3_THREAD"), "", ""
     )
-    row.machine = resolve_field(
-        options.machine, env_or_empty("SKILL_LOG_MACHINE"), "", hostname()
-    )
+    # The machine is always detected: ADR-0002's environment list has
+    # no `SKILL_LOG_MACHINE`, so the flag and the hostname are the only
+    # two sources.
+    row.machine = resolve_field(options.machine, "", "", hostname())
 
     # The problems are sanitized on the way in as well as on the way
     # out: a control character in a problem must never reach the store
