@@ -1,9 +1,9 @@
 """The store: where it lives, what it holds, and when it is refused.
 
-The store is a SQLite file with one schema, and the schema is a contract
-with the tool's own history: the same file the Python-era implementation
-wrote, plus a `PRAGMA user_version` stamp. 1.0 has no sync, so `origin_id`
-stays in the schema for compatibility but the sync index is optional.
+The store is a SQLite file with one schema — the one ADR-0002 defines, with
+explicit harness context in typed columns — stamped with a `PRAGMA
+user_version`. 1.0 has no sync: one store per machine, no origin ids, no
+merged copies.
 
 Three things are decided here, once, so no command has to decide them
 again:
@@ -11,19 +11,21 @@ again:
 1. **Where the store is.** `--db` first, then `SKILL_LOG_DB`, then
    `${XDG_STATE_HOME:-$HOME/.local/state}/skill-log/skills.db`.
 2. **What a store may look like.** The schema below, exactly. A file that
-   is not this schema is refused by name; it is never converted.
+   is not this schema is refused by name; it is never converted and never
+   half-migrated.
 3. **What a store may be asked to do.** A read never creates the state
    directory, the file, or an empty database. Only a write creates.
 
-The refusal vocabulary is the one issue #1 fixes: a damaged file is
-*damaged*, a SQLite file that is not a skill-log store is *foreign*, and a
-store stamped newer than this binary is *newer*. An older store converges
-additively: one `ALTER` per missing column, never a half-migration.
+The refusal vocabulary is ADR-0002's: a damaged file is *damaged*, a
+SQLite file that is not a skill-log store is *foreign*, a store written by
+the pre-ADR-0002 schema (the Python era) is *older*, and a store stamped
+newer than this binary is *newer*. Every one of them is one named line,
+and none of them is written to.
 
-The write path is ported from the Python reference: one transaction covers
-the invocation row and every problem row, and a BUSY/LOCKED failure is
-retried as a whole attempt inside a small wall-clock budget, because the
-store is written by concurrent skill runs.
+The write path follows the reference: one transaction covers the
+invocation row and every problem row, and a BUSY/LOCKED failure is retried
+as a whole attempt inside a small wall-clock budget, because the store is
+written by concurrent skill runs.
 """
 
 from std.os import getenv, makedirs
@@ -36,33 +38,28 @@ from skill_log.errors import Failure, operational_failure
 
 # The schema version this binary writes and understands. A store stamped
 # higher is refused: an older CLI must not touch a newer store.
-#
-# Version 1 is the schema below. It is additive: a later release adds
-# columns and raises the number; migrations converge an older file
-# forward, never a newer one backward.
 comptime SCHEMA_VERSION = 1
 
-# The invocation table. Column names, types and defaults are the
-# reference's, byte for byte, so a store written by either implementation
-# is readable by the other.
-#
-# `origin_id` stays for compatibility with the sync-era store even though
-# 1.0 has no sync: a local row has origin id 0.
+# The invocation table, exactly as ADR-0002 defines it: one row, explicit
+# harness context. Every text column is `NOT NULL DEFAULT ''`, so empty
+# means "unknown or not applicable" and the SQL layer stays free of NULL
+# semantics.
 comptime INVOCATION_DDL = """\
 CREATE TABLE IF NOT EXISTS invocations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts TEXT NOT NULL,
     skill TEXT NOT NULL,
+    harness TEXT NOT NULL DEFAULT '',
+    session TEXT NOT NULL DEFAULT '',
     parent TEXT NOT NULL DEFAULT '',
     model TEXT NOT NULL DEFAULT '',
+    repo TEXT NOT NULL DEFAULT '',
+    worktree TEXT NOT NULL DEFAULT '',
     project TEXT NOT NULL DEFAULT '',
     t3_thread TEXT NOT NULL DEFAULT '',
-    opencode_thread TEXT NOT NULL DEFAULT '',
-    worktree TEXT NOT NULL DEFAULT '',
     machine TEXT NOT NULL DEFAULT '',
     fix TEXT NOT NULL DEFAULT '',
-    resolved_at TEXT NOT NULL DEFAULT '',
-    origin_id INTEGER NOT NULL DEFAULT 0
+    resolved_at TEXT NOT NULL DEFAULT ''
 )"""
 
 # One problem per finding, keyed by (invocation, ordinal), cascading with
@@ -75,51 +72,26 @@ CREATE TABLE IF NOT EXISTS problems (
     PRIMARY KEY (invocation_id, ordinal)
 )"""
 
-# The dedupe key for rows a sync merged in. 1.0 has no sync, so the index
-# is optional: it is created when it can be, and its absence never blocks
-# a write.
-comptime ORIGIN_INDEX_DDL = """\
-CREATE UNIQUE INDEX IF NOT EXISTS invocations_origin
-    ON invocations(machine, origin_id) WHERE origin_id > 0"""
-
-# The columns that arrived after the first schema. A store older than one
-# of them gets one `ALTER` per column it lacks, not an error.
-#
-# Two parallel lists rather than pairs: Mojo 1.2 cannot index a tuple
-# with a runtime index, and the convergence loop needs one. They are
-# built per call rather than kept in a global, because Mojo has no
-# globals and a `comptime` list of strings cannot be materialised at
-# runtime.
-def known_column_names() -> List[String]:
-    """The columns a store may predate, in convergence order."""
-    var names = List[String]()
-    names.append("model")
-    names.append("parent")
-    names.append("fix")
-    names.append("resolved_at")
-    names.append("origin_id")
-    return names^
-
-
-def known_column_decls() -> List[String]:
-    """The declaration each converge column is added with."""
-    var decls = List[String]()
-    decls.append("TEXT NOT NULL DEFAULT ''")
-    decls.append("TEXT NOT NULL DEFAULT ''")
-    decls.append("TEXT NOT NULL DEFAULT ''")
-    decls.append("TEXT NOT NULL DEFAULT ''")
-    decls.append("INTEGER NOT NULL DEFAULT 0")
-    return decls^
-
-
-# The columns a store must carry to be a skill-log store at all. A SQLite
-# file without them is foreign and is refused, never adopted.
-def required_column_names() -> List[String]:
-    """The columns without which a file is not a skill-log store."""
+# The columns a store must carry to be a 1.0 skill-log store. A file that
+# carries the two tables but lacks one of these is the pre-ADR-0002 store:
+# it is an *older* store, named and refused, never converted.
+def store_column_names() -> List[String]:
+    """Every invocations column the 1.0 schema has."""
     var names = List[String]()
     names.append("id")
     names.append("ts")
     names.append("skill")
+    names.append("harness")
+    names.append("session")
+    names.append("parent")
+    names.append("model")
+    names.append("repo")
+    names.append("worktree")
+    names.append("project")
+    names.append("t3_thread")
+    names.append("machine")
+    names.append("fix")
+    names.append("resolved_at")
     return names^
 
 # The write budget, ported from the reference. Concurrent skill runs log
@@ -235,6 +207,19 @@ def foreign_failure(path: String) -> Failure:
     )
 
 
+def older_failure(path: String) -> Failure:
+    """The named failure for a store written by the pre-ADR-0002 schema.
+
+    The Python-era file carries the old columns and says nothing about
+    harness, session or repo. It is a skill-log store, but not this one:
+    it is named as older and left exactly as found.
+    """
+    return operational_failure(
+        "older store: " + path + " was written by an older skill-log schema"
+        + "; 1.0 does not convert it"
+    )
+
+
 def version_failure(path: String, found: Int) -> Failure:
     """The named failure for a store this binary is too old for."""
     return operational_failure(
@@ -279,39 +264,6 @@ def columns_of(db: Database, table: String) raises -> List[String]:
     return names^
 
 
-def has_column(db: Database, name: String) raises -> Bool:
-    """True when the invocations table carries a column called `name`."""
-    var names = columns_of(db, "invocations")
-    for i in range(len(names)):
-        if names[i] == name:
-            return True
-    return False
-
-
-def ensure_columns(db: Database) raises:
-    """Converge an older store forward: one `ALTER` per missing column.
-
-    A column that is already there is a no-op. A losing `ALTER` against a
-    parallel writer that won the race means the column exists, which is
-    all this check owns, so that case is swallowed; every other failure
-    is the caller's to report.
-    """
-    var names = known_column_names()
-    var decls = known_column_decls()
-    for i in range(len(names)):
-        var name = names[i]
-        var decl = decls[i]
-        if has_column(db, name):
-            continue
-        try:
-            db.execute("ALTER TABLE invocations ADD COLUMN " + name + " " + decl)
-        except e:
-            if not has_column(db, name):
-                raise Error(
-                    "cannot converge the store's schema: " + String(e)
-                )
-
-
 def user_version(db: Database) raises -> Int:
     """The store's schema version stamp. Zero when the file carries none."""
     var stmt = db.prepare("PRAGMA user_version")
@@ -321,27 +273,49 @@ def user_version(db: Database) raises -> Int:
     return row.value().int_val(0)
 
 
-def is_skill_log_store(db: Database) raises -> Bool:
-    """True when the database carries the skill-log schema.
+def missing_store_columns(db: Database) raises -> List[String]:
+    """The 1.0 columns the invocations table lacks.
 
-    The invocations table must exist with the columns every store has,
-    and the problems table must exist beside it.
+    Empty means the table carries the current schema. A table that
+    carries the two store tables but misses one of these is the
+    pre-ADR-0002 store, which is refused rather than converted.
     """
-    if not table_exists(db, "invocations"):
-        return False
-    if not table_exists(db, "problems"):
-        return False
-    var names = columns_of(db, "invocations")
-    var required = required_column_names()
+    var missing = List[String]()
+    var have = columns_of(db, "invocations")
+    var required = store_column_names()
     for i in range(len(required)):
         var found = False
-        for j in range(len(names)):
-            if names[j] == required[i]:
+        for j in range(len(have)):
+            if have[j] == required[i]:
                 found = True
                 break
         if not found:
-            return False
-    return True
+            missing.append(required[i])
+    return missing^
+
+
+def has_store_tables(db: Database) raises -> Bool:
+    """True when both tables of a skill-log store are present."""
+    return table_exists(db, "invocations") and table_exists(db, "problems")
+
+
+def is_skill_log_store(db: Database) raises -> Bool:
+    """True when the database carries the 1.0 skill-log schema."""
+    if not has_store_tables(db):
+        return False
+    return len(missing_store_columns(db)) == 0
+
+
+def is_older_store(db: Database) raises -> Bool:
+    """True when this is a skill-log store written before ADR-0002.
+
+    It carries both tables, so it is ours, but it lacks a column the 1.0
+    schema has. The file is named as older and never migrated: moving that
+    data belongs to switching a machine's setup, not to the binary.
+    """
+    if not has_store_tables(db):
+        return False
+    return len(missing_store_columns(db)) > 0
 
 
 def stamp_version(db: Database) raises:
@@ -406,8 +380,9 @@ def open_read(path: String) raises -> Optional[Database]:
     # not a skill-log store is foreign whatever its stamp says. It comes
     # before the pragmas too, so a refused file is not even touched.
     try:
-        var store = is_skill_log_store(db)
-        if not store:
+        if is_older_store(db):
+            raise Error("older")
+        if not is_skill_log_store(db):
             raise Error("foreign")
         var found = user_version(db)
         if found > SCHEMA_VERSION:
@@ -418,15 +393,6 @@ def open_read(path: String) raises -> Optional[Database]:
         raise
 
     apply_read_pragmas(db, READ_BUSY_TIMEOUT)
-
-    # An older store converges additively on first touch, so a command
-    # that reads a column it needs finds it.
-    try:
-        ensure_columns(db)
-    except e:
-        if is_corruption(String(e)):
-            raise Error("damaged")
-        raise
 
     return db^
 
@@ -451,8 +417,9 @@ def open_write(path: String) raises -> Database:
     # Decide what this file is before touching it. A refused store is not
     # even switched to WAL: "nothing written" includes its header.
     try:
-        var store = is_skill_log_store(db)
-        if not store:
+        if is_older_store(db):
+            raise Error("older")
+        if not is_skill_log_store(db):
             # A file that already holds something else is never converted.
             # An empty SQLite file (or one we just created) has no tables,
             # and neither has a stamp, so it is ours to initialise.
@@ -470,15 +437,6 @@ def open_write(path: String) raises -> Database:
 
     apply_write_pragmas(db, WRITE_BUSY_TIMEOUT)
 
-    ensure_columns(db)
-
-    # The sync index is optional in 1.0: a store whose merged copies
-    # collide cannot have it, and that must not block a local write.
-    try:
-        db.execute(ORIGIN_INDEX_DDL)
-    except:
-        pass
-
     stamp_version(db)
     return db^
 
@@ -486,13 +444,16 @@ def open_write(path: String) raises -> Database:
 def classify(path: String, message: String) -> Failure:
     """The named failure for a refused store.
 
-    The store module raises `damaged`, `foreign` and `newer <version>` as
-    markers; this turns one into the line the user sees.
+    The store module raises `damaged`, `foreign`, `older` and
+    `newer <version>` as markers; this turns one into the line the user
+    sees.
     """
     if message.find("damaged") != -1:
         return damaged_failure(path)
     if message.find("foreign") != -1:
         return foreign_failure(path)
+    if message.find("older") != -1:
+        return older_failure(path)
     if message.find("newer") != -1:
         return version_failure(path, trailing_number(message))
     return operational_failure("cannot use the store: " + message)
@@ -519,37 +480,43 @@ def trailing_number(message: String) -> Int:
 
 
 struct Invocation(Movable):
-    """One invocation row, as the store holds it."""
+    """One invocation row, as the store holds it.
+
+    The column order is ADR-0002's, and it is also the order JSON exposes:
+    one flat object whose fields a reader can take without a guess.
+    """
 
     var id: Int
     var ts: String
     var skill: String
+    var harness: String
+    var session: String
     var parent: String
     var model: String
+    var repo: String
+    var worktree: String
     var project: String
     var t3_thread: String
-    var opencode_thread: String
-    var worktree: String
     var machine: String
     var fix: String
     var resolved_at: String
-    var origin_id: Int
     var problems: List[String]
 
     def __init__(out self):
         self.id = 0
         self.ts = ""
         self.skill = ""
+        self.harness = ""
+        self.session = ""
         self.parent = ""
         self.model = ""
+        self.repo = ""
+        self.worktree = ""
         self.project = ""
         self.t3_thread = ""
-        self.opencode_thread = ""
-        self.worktree = ""
         self.machine = ""
         self.fix = ""
         self.resolved_at = ""
-        self.origin_id = 0
         self.problems = List[String]()
 
     def marker(self) -> String:
@@ -601,8 +568,8 @@ def read_invocation(db: Database, id: Int) raises -> Optional[Invocation]:
     so one problem is one line whatever the writer stored.
     """
     var stmt = db.prepare(
-        "SELECT id, ts, skill, parent, model, project, t3_thread,"
-        " opencode_thread, worktree, machine, fix, resolved_at, origin_id"
+        "SELECT id, ts, skill, harness, session, parent, model, repo,"
+        " worktree, project, t3_thread, machine, fix, resolved_at"
         " FROM invocations WHERE id = ?"
     )
     stmt.bind_int(1, id)
@@ -614,16 +581,17 @@ def read_invocation(db: Database, id: Int) raises -> Optional[Invocation]:
     invocation.id = row.value().int_val(0)
     invocation.ts = row.value().text_val(1)
     invocation.skill = row.value().text_val(2)
-    invocation.parent = row.value().text_val(3)
-    invocation.model = row.value().text_val(4)
-    invocation.project = row.value().text_val(5)
-    invocation.t3_thread = row.value().text_val(6)
-    invocation.opencode_thread = row.value().text_val(7)
+    invocation.harness = row.value().text_val(3)
+    invocation.session = row.value().text_val(4)
+    invocation.parent = row.value().text_val(5)
+    invocation.model = row.value().text_val(6)
+    invocation.repo = row.value().text_val(7)
     invocation.worktree = row.value().text_val(8)
-    invocation.machine = row.value().text_val(9)
-    invocation.fix = row.value().text_val(10)
-    invocation.resolved_at = row.value().text_val(11)
-    invocation.origin_id = row.value().int_val(12)
+    invocation.project = row.value().text_val(9)
+    invocation.t3_thread = row.value().text_val(10)
+    invocation.machine = row.value().text_val(11)
+    invocation.fix = row.value().text_val(12)
+    invocation.resolved_at = row.value().text_val(13)
 
     var problems = db.prepare(
         "SELECT problem FROM problems WHERE invocation_id = ? ORDER BY ordinal"
@@ -702,22 +670,23 @@ def write_attempt(
 
     var stmt = db.prepare(
         "INSERT INTO invocations"
-        " (ts, skill, parent, model, project, t3_thread,"
-        " opencode_thread, worktree, machine, fix, resolved_at, origin_id)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        " (ts, skill, harness, session, parent, model, repo, worktree,"
+        " project, t3_thread, machine, fix, resolved_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     )
     stmt.bind_text(1, row.ts)
     stmt.bind_text(2, row.skill)
-    stmt.bind_text(3, row.parent)
-    stmt.bind_text(4, row.model)
-    stmt.bind_text(5, row.project)
-    stmt.bind_text(6, row.t3_thread)
-    stmt.bind_text(7, row.opencode_thread)
+    stmt.bind_text(3, row.harness)
+    stmt.bind_text(4, row.session)
+    stmt.bind_text(5, row.parent)
+    stmt.bind_text(6, row.model)
+    stmt.bind_text(7, row.repo)
     stmt.bind_text(8, row.worktree)
-    stmt.bind_text(9, row.machine)
-    stmt.bind_text(10, row.fix)
-    stmt.bind_text(11, row.resolved_at)
-    stmt.bind_int(12, row.origin_id)
+    stmt.bind_text(9, row.project)
+    stmt.bind_text(10, row.t3_thread)
+    stmt.bind_text(11, row.machine)
+    stmt.bind_text(12, row.fix)
+    stmt.bind_text(13, row.resolved_at)
     _ = stmt.step()
 
     var last = db.prepare("SELECT last_insert_rowid()")
