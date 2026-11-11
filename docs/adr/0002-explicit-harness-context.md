@@ -111,7 +111,20 @@ from. That is why they belong in typed columns rather than a free-form bag.
    exclusive mode flags. `show --json` exposes the new fields flat and drops
    `opencode_thread`; `t3_thread` and `project` stay.
 
-7. **The store is created, not inherited.** 1.0 defines its own schema and
+7. **The CLI is built for agents.** Every verb's `--help`, at every nesting
+   level, ends with 2–4 real invocations, and usage errors reuse the same
+   examples. `add --problem -` reads the text from stdin and refuses when
+   stdin is a terminal, so a hook can never block. `--dry-run` exists on every
+   mutating verb; `--force` is the only confirmation and no verb prompts;
+   `skills template reset` refuses while user copies exist without `--force`.
+   Success output carries the handle the next verb needs — a marker from
+   `add`, marker plus commit from `resolve`, a path from `report`. `add` is
+   deliberately not idempotent: the log records occurrences, a retry is
+   indistinguishable from a genuine repeat, and deduping would hide the second
+   occurrence of one error. `add --help`, the bundled skills and the usage-log
+   template all say so.
+
+8. **The store is created, not inherited.** 1.0 defines its own schema and
    creates it on the first write. It does not convert the Python-era store:
    moving that data is part of switching a machine's setup, not part of this
    project. An existing file that is not this schema is refused by name
@@ -119,14 +132,14 @@ from. That is why they belong in typed columns rather than a free-form bag.
    half-migration. `PRAGMA user_version = 1` stamps the schema; a store
    stamped newer than the binary is refused by name.
 
-8. **One store per machine.** Multi-machine consolidation — `sync`, an
+9. **One store per machine.** Multi-machine consolidation — `sync`, an
    aggregate store, merged copies, owner authority — is out of scope for this
    project at this time; the user's own setup handles it internally. Rows
    still carry `machine`, because the marker grammar (`machine#id`) and the
    report contract are unchanged, and because an external consolidator needs
    the origin of a row.
 
-9. **The store rules that remain do not move.** Newest-marker-wins,
+10. **The store rules that remain do not move.** Newest-marker-wins,
    skip-a-row-logged-after-the-commit, idempotent resolution, artifact vs
    trailer mode, hidden-marker reporting, one-line failures and exit codes are
    unchanged.
@@ -188,6 +201,9 @@ from. That is why they belong in typed columns rather than a free-form bag.
   mixed values, and a value nobody has recorded yields no rows rather than an
   error.
 - An older or foreign store is refused with one named line and nothing written.
+- Two identical `add` calls produce two rows, and `add --help` says a retry
+  duplicates.
+- `add --problem -` on a terminal exits 2 instead of waiting for input.
 - `repo`/`worktree` are empty outside a git checkout and correct inside a
   linked worktree.
 
