@@ -49,12 +49,20 @@ def build_verbs() raises -> List[Verb]:
     add_examples.append(
         'skill-log add --skill diagnosing-bugs --problem "step 3 assumed a core dump exists"'
     )
+    add_examples.append(
+        'skill-log add --skill create-skill --problem - < notes.txt'
+    )
     add_examples.append("skill-log add --skill create-skill --dry-run --json")
     verbs.append(
         Verb(
             "add",
             "record one skill invocation and the friction it produced",
-            "skill-log add --skill <name> [--problem <text>]... [--dry-run] [--json] [--db <path>]",
+            "skill-log add --skill <name> [--problem <text>]...\n"
+            "                   [--harness <name>] [--session <id>] [--parent <id>]\n"
+            "                   [--model <provider/id>] [--repo <name>]\n"
+            "                   [--worktree <path>] [--project <name>]\n"
+            "                   [--t3-thread <id>] [--machine <name>]\n"
+            "                   [--adapter <name>]... [--dry-run] [--json] [--db <path>]",
             add_examples,
             "A clean run still writes a row: the invocation count is the\n"
             "denominator of the problems-per-invocation rate.\n"
@@ -62,7 +70,20 @@ def build_verbs() raises -> List[Verb]:
             "add is not idempotent. The log records occurrences, so a retry\n"
             "after a crashed run is indistinguishable from a genuine repeat\n"
             "and deduping would hide the second occurrence of one error.\n"
-            "Two identical calls therefore produce two rows.",
+            "Two identical calls therefore produce two rows.\n"
+            "\n"
+            "Context fields resolve by one chain, per field: the explicit\n"
+            "flag, then its SKILL_LOG_* variable, then an enabled adapter,\n"
+            "then the built-in detection. An empty field means unknown.\n"
+            "\n"
+            "Adapters never run unasked. Enable one with --adapter opencode\n"
+            "or SKILL_LOG_ADAPTERS=opencode (comma-separated). The opencode\n"
+            "adapter fills harness, session and model; the t3 adapter fills\n"
+            "project. An adapter never sets parent, and its failure is a\n"
+            "blank field rather than an error.\n"
+            "\n"
+            "--problem - reads the problem text from stdin, and exits 2\n"
+            "instead of waiting when stdin is a terminal.",
         )
     )
 
