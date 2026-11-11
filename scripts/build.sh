@@ -12,6 +12,11 @@
 # The version is baked in at build time from SKILL_LOG_VERSION, else
 # `git describe --tags`, else 0.0.0-dev. It is written into a generated
 # source file; nothing in the tree holds a tracked version constant.
+#
+# Only src/ and vendor/ are built, and only the binary and its libraries
+# are staged. The reference/ area is the verbatim report-era implementation
+# kept as the parity ground truth: it is never built, never staged and
+# never shipped in the release archive.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

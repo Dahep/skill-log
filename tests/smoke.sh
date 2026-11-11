@@ -59,6 +59,14 @@ require_artifact() {
             "$DIST" >&2
         exit 1
     fi
+    # The reference area is never shipped: the archive stages only the
+    # binary and its libraries. A reference/ in dist/ means the build
+    # picked up something it must not.
+    if [ -e "$DIST/reference" ]; then
+        printf 'smoke.sh: %s/reference must not be staged in the release archive\n' \
+            "$DIST" >&2
+        exit 1
+    fi
 }
 
 # The number of example invocations in a rendered usage block: the lines
