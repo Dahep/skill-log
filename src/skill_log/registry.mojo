@@ -20,6 +20,7 @@ stub: a later ticket appends its verb here when it lands.
 from skill_log.add import handle_add
 from skill_log.errors import Outcome
 from skill_log.help import top_level_help
+from skill_log.show import handle_show
 from skill_log.verb import Verb
 from skill_log.version import version
 
@@ -89,6 +90,36 @@ def build_verbs() raises -> List[Verb]:
         )
     )
 
+    var show_examples = List[String]()
+    show_examples.append("skill-log show")
+    show_examples.append("skill-log show --skill diagnosing-bugs --last 5")
+    show_examples.append("skill-log show --unresolved --json")
+    verbs.append(
+        Verb(
+            "show",
+            "read the log back: recent invocations and their problems",
+            "skill-log show [--skill <name>] [--machine <name>]\n"
+            "                   [--harness <name>] [--repo <name>] [--run <id>]\n"
+            "                   [--unresolved] [--last <n>] [--json] [--db <path>]",
+            show_examples,
+            "Rows come back newest first. The table indents each problem\n"
+            "under the invocation it belongs to, and shortens a worktree\n"
+            "under your home directory to ~/.\n"
+            "\n"
+            "--run names a run in whichever namespace it was recorded in:\n"
+            "its session, its T3 thread or its parent. Matching all three\n"
+            "is what finds the tree around a run, not one row of it.\n"
+            "\n"
+            "--last takes a number between 1 and 500, 20 by default.\n"
+            "\n"
+            "--json prints one flat object per line, with every column,\n"
+            "the marker and the problems. An empty log prints nothing at\n"
+            "all, so the stream stays valid JSON lines.\n"
+            "\n"
+            "A read never writes: it creates no store and changes none.",
+        )
+    )
+
     var version_examples = List[String]()
     version_examples.append("skill-log --version")
     version_examples.append("skill-log --help")
@@ -121,6 +152,7 @@ def build_handlers() raises -> List[type_of(handle_version)]:
     """The handler table, indexed in step with `build_verbs`."""
     var handlers = List[type_of(handle_version)]()
     handlers.append(handle_add)
+    handlers.append(handle_show)
     handlers.append(handle_version)
     handlers.append(handle_help)
     return handlers^

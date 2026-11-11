@@ -112,7 +112,11 @@ def main():
                 exit(outcome.failure.code)
             fail(outcome.failure)
 
-        print(outcome.text, file=stdout)
+        # An empty text is an empty output, not a blank line: a JSON
+        # stream with no rows must stay parseable, and a stray newline
+        # would not be a JSON line.
+        if outcome.text != "":
+            print(outcome.text, file=stdout)
         exit(EXIT_OK())
     except e:
         # The catch-all: one line, exit 1, no traceback.

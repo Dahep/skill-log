@@ -606,6 +606,151 @@ def read_invocation(db: Database, id: Int) raises -> Optional[Invocation]:
     return invocation^
 
 
+# The filters one read carries. Every field is a string, and an empty
+# string means "this filter is not given": the value is matched exactly
+# when it is there, and ignored when it is not.
+struct Filters(Movable):
+    """What one read of the store selects.
+
+    The fields are the store's own column names, except `run`, which
+    names a run rather than a column: it matches a row's `session`, its
+    `t3_thread` or its `parent` (ADR-0002 §6).
+    """
+
+    var skill: String
+    var machine: String
+    var harness: String
+    var repo: String
+    var run: String
+    var unresolved: Bool
+    var limit: Int
+
+    def __init__(out self):
+        self.skill = ""
+        self.machine = ""
+        self.harness = ""
+        self.repo = ""
+        self.run = ""
+        self.unresolved = False
+        self.limit = 20
+
+
+def filter_clause(filters: Filters) -> String:
+    """The `WHERE` clause the filters ask for, without the keyword.
+
+    Empty when no filter is given, so the query has no `WHERE` at all.
+    Each filter is a bound parameter, never text spliced into the SQL.
+    """
+    var clauses = List[String]()
+    if filters.skill != "":
+        clauses.append("skill = ?")
+    if filters.machine != "":
+        clauses.append("machine = ?")
+    if filters.harness != "":
+        clauses.append("harness = ?")
+    if filters.repo != "":
+        clauses.append("repo = ?")
+    if filters.run != "":
+        # ADR-0002 §6: `--run <id>` names a run, and a row names that run
+        # in its session, its T3 thread or its parent.
+        clauses.append("(session = ? OR t3_thread = ? OR parent = ?)")
+    if filters.unresolved:
+        clauses.append("fix = ''")
+    if len(clauses) == 0:
+        return ""
+    var out = " WHERE "
+    for i in range(len(clauses)):
+        if i > 0:
+            out += " AND "
+        out += clauses[i]
+    return out
+
+
+def filter_parameters(filters: Filters) -> List[String]:
+    """The values the filter clause binds, in the clause's order."""
+    var marks = List[String]()
+    if filters.skill != "":
+        marks.append(filters.skill)
+    if filters.machine != "":
+        marks.append(filters.machine)
+    if filters.harness != "":
+        marks.append(filters.harness)
+    if filters.repo != "":
+        marks.append(filters.repo)
+    if filters.run != "":
+        # The run filter binds three placeholders: one each for the
+        # session, the T3 thread and the parent.
+        marks.append(filters.run)
+        marks.append(filters.run)
+        marks.append(filters.run)
+    return marks^
+
+
+def read_invocations(db: Database, filters: Filters) raises -> List[Invocation]:
+    """Read the invocation rows the filters select, newest first.
+
+    The ordering is `datetime(ts) DESC, id DESC`: `datetime()` normalizes
+    each row's ISO stamp (rows carry their writer's own UTC offset) so the
+    rows sort by when the run happened, not by when it was written. The id
+    breaks a tie between two rows of the same instant, so the order is
+    total and stable.
+
+    Every problem is read with its row, in ordinal order and sanitized on
+    the way out, so one problem is one line whatever the writer stored.
+    """
+    var clause = filter_clause(filters)
+    var marks = filter_parameters(filters)
+
+    var stmt = db.prepare(
+        "SELECT id, ts, skill, harness, session, parent, model, repo,"
+        " worktree, project, t3_thread, machine, fix, resolved_at"
+        " FROM invocations" + clause
+        + " ORDER BY datetime(ts) DESC, id DESC LIMIT ?"
+    )
+
+    # The filter values bind first, in the clause's order, and the limit
+    # binds last.
+    for i in range(len(marks)):
+        stmt.bind_text(i + 1, marks[i])
+    stmt.bind_int(len(marks) + 1, filters.limit)
+
+    var rows = List[Invocation]()
+    while True:
+        var row = stmt.step()
+        if row is None:
+            break
+
+        var invocation = Invocation()
+        invocation.id = row.value().int_val(0)
+        invocation.ts = row.value().text_val(1)
+        invocation.skill = row.value().text_val(2)
+        invocation.harness = row.value().text_val(3)
+        invocation.session = row.value().text_val(4)
+        invocation.parent = row.value().text_val(5)
+        invocation.model = row.value().text_val(6)
+        invocation.repo = row.value().text_val(7)
+        invocation.worktree = row.value().text_val(8)
+        invocation.project = row.value().text_val(9)
+        invocation.t3_thread = row.value().text_val(10)
+        invocation.machine = row.value().text_val(11)
+        invocation.fix = row.value().text_val(12)
+        invocation.resolved_at = row.value().text_val(13)
+
+        var problems = db.prepare(
+            "SELECT problem FROM problems WHERE invocation_id = ? ORDER BY ordinal"
+        )
+        problems.bind_int(1, invocation.id)
+        while True:
+            var problem = problems.step()
+            if problem is None:
+                break
+            invocation.problems.append(sanitize(problem.value().text_val(0)))
+
+        rows.append(invocation^)
+
+    return rows^
+
+
 # --------------------------------------------------------------- writing
 
 
