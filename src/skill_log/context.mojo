@@ -41,6 +41,10 @@ SELECT
 # POSIX allows and no real machine reaches.
 comptime HOSTNAME_SIZE = 256
 
+# How much of standard input one read takes. A problem's own text is
+# one line, so this is generous.
+comptime STDIN_SIZE = 65536
+
 
 def format_offset(seconds: Int) -> String:
     """The UTC offset as `+HH:MM` or `-HH:MM`.
@@ -128,3 +132,66 @@ def hostname() raises -> String:
         return text
     except:
         return ""
+
+
+def stdin_is_tty() -> Bool:
+    """True when standard input is a terminal.
+
+    A hook that reads the problem text from stdin must not block on an
+    interactive terminal, so the caller asks this first and refuses
+    instead of waiting.
+
+    False when the answer cannot be found: the refusal is the safe
+    side of that ambiguity, because a terminal that is mistaken for a
+    pipe would make the command hang.
+    """
+    try:
+        var lib = OwnedDLHandle("libc.so.6", RTLD.NOW)
+        var isatty = _dl_sym[def(Int) thin abi("C") -> Int](lib, "isatty")
+        return isatty(Int(0)) != 0
+    except:
+        return True
+
+
+def read_stdin_line() -> String:
+    """One line from standard input, without its newline.
+
+    An empty string when standard input carries nothing. The line is
+    read with libc's `read` in one call: the problem text is one line,
+    and a hook that pipes one line in is the shape this serves.
+    """
+    try:
+        var lib = OwnedDLHandle("libc.so.6", RTLD.NOW)
+        var read = _dl_sym[
+            def(Int, Pointer[c_char, MutUntrackedOrigin], Int) thin abi("C") -> Int
+        ](lib, "read")
+        var buffer = alloc[c_char](STDIN_SIZE)
+        var count = read(Int(0), buffer, Int(STDIN_SIZE))
+        if count <= 0:
+            return ""
+        var raw = String(
+            StringSlice(unsafe_from_utf8=CStringSpan(unsafe_from_ptr=buffer))
+        )
+        return trim_to_line(raw)
+    except:
+        return ""
+
+
+def trim_to_line(text: String) -> String:
+    """`text` up to its first newline, with the newline removed.
+
+    A carriage return before it goes too, so a CRLF pipe yields the
+    same text as a LF one.
+    """
+    var cut = text.find("\n")
+    var line = text
+    if cut != -1:
+        var part = text[byte=0:cut]
+        var without_newline = String(part)
+        line = without_newline
+    if line.endswith("\r"):
+        var shorter = line.byte_length() - 1
+        var without = line[byte=0:shorter]
+        var trimmed = String(without)
+        line = trimmed
+    return line
