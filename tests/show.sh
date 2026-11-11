@@ -491,10 +491,12 @@ check "a usage error keeps stdout empty" "$OUT" ""
 # --------------------------------------------------------------- read-only
 
 # The invariant the verb rests on: a read changes nothing. The store is
-# byte-identical afterwards, and no new file appears beside it.
+# byte-identical afterwards, its mtime is untouched, and no new file
+# appears beside it.
 STATE_DIR="$HOME_DIR/.local/state/skill-log"
 BEFORE_FILES="$(find "$STATE_DIR" -maxdepth 1 -mindepth 1 -printf '%f\n' | sort | tr '\n' ' ')"
 BEFORE_SUM="$(md5sum <"$DB")"
+BEFORE_MTIME="$(stat -c %Y "$DB")"
 
 run show
 run show --json
@@ -502,6 +504,8 @@ run show --skill alpha
 run show --run ses-1 --last 2
 
 check "the store is byte-identical after a read" "$(md5sum <"$DB")" "$BEFORE_SUM"
+check "the store's mtime is unchanged after a read" "$(stat -c %Y "$DB")" \
+    "$BEFORE_MTIME"
 check "a read creates no new file" \
     "$(find "$STATE_DIR" -maxdepth 1 -mindepth 1 -printf '%f\n' | sort | tr '\n' ' ')" \
     "$BEFORE_FILES"
@@ -509,6 +513,27 @@ check "a read creates no new file" \
 # The journal mode is not switched either: a read must not rewrite the
 # store's header.
 check "the journal mode is unchanged" "$(sqlite3 "$DB" 'pragma journal_mode')" "wal"
+
+# A read never creates an empty database either. The file the flag
+# names does not exist, and the read leaves it that way.
+ABSENT="$SCRATCH/never-created.db"
+run show --db "$ABSENT"
+check "a read of an absent store exits 0" "$STATUS" "0"
+if [ -e "$ABSENT" ]; then
+    fail "a read created an empty database"
+else
+    pass "a read creates no empty database"
+fi
+
+# Nor does it create the directory that would hold one.
+FRESH="$SCRATCH/fresh/state/skill-log/skills.db"
+run show --db "$FRESH"
+check "a read of a fresh path exits 0" "$STATUS" "0"
+if [ -e "$SCRATCH/fresh" ]; then
+    fail "a read created the store's directory"
+else
+    pass "a read creates no store directory"
+fi
 
 # ------------------------------------------------------------------ report
 
