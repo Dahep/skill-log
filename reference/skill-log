@@ -1,0 +1,2323 @@
+#!/usr/bin/env python3
+"""skill-log — a local SQLite log of skill invocations, problems tied to them.
+
+One row per skill invocation, in ~/.local/state/skill-log/skills.db; problem
+rows reference the invocation that produced them. Skills append silently at
+the end of their work (boilerplate: the create-skill skill's
+references/usage-log.md). A clean run writes a problem-less row — the
+invocation count is the denominator of the problems/invocation rate. A
+row is marked resolved by a later, separate step: `resolve` stamps the
+commit that carries the fix and the time it was resolved, so the log
+can show which invocations are still open. The commit is a post-commit
+step — the squash merge's hash is the one the fix ships in — so the
+local db is updated after the merge, not at the skill's own commit.
+
+  skill-log add --skill <name> [--parent <id>] [--problem "..."] ... [--t3-thread <id>]
+  skill-log show [--skill <name>] [--machine <host>] [--unresolved] [--last N]
+  skill-log stats [--skill <name>] [--by-model]
+  skill-log resolve --id <invocation> --fix <commit> [--dry-run]
+  skill-log resolve-merged [--since <rev>] [--dry-run] [--quiet]
+  skill-log fix --id <invocation>... | --thread <id> [--check]
+  skill-log sync --from <host> [--remote-db <path>]
+
+Every command accepts --db <path>, defaulting to that file above.
+add writes; show/stats read and never insert rows — though both converge
+an old db's schema on first touch (one ALTER per missing column; a
+read-only --db touches nothing). Date, model, project, opencode thread id,
+worktree, and machine are auto-detected; --t3-thread and the rest are
+overridable as flags. A dispatched subagent's row passes --parent — the T3
+thread id of the run that spawned it — so a dispatch tree's rows coalesce
+under one thread for dedupe. Model detect happens at add time against the
+local opencode session store for the row's session id — a session stored on
+another machine can't be read from here, so it lands blank unless --model
+overrides it.
+
+resolve-merged closes the loop on its own: it reads the merged change for
+the invocations it resolves — a `.skill-log/fixes/` report file when the
+checkout has one, the commit-body `Skill-log-Fix:` trailer otherwise — and
+stamps each named row with that commit's hash. It is idempotent, so a git
+post-merge hook can run it after every pull, which is how a merged fix
+becomes a resolved row without anyone remembering. `fix` writes the report
+file: one `machine#id` per line, validated at authoring time and committed
+with the change, so a squash merge cannot lose or reword it.
+
+sync pulls another machine's log over SSH and merges its rows into this db,
+so one machine can read every host's rows at once. The log is per-machine
+and a row's id is only unique inside the db that wrote it, so a merged row
+keeps its owner: machine is the row's host, origin_id is its id there, and
+that pair is the merge's dedupe key. Re-running merges nothing twice and
+takes the owner's fix/resolved_at forward; rows this db wrote are never
+touched. A host renamed between a short name and its FQDN keeps the spelling
+the db already holds, so a rename neither lands as a second machine nor
+strands the markers written under the old spelling. The one-way direction is
+deliberate: the merge runs on the machine that can reach both dbs (the
+desktop pulling a VPS), and the remote is only read — its rows are never
+modified, though SQLite does create its -shm/-wal sidecars beside a WAL db,
+so the remote log needs a writable directory.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import shlex
+import socket
+import sqlite3
+import subprocess
+import sys
+import tempfile
+import time
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+from typing import NoReturn, TypeVar
+
+INVOCATION_DDL = """\
+CREATE TABLE IF NOT EXISTS invocations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts TEXT NOT NULL,
+    skill TEXT NOT NULL,
+    parent TEXT NOT NULL DEFAULT '',
+    model TEXT NOT NULL DEFAULT '',
+    project TEXT NOT NULL DEFAULT '',
+    t3_thread TEXT NOT NULL DEFAULT '',
+    opencode_thread TEXT NOT NULL DEFAULT '',
+    worktree TEXT NOT NULL DEFAULT '',
+    machine TEXT NOT NULL DEFAULT '',
+    fix TEXT NOT NULL DEFAULT '',
+    resolved_at TEXT NOT NULL DEFAULT '',
+    origin_id INTEGER NOT NULL DEFAULT 0
+)"""
+# Dedupe key for rows a sync merged in: a row belongs to the db that wrote
+# it, identified by (machine, origin_id). Rows this db wrote keep
+# origin_id 0 and are excluded, so a local row is never mistaken for a copy.
+ORIGIN_INDEX_DDL = """\
+CREATE UNIQUE INDEX IF NOT EXISTS invocations_origin
+    ON invocations(machine, origin_id) WHERE origin_id > 0"""
+PROBLEM_DDL = """\
+CREATE TABLE IF NOT EXISTS problems (
+    invocation_id INTEGER NOT NULL REFERENCES invocations(id) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL,
+    problem TEXT NOT NULL,
+    PRIMARY KEY (invocation_id, ordinal)
+)"""
+
+# Keys are the prog strings argparse composes; the example must always be a
+# command an agent can copy as-is.
+EXAMPLES = {
+    "skill-log add": (
+        "  correct example invocation:\n"
+        '    skill-log add --skill diagnosing-bugs --problem "step 3 assumed a core dump exists"\n'
+    ),
+    "skill-log show": (
+        "  correct example invocation:\n"
+        "    skill-log show\n"
+        "    skill-log show --skill create-skill --last 5\n"
+    ),
+    "skill-log stats": (
+        "  correct example invocation:\n"
+        "    skill-log stats\n"
+        "    skill-log stats --skill create-skill --by-model\n"
+    ),
+    "skill-log resolve": (
+        "  correct example invocation:\n"
+        "    skill-log resolve --id 42 --fix a1b2c3d\n"
+        "    skill-log resolve --id 42 --fix a1b2c3d --dry-run\n"
+    ),
+    "skill-log resolve-merged": (
+        "  correct example invocation:\n"
+        "    skill-log resolve-merged\n"
+        "    skill-log resolve-merged --since origin/main~5 --dry-run --json\n"
+    ),
+    "skill-log fix": (
+        "  correct example invocation:\n"
+        "    skill-log fix --id 42 --id 43\n"
+        "    skill-log fix --thread ses_abc123\n"
+        "    skill-log fix --check\n"
+    ),
+    "skill-log sync": (
+        "  correct example invocation:\n"
+        "    skill-log sync --from hersan\n"
+        "    skill-log sync --from hersan --dry-run --json\n"
+    ),
+    "skill-log": (
+        "  correct example invocations:\n"
+        '    skill-log add --skill <name> [--problem "..."]\n'
+        "    skill-log show --db <path>\n"
+        "    skill-log stats\n"
+        "    skill-log resolve --id <n> --fix <commit>\n"
+        "    skill-log resolve-merged\n"
+        "    skill-log fix --id <n> --id <n>\n"
+        "    skill-log sync --from <host>\n"
+    ),
+}
+
+
+class SkillLogParser(argparse.ArgumentParser):
+    """Fail fast on bad input with a correct example, not just a usage dump."""
+
+    def error(self, message: str) -> NoReturn:
+        example = EXAMPLES.get(self.prog, EXAMPLES["skill-log"])
+        self.exit(2, f"{self.prog}: error: {message}\n{example}")
+
+
+def default_db() -> Path:
+    xdg = os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local" / "state")
+    return Path(xdg) / "skill-log" / "skills.db"
+
+
+def db_path(value: str) -> Path:
+    return Path(os.path.expanduser(value))
+
+
+def skill_name(value: str) -> str:
+    name = value.strip()
+    if not name:
+        raise argparse.ArgumentTypeError("--skill needs a non-blank name")
+    return name
+
+
+HOST_CHARS = re.compile(r"^[A-Za-z0-9._:@%\[\]-]+$")
+
+
+def host_name(value: str) -> str:
+    """A host is handed to ssh as an argument, so a leading dash (which ssh
+    would read as an option) and any whitespace are refused here, at the
+    boundary, rather than reaching the transport."""
+    host = value.strip()
+    if not host or host.startswith("-") or not HOST_CHARS.match(host):
+        raise argparse.ArgumentTypeError(
+            "--from needs a host name (letters, digits, . _ : @ [ ] -)"
+        )
+    return host
+
+
+def fix_commit(value: str) -> str:
+    commit = value.strip()
+    if not commit:
+        raise argparse.ArgumentTypeError("--fix needs a commit hash")
+    return commit
+
+
+def revision(value: str) -> str:
+    """A revision handed to git. A leading dash would be read as a git option
+    (`--output=…` writes a file), so it is refused here, at the boundary,
+    before it reaches `git log`."""
+    rev = value.strip()
+    if not rev or rev.startswith("-"):
+        raise argparse.ArgumentTypeError(
+            "--since needs a revision (e.g. origin/main~5), not an option"
+        )
+    return rev
+
+
+def last_n(value: str) -> int:
+    try:
+        n = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("--last takes an integer") from exc
+    if n < 1:
+        raise argparse.ArgumentTypeError("--last must be 1 or more")
+    if n > 500:
+        raise argparse.ArgumentTypeError("--last is capped at 500")
+    return n
+
+
+@dataclass(frozen=True)
+class Context:
+    opencode_thread: str
+    worktree: str
+    project: str
+    machine: str
+
+
+def t3_project(worktree: str) -> str:
+    """First path segment under <T3CODE_HOME>/worktrees/, or "" elsewhere."""
+    home = os.environ.get("T3CODE_HOME") or str(Path.home() / ".t3")
+    prefix = os.path.join(home, "worktrees") + os.sep
+    if not worktree.startswith(prefix):
+        return ""
+    segment = worktree[len(prefix) :].split(os.sep, 1)[0]
+    return segment
+
+
+def opencode_db() -> Path | None:
+    """Path of the local opencode session store, or None when it does not
+    exist — `add` never creates another tool's database."""
+    path = Path.home() / ".local" / "share" / "opencode" / "opencode.db"
+    return path if path.is_file() else None
+
+
+def model_from_opencode_row(raw: str) -> str:
+    """The opencode session_v2.model value renders as provider/id; a non-JSON
+    or old-shape value passes through as-is."""
+    try:
+        parsed = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return raw
+    if isinstance(parsed, dict) and parsed.get("id") and parsed.get("providerID"):
+        return f"{parsed['providerID']}/{parsed['id']}"
+    return raw
+
+
+def detect_model(session_id: str) -> str:
+    """Best-effort model detect for one opencode session id; never raises.
+    Source: this machine's opencode session store — the CLI has no way to
+    read a session that lives on another machine, so a remote session's
+    model stays blank (the caller passes --model to fill it)."""
+    if not session_id:
+        return ""
+    if (db := opencode_db()) is None:
+        return ""
+    try:
+        con = sqlite3.connect(f"{db.as_uri()}?mode=ro", uri=True, timeout=5)
+    except (OSError, sqlite3.Error, ValueError):
+        return ""
+    try:
+        row = con.execute(
+            "SELECT model FROM session_v2 WHERE id = ?", (session_id,)
+        ).fetchone()
+    except sqlite3.Error:
+        row = None
+    finally:
+        con.close()
+    if row is not None and row[0]:
+        return model_from_opencode_row(str(row[0]))
+    return ""
+
+
+def git(cwd: Path, *argv: str) -> str:
+    try:
+        proc = subprocess.run(
+            ["git", *argv],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return proc.stdout.strip()
+
+
+def remote_repository(git_top: str) -> str:
+    url = git(Path(git_top), "remote", "get-url", "origin") if git_top else ""
+    # Drop userinfo so credentialed remotes never reach the project column.
+    if url.startswith(("https://", "http://", "ssh://")) and "@" in url:
+        url = url.split("@", 1)[1]
+    base = url.rsplit("/", 1)[-1] if url else ""
+    if ":" in base:  # scp-style remotes (git@host:owner/repo.git)
+        base = base.rsplit(":", 1)[-1]
+    return base.removesuffix(".git")
+
+
+def detect_context(cwd: Path) -> Context:
+    top = git(cwd, "rev-parse", "--show-toplevel")
+    worktree = top or str(cwd)
+    return Context(
+        opencode_thread=os.environ.get("OPENCODE_SESSION_ID") or "",
+        worktree=worktree,
+        project=t3_project(worktree) or remote_repository(top) or Path(worktree).name,
+        machine=socket.gethostname() or "",
+    )
+
+
+# Columns that arrived after the first schema; a db older than a given column
+# gets one ALTER for each it lacks.
+KNOWN_COLUMNS = (
+    ("model", "TEXT NOT NULL DEFAULT ''"),
+    ("parent", "TEXT NOT NULL DEFAULT ''"),
+    ("fix", "TEXT NOT NULL DEFAULT ''"),
+    ("resolved_at", "TEXT NOT NULL DEFAULT ''"),
+    ("origin_id", "INTEGER NOT NULL DEFAULT 0"),
+)
+
+
+def has_column(conn: sqlite3.Connection, name: str) -> bool:
+    have = {row[1] for row in conn.execute("PRAGMA table_info(invocations)")}
+    return name in have
+
+
+def is_corruption(exc: sqlite3.Error) -> bool:
+    """A sqlite error that means the file is not a usable log db: not sqlite
+    at all, or a sqlite file with damaged pages. Both must be named, never
+    degraded into the empty-log message."""
+    message = str(exc).lower()
+    return any(
+        marker in message
+        for marker in ("not a database", "malformed", "file is encrypted")
+    )
+
+
+def has_problems_table(conn: sqlite3.Connection) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'problems'"
+    ).fetchone()
+    return row is not None
+
+
+def ensure_columns(conn: sqlite3.Connection) -> None:
+    """Migrate an existing log db forward: the model and parent columns
+    arrived after invocations had five context columns, so an older file
+    gets one ALTER per column it lacks, not an error. No-op when a column
+    is already present. A losing ALTER against a parallel writer's means
+    the winner already did the job — the column exists, which is all this
+    check owns."""
+    for column, decl in KNOWN_COLUMNS:
+        if has_column(conn, column):
+            continue
+        try:
+            conn.execute(f"ALTER TABLE invocations ADD COLUMN {column} {decl}")
+            conn.commit()
+        except sqlite3.OperationalError as exc:
+            if "duplicate column" not in str(exc).lower() or not has_column(
+                conn, column
+            ):
+                raise
+
+
+def write_conn(db: Path, timeout: float = 30) -> sqlite3.Connection:
+    db.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(db, timeout=timeout)
+    try:
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute(INVOCATION_DDL)
+        conn.execute(PROBLEM_DDL)
+        ensure_columns(conn)
+        try:
+            conn.execute(ORIGIN_INDEX_DDL)
+        except sqlite3.IntegrityError as exc:
+            raise sqlite3.IntegrityError(
+                "duplicate (machine, origin_id) rows block the sync index;"
+                " delete the stale merged copies (origin_id > 0) and re-run"
+            ) from exc
+        conn.commit()
+    except BaseException:
+        conn.close()
+        raise
+    return conn
+
+
+def read_conn(db: Path) -> sqlite3.Connection | None:
+    """Read-side connection; None when the db file does not exist yet —
+    reading never creates the state directory or an empty database, though
+    an existing pre-migration file is converged (one schema ALTER per
+    missing column) on first touch by the callers that need the columns."""
+    if not db.is_file():
+        return None
+    conn = sqlite3.connect(db, timeout=30)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+
+
+# Concurrent skill runs log at once; SQLite's journal-mode conversion and
+# BEGIN can report BUSY/LOCKED without honoring the connection busy timeout
+# (observed as one lost row in ~1/40 concurrent first-touch writes). Retry
+# the whole write inside a small wall-clock budget — the contention window
+# is milliseconds — with a short per-attempt busy timeout, so a genuinely
+# stuck lock costs a few seconds, not the 30s-per-attempt default.
+WRITE_BUDGET_SECONDS = 5.0
+WRITE_RETRY_SLEEP = 0.1
+WRITE_CONNECT_TIMEOUT = 2
+
+T = TypeVar("T")
+
+
+def is_busy(exc: BaseException) -> bool:
+    return isinstance(exc, sqlite3.OperationalError) and (
+        "locked" in str(exc).lower() or "busy" in str(exc).lower()
+    )
+
+
+def is_origin_collision(exc: BaseException) -> bool:
+    """A parallel merge inserted the same (machine, origin_id) first. The
+    attempt re-reads what exists, so a retry converges instead of failing on
+    the unique index. The named duplicate-row failure is permanent, not this."""
+    message = str(exc)
+    return (
+        isinstance(exc, sqlite3.IntegrityError)
+        and "origin_id" in message
+        and "block the sync index" not in message
+    )
+
+
+def with_write_retry(attempt: Callable[[], T]) -> T:
+    """Run one write attempt, retrying BUSY/LOCKED within
+    WRITE_BUDGET_SECONDS so a transient lock costs milliseconds, not the
+    whole command. A non-busy error propagates unchanged."""
+    deadline = time.monotonic() + WRITE_BUDGET_SECONDS
+    while True:
+        try:
+            return attempt()
+        except sqlite3.Error as exc:
+            if not (is_busy(exc) or is_origin_collision(exc)):
+                raise
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise
+            time.sleep(min(WRITE_RETRY_SLEEP, remaining))
+
+
+def write_row(db: Path, row: dict[str, str], problems: list[str]) -> int:
+    """Insert one invocation and its problems; retries BUSY/LOCKED within
+    WRITE_BUDGET_SECONDS, each attempt holding the lock for at most
+    WRITE_CONNECT_TIMEOUT."""
+
+    def attempt() -> int:
+        conn = write_conn(db, timeout=WRITE_CONNECT_TIMEOUT)
+        try:
+            cur = conn.execute(
+                "INSERT INTO invocations"
+                " (ts, skill, parent, model, project, t3_thread,"
+                " opencode_thread, worktree, machine, fix, resolved_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    row["ts"],
+                    row["skill"],
+                    row["parent"],
+                    row["model"],
+                    row["project"],
+                    row["t3_thread"],
+                    row["opencode_thread"],
+                    row["worktree"],
+                    row["machine"],
+                    row.get("fix", ""),
+                    row.get("resolved_at", ""),
+                ),
+            )
+            invocation_id = cur.lastrowid or 0
+            conn.executemany(
+                "INSERT INTO problems (invocation_id, ordinal, problem)"
+                " VALUES (?, ?, ?)",
+                [(invocation_id, i + 1, p) for i, p in enumerate(problems)],
+            )
+            conn.commit()
+            return invocation_id
+        finally:
+            conn.close()
+
+    return with_write_retry(attempt)
+
+
+def sanitize(text: str) -> str:
+    """Readable render: control characters (newlines included) become spaces
+    so one problem stays one line and cannot inject terminal escapes."""
+    return CONTROL_CHARS.sub(" ", text)
+
+
+def cmd_add(args: argparse.Namespace) -> int:
+    problems = [p for p in (args.problem or []) if p and p.strip()]
+    parent = (args.parent or "").strip()
+    try:
+        ctx = detect_context(Path.cwd())
+        ts = datetime.now().astimezone().isoformat(timespec="seconds")
+    except OSError as exc:
+        print(f"skill-log: cannot detect context: {exc}", file=sys.stderr)
+        return 1
+    # Model detect keys on the session id the row will record, and is
+    # skipped entirely when --model overrides it (no store queries, no
+    # chance of waiting on a busy db for nothing).
+    thread = args.opencode_thread or ctx.opencode_thread
+    model = args.model or detect_model(thread)
+    row = {
+        "ts": ts,
+        "skill": args.skill,
+        "parent": parent,
+        "model": model,
+        "project": args.project or ctx.project,
+        "t3_thread": args.t3_thread or "",
+        "opencode_thread": thread,
+        "worktree": args.worktree or ctx.worktree,
+        "machine": args.machine or ctx.machine,
+        "fix": "",
+        "resolved_at": "",
+    }
+    if args.dry_run:
+        print(json.dumps({**row, "id": None, "problems": problems}))
+        return 0
+    try:
+        invocation_id = write_row(args.db, row, problems)
+    except (OSError, sqlite3.Error) as exc:
+        # A reporting failure must never crash the skill's run loudly: one
+        # terse stderr line, no traceback.
+        print(f"skill-log: cannot write the log: {exc}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps({**row, "id": invocation_id, "problems": problems}))
+    else:
+        plural = "" if len(problems) == 1 else "s"
+        print(f"invocation {invocation_id} logged ({len(problems)} problem{plural})")
+    return 0
+
+
+def cmd_resolve(args: argparse.Namespace) -> int:
+    """Mark one invocation as resolved with the commit that carries the fix.
+
+    The commit is a post-commit step: the squash merge's hash is the one the
+    fix ships in, so the local db is updated after the merge. Re-running is
+    safe: the row is the same row, the fix is the same commit."""
+    if not args.db.is_file():
+        print(f"skill-log: no log db at {args.db}", file=sys.stderr)
+        return 1
+    resolved_at = datetime.now().astimezone().isoformat(timespec="seconds")
+
+    def attempt() -> tuple[str, str] | None:
+        """(skill, owning machine); the owner is "" for a row this db wrote,
+        and None means the id is not in this db."""
+        conn = write_conn(args.db, timeout=WRITE_CONNECT_TIMEOUT)
+        try:
+            row = conn.execute(
+                "SELECT skill, origin_id, machine FROM invocations WHERE id = ?",
+                (args.id,),
+            ).fetchone()
+            if row is None:
+                return None
+            if int(row[1] or 0) > 0:
+                # The next sync takes the owner's value over this one.
+                return str(row[0]), str(row[2] or "another machine")
+            conn.execute(
+                "UPDATE invocations SET fix = ?, resolved_at = ? WHERE id = ?",
+                (args.fix, resolved_at, args.id),
+            )
+            if args.dry_run:
+                conn.rollback()
+            else:
+                conn.commit()
+            return str(row[0]), ""
+        finally:
+            conn.close()
+
+    try:
+        resolved = with_write_retry(attempt)
+    except (OSError, sqlite3.Error) as exc:
+        print(f"skill-log: cannot resolve the log: {exc}", file=sys.stderr)
+        return 1
+    if resolved is None:
+        print(f"skill-log: no invocation {args.id} in {args.db}", file=sys.stderr)
+        return 1
+    skill, owner = resolved
+    if owner:
+        print(
+            f"skill-log: invocation {args.id} belongs to {owner}; resolve it there",
+            file=sys.stderr,
+        )
+        return 1
+    if args.json or args.dry_run:
+        # A dry run has nothing to print but its preview, so it renders the
+        # same JSON a --json caller gets.
+        print(
+            json.dumps(
+                {
+                    "id": args.id,
+                    "skill": skill,
+                    "fix": args.fix,
+                    "resolved_at": resolved_at,
+                }
+            )
+        )
+    else:
+        print(f"invocation {args.id} resolved: {args.fix}")
+    return 0
+
+
+# The marker a fix commit carries: one trailer in the commit's last trailer
+# block (a squash merge takes the PR body as its commit body, so the trailer
+# goes in the PR body). Values are ids, or host#id for a row owned by a named
+# machine; one line can name several, comma-separated.
+FIX_TRAILER = "Skill-log-Fix"
+
+# The repo-native report: one file per fix change, one marker per line. Present
+# in a checkout, it makes resolution read these files instead of commit-body
+# trailers — a squash merge keeps tree content byte-for-byte, so the report
+# survives the merge without depending on how the forge rebuilds the message.
+ARTIFACT_DIR = Path(".skill-log") / "fixes"
+
+
+@dataclass(frozen=True)
+class FixMarker:
+    """One invocation named by a fix commit, with the commit that names it."""
+
+    host: str
+    invocation: int
+    commit: str
+    epoch: int
+
+
+def parse_marker(value: str, commit: str, epoch: int) -> FixMarker | None:
+    """`host#id` — the owning machine is required, because the same id names a
+    different row in each machine's db and the marker is read on all of them.
+    Anything else (a bare id, a documented placeholder, a typo) is reported
+    rather than guessed at."""
+    text = value.strip()
+    host, sep, ident = text.partition("#")
+    if not sep or not host.strip() or not ident.strip():
+        return None
+    try:
+        return FixMarker(host.strip(), int(ident.strip()), commit, epoch)
+    except ValueError:
+        return None
+
+
+def git_fix_markers(
+    repo: Path, since: str
+) -> tuple[list[FixMarker], list[str], list[str]]:
+    """Every marker on the commits reachable from HEAD, oldest commit first so
+    a later marker wins, plus the values that were not ids, plus the commits
+    whose marker the last-trailer-block rule hid.
+
+    The last list is what keeps the flow honest: a commit whose body carries a
+    `Skill-log-Fix:` line that the trailer parse did not return is a marker
+    that would otherwise be dropped without a word (a trailing trailer block —
+    `Co-authored-by:` on a multi-author squash — hides an earlier block)."""
+    rev = f"{since}..HEAD" if since else "HEAD"
+    try:
+        proc = subprocess.run(
+            [
+                "git",
+                "log",
+                "--format=%H%x00%ct%x00%(trailers:key="
+                + FIX_TRAILER
+                + ",valueonly)%x00%B%x1e",
+                rev,
+            ],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise SyncError(f"cannot read git history: {exc}") from exc
+    if proc.returncode != 0:
+        detail = proc.stderr.strip() or f"git log exited {proc.returncode}"
+        raise SyncError(detail)
+    markers: list[FixMarker] = []
+    invalid: list[str] = []
+    hidden: list[str] = []
+    for record in proc.stdout.split("\x1e"):
+        fields = record.strip("\n").split("\x00")
+        if len(fields) < 4:
+            continue
+        commit, epoch_text, values, body = fields[0], fields[1], fields[2], fields[3]
+        if not commit:
+            continue
+        try:
+            epoch = int(epoch_text)
+        except ValueError:
+            continue
+        if not values.strip():
+            buried = re.search(rf"(?im)^{FIX_TRAILER}\s*:\s*(.+)$", body)
+            if buried is not None:
+                hidden.append(
+                    f"{commit[:9]}: {FIX_TRAILER}: {buried.group(1).strip()} is"
+                    " not in the commit's last trailer block (a later block,"
+                    " e.g. Co-authored-by, hides it) — resolve those rows by hand"
+                )
+        for line in values.splitlines():
+            for piece in line.split(","):
+                if not piece.strip():
+                    continue
+                marker = parse_marker(piece, commit, epoch)
+                if marker is None:
+                    invalid.append(piece.strip())
+                else:
+                    markers.append(marker)
+    # git log lists newest first, so the first marker seen for a row is the
+    # commit that supersedes any earlier one naming it. Commit dates are only
+    # second-granular, so ordering by them would tie and pick the older commit.
+    newest: dict[tuple[str, int], FixMarker] = {}
+    for marker in markers:
+        newest.setdefault((marker.host, marker.invocation), marker)
+    return list(newest.values()), invalid, hidden
+
+
+def repo_top(cwd: Path) -> Path | None:
+    """The checkout's root, or None outside a git work tree."""
+    top = git(cwd, "rev-parse", "--show-toplevel")
+    return Path(top) if top else None
+
+
+def marker_of(row: sqlite3.Row) -> str:
+    """The marker a row is named by: its owning machine plus the id in the db
+    that wrote it."""
+    machine = str(row["machine"]) or socket.gethostname()
+    ident = int(row["origin_id"] or 0) or int(row["id"])
+    return f"{machine}#{ident}"
+
+
+def branch_slug(branch: str) -> str:
+    slug = re.sub(r"[^a-z0-9._-]+", "-", branch.strip().lower()).strip("-.")
+    return slug[:80]
+
+
+def artifact_commit(repo: Path, since: str, path: str) -> tuple[str, int] | None:
+    """The newest commit that touched one artifact inside the scanned range —
+    the commit that carries the fix when the artifact landed with it."""
+    rev = f"{since}..HEAD" if since else "HEAD"
+    out = git(repo, "log", "-1", "--format=%H%x00%ct", rev, "--", path)
+    if not out:
+        return None
+    commit, _, epoch = out.partition("\x00")
+    try:
+        return commit, int(epoch)
+    except ValueError:
+        return None
+
+
+def artifact_markers(repo: Path, since: str) -> tuple[list[FixMarker], list[str]]:
+    """Markers from the report files this range added or changed.
+
+    A full scan reads every report file in the tree; a bounded scan reads the
+    ones the range touched, which is what the post-merge hook sees."""
+    fixes = repo / ARTIFACT_DIR
+    if not fixes.is_dir():
+        return [], []
+    paths: list[str] = []
+    if since:
+        listed = git(
+            repo,
+            "diff",
+            "--name-only",
+            "--diff-filter=AM",
+            f"{since}..HEAD",
+            "--",
+            str(ARTIFACT_DIR),
+        )
+        paths = [path for path in listed.splitlines() if path.strip()]
+    else:
+        paths = [
+            f"{ARTIFACT_DIR}/{entry.name}"
+            for entry in sorted(fixes.glob("*.txt"))
+            if entry.is_file()
+        ]
+    markers: list[FixMarker] = []
+    invalid: list[str] = []
+    for path in paths:
+        if not path.endswith(".txt"):
+            continue
+        found = artifact_commit(repo, since, path)
+        if found is None:
+            continue
+        commit, epoch = found
+        text = git(repo, "show", f"{commit}:{path}")
+        for line in text.splitlines():
+            value = line.strip()
+            if not value:
+                continue
+            marker = parse_marker(value, commit, epoch)
+            if marker is None:
+                invalid.append(f"{path}: {value}")
+            else:
+                markers.append(marker)
+    return markers, invalid
+
+
+def resolve_merged_json(
+    stamped: list[str],
+    unchanged: list[str],
+    skipped: list[dict[str, object]],
+    hidden: list[str],
+    dry_run: bool,
+) -> str:
+    """One shape for every path, so a --json caller never has to guess which
+    keys this run carries."""
+    return json.dumps(
+        {
+            "resolved": stamped,
+            "unchanged": unchanged,
+            "skipped": skipped,
+            "ignored": hidden,
+            "dry_run": dry_run,
+        }
+    )
+
+
+def cmd_resolve_merged(args: argparse.Namespace) -> int:
+    """Stamp every invocation a fix commit names with that commit's hash.
+
+    This is the half nobody has to remember: the marker lives in the merged
+    commit, so a post-merge hook resolves the rows the moment the fix lands.
+    Idempotent — a second run finds the rows resolved and stamps nothing.
+
+    A checkout that carries `.skill-log/fixes/` resolves from those report
+    files and treats a commit-body trailer as stale (and says so); elsewhere
+    the trailer is still the input, so a repo without the artifact keeps its
+    old flow."""
+    repo = Path.cwd()
+    artifact_mode = (repo / ARTIFACT_DIR).is_dir()
+    try:
+        trailer, trailer_invalid, trailer_hidden = git_fix_markers(
+            repo, args.since or ""
+        )
+        if artifact_mode:
+            markers, invalid = artifact_markers(repo, args.since or "")
+            hidden: list[str] = []
+            stale_trailer = trailer
+        else:
+            markers, invalid, hidden = trailer, trailer_invalid, trailer_hidden
+            stale_trailer = []
+    except SyncError as exc:
+        print(f"skill-log: {exc}", file=sys.stderr)
+        return 1
+    if not args.quiet:
+        for value in invalid:
+            print(
+                f"skill-log: not a Skill-log-Fix marker (machine#id): {value}",
+                file=sys.stderr,
+            )
+        for ignored in hidden:
+            print(f"skill-log: ignored marker — {ignored}", file=sys.stderr)
+        if stale_trailer:
+            print(
+                "skill-log: this repo resolves from .skill-log/fixes; a"
+                " Skill-log-Fix trailer is not read (run `skill-log fix`)",
+                file=sys.stderr,
+            )
+    if not markers:
+        if args.json:
+            print(resolve_merged_json([], [], [], hidden, args.dry_run))
+        return 0
+    if not args.db.is_file():
+        # No log on this machine: nothing to resolve, and a hook must not
+        # shout about it.
+        if args.json:
+            print(resolve_merged_json([], [], [], hidden, args.dry_run))
+        return 0
+
+    resolved_at = datetime.now().astimezone().isoformat(timespec="seconds")
+
+    def attempt() -> tuple[list[str], list[str], list[dict[str, object]]]:
+        conn = write_conn(args.db, timeout=WRITE_CONNECT_TIMEOUT)
+        try:
+            # Keyed the way markers name rows: the owning machine plus the
+            # id in the db that wrote it (a copy's origin id, its own id
+            # otherwise), so the same marker means the same row everywhere.
+            local_host = socket.gethostname() or ""
+            rows = {
+                (str(machine) or local_host, int(origin) or int(inv_id)): (
+                    int(inv_id),
+                    str(ts),
+                    str(fix),
+                    int(origin),
+                )
+                for inv_id, ts, machine, fix, origin in conn.execute(
+                    "SELECT id, ts, machine, fix, origin_id FROM invocations"
+                )
+            }
+            stamped: list[str] = []
+            unchanged: list[str] = []
+            skipped: list[dict[str, object]] = []
+            machines = {machine for machine, _ in rows}
+            for marker in markers:
+                where = f"{marker.host}#{marker.invocation}"
+                # The marker names the owner; a host renamed short -> FQDN
+                # still matches the spelling this db stored.
+                owner = marker.host
+                row = rows.get((owner, marker.invocation))
+                if row is None:
+                    owner = host_alias(marker.host, machines)
+                    row = rows.get((owner, marker.invocation))
+                if row is None:
+                    skipped.append({"row": where, "reason": "not in this db"})
+                    continue
+                inv_id, ts, fix, origin = row
+                if origin:
+                    # A merged copy belongs to its owner; the next sync would
+                    # take the owner's value straight back.
+                    skipped.append(
+                        {"row": where, "reason": f"merged copy owned by {owner}"}
+                    )
+                    continue
+                if fix:
+                    unchanged.append(where)
+                    continue
+                if ts:
+                    try:
+                        logged = datetime.fromisoformat(ts)
+                    except ValueError:
+                        logged = None
+                    if logged is not None and logged.timestamp() > marker.epoch:
+                        # The row was written after that commit: an id reused
+                        # by a rebuilt log, not the row the commit fixed.
+                        skipped.append(
+                            {"row": where, "reason": "logged after that commit"}
+                        )
+                        continue
+                conn.execute(
+                    "UPDATE invocations SET fix = ?, resolved_at = ? WHERE id = ?",
+                    (marker.commit, resolved_at, inv_id),
+                )
+                stamped.append(where)
+            if args.dry_run:
+                conn.rollback()
+            else:
+                conn.commit()
+            return stamped, unchanged, skipped
+        finally:
+            conn.close()
+
+    try:
+        stamped, unchanged, skipped = with_write_retry(attempt)
+    except (OSError, sqlite3.Error) as exc:
+        print(f"skill-log: cannot resolve the log: {exc}", file=sys.stderr)
+        return 1
+    if not args.quiet:
+        for note in skipped:
+            print(
+                f"skill-log: {note['row']} skipped: {note['reason']}",
+                file=sys.stderr,
+            )
+    if args.json:
+        print(resolve_merged_json(stamped, unchanged, skipped, hidden, args.dry_run))
+    elif stamped and not args.quiet:
+        stamped_set = set(stamped)
+        short = sorted(
+            {m.commit[:9] for m in markers if f"{m.host}#{m.invocation}" in stamped_set}
+        )
+        verb = "would resolve" if args.dry_run else "resolved"
+        print(
+            f"{verb} {len(stamped)} invocation"
+            f"{'' if len(stamped) == 1 else 's'} ({', '.join(short)})"
+        )
+    return 0
+
+
+def invocation_select(conn: sqlite3.Connection) -> tuple[str, set[str]] | None:
+    """The columns fix needs, adapted to a log old enough to lack some; None
+    when the file is not a skill-log db."""
+    have = {str(row[1]) for row in conn.execute("PRAGMA table_info(invocations)")}
+    if not {"id", "skill"} <= have:
+        return None
+    machine_expr = "COALESCE(machine, '')" if "machine" in have else "''"
+    origin_expr = "COALESCE(origin_id, 0)" if "origin_id" in have else "0"
+    fix_expr = "COALESCE(fix, '')" if "fix" in have else "''"
+    return (
+        (
+            "SELECT id, skill,"
+            f" {machine_expr} AS machine,"
+            f" {origin_expr} AS origin_id,"
+            f" {fix_expr} AS fix"
+            " FROM invocations"
+        ),
+        have,
+    )
+
+
+def artifact_db_keys(
+    conn: sqlite3.Connection, select: str
+) -> dict[tuple[str, int], str]:
+    """Every row's marker key, plus the fix it carries, for --check."""
+    local_host = socket.gethostname() or ""
+    keys: dict[tuple[str, int], str] = {}
+    for row in conn.execute(select):
+        key = (
+            str(row["machine"]) or local_host,
+            int(row["origin_id"] or 0) or int(row["id"]),
+        )
+        keys[key] = str(row["fix"] or "")
+    return keys
+
+
+def check_artifact(
+    path: Path,
+    root: Path,
+    conn: sqlite3.Connection | None,
+    select: str | None,
+    as_json: bool,
+) -> int:
+    """Validate the branch's report file without writing anything.
+
+    A malformed line fails: it is the one thing the merger cannot interpret. A
+    marker this db does not have is a warning, not a failure — the row may live
+    on a machine that has not been synced yet, and that machine resolves it.
+    Without a log (a fresh clone, CI) the syntax is still checked."""
+    relative = str(path.relative_to(root))
+    problems: list[str] = []
+    warnings: list[str] = []
+    markers: list[str] = []
+    if not path.is_file():
+        if as_json:
+            print(
+                json.dumps(
+                    {
+                        "path": relative,
+                        "markers": [],
+                        "problems": [],
+                        "warnings": [],
+                    }
+                )
+            )
+        else:
+            print(f"skill-log: no fix artifact at {relative}")
+        return 0
+    keys = (
+        artifact_db_keys(conn, select)
+        if conn is not None and select is not None
+        else None
+    )
+    machines = {machine for machine, _ in keys} if keys is not None else set()
+    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        value = line.strip()
+        if not value:
+            continue
+        marker = parse_marker(value, "", 0)
+        if marker is None:
+            problems.append(f"{relative}:{number}: not a marker (machine#id): {value}")
+            continue
+        markers.append(value)
+        if keys is None:
+            continue
+        key = (marker.host, marker.invocation)
+        if key not in keys:
+            alias = host_alias(marker.host, machines)
+            key = (alias, marker.invocation)
+        if key not in keys:
+            warnings.append(f"{value}: not in this db (resolves where it is)")
+        elif keys[key]:
+            warnings.append(f"{value}: already resolved by {keys[key][:9]}")
+    if as_json:
+        print(
+            json.dumps(
+                {
+                    "path": relative,
+                    "markers": markers,
+                    "problems": problems,
+                    "warnings": warnings,
+                }
+            )
+        )
+    else:
+        for problem in problems:
+            print(f"skill-log: {problem}", file=sys.stderr)
+        for warning in warnings:
+            print(f"skill-log: {warning}", file=sys.stderr)
+        if not problems:
+            print(f"skill-log: {relative} is valid ({len(markers)} marker(s))")
+    return 1 if problems else 0
+
+
+def cmd_fix(args: argparse.Namespace) -> int:
+    """Write the repo's report artifact for the rows this change resolves.
+
+    The artifact is the transport: `.skill-log/fixes/<slug>.txt`, one
+    `machine#id` per line, committed with the change. Resolution reads it from
+    the merged tree, so a squash merge cannot lose or reword it — and the ids
+    are validated here, at authoring time, instead of at merge time."""
+    root = repo_top(Path.cwd())
+    if root is None:
+        print(
+            "skill-log: fix runs inside a git checkout (the report lives there)",
+            file=sys.stderr,
+        )
+        return 1
+    slug = branch_slug(args.slug or git(root, "rev-parse", "--abbrev-ref", "HEAD"))
+    if not slug or slug == "head":
+        print(
+            "skill-log: cannot name the report file (detached HEAD?); pass --slug",
+            file=sys.stderr,
+        )
+        return 1
+    path = root / ARTIFACT_DIR / f"{slug}.txt"
+    conn: sqlite3.Connection | None = None
+    try:
+        if args.db.is_file():
+            conn = read_conn(args.db)
+        found = invocation_select(conn) if conn is not None else None
+        if args.check:
+            return check_artifact(
+                path, root, conn, found[0] if found is not None else None, args.json
+            )
+        if conn is None:
+            print(f"skill-log: no log db at {args.db}", file=sys.stderr)
+            return 1
+        if found is None:
+            print(f"skill-log: {args.db} is not a skill-log database", file=sys.stderr)
+            return 1
+        select, have = found
+        where: list[str] = []
+        marks: list[object] = []
+        if args.id:
+            where.append(f"id IN ({', '.join('?' * len(args.id))})")
+            marks.extend(args.id)
+        if args.thread:
+            columns = [
+                column
+                for column in ("opencode_thread", "t3_thread", "parent")
+                if column in have
+            ]
+            if columns:
+                where.append("(" + " OR ".join(f"{c} = ?" for c in columns) + ")")
+                marks.extend([args.thread] * len(columns))
+            else:
+                where.append("0")
+        if args.skill:
+            where.append("skill = ?")
+            marks.append(args.skill)
+        if not where:
+            print(
+                "skill-log: fix needs --id, --thread, or --skill (or --check)",
+                file=sys.stderr,
+            )
+            return 2
+        rows = conn.execute(
+            f"{select} WHERE {' AND '.join(where)} ORDER BY id", marks
+        ).fetchall()
+        if args.id:
+            found_ids = {int(row["id"]) for row in rows}
+            missing = sorted(set(args.id) - found_ids)
+            if missing:
+                print(
+                    f"skill-log: no invocation {', '.join(map(str, missing))}"
+                    f" in {args.db}",
+                    file=sys.stderr,
+                )
+                return 1
+        markers: list[str] = []
+        resolved: list[str] = []
+        for row in rows:
+            name = marker_of(row)
+            if str(row["fix"]):
+                resolved.append(name)
+                continue
+            markers.append(name)
+        existing: list[str] = []
+        if path.is_file():
+            existing = [
+                value
+                for value in (
+                    line.strip()
+                    for line in path.read_text(encoding="utf-8").splitlines()
+                )
+                if value and parse_marker(value, "", 0) is not None
+            ]
+        merged = sorted(set(markers) | set(existing))
+        relative = str(path.relative_to(root))
+        if not merged:
+            if args.json:
+                print(
+                    json.dumps(
+                        {
+                            "path": relative,
+                            "markers": [],
+                            "already_resolved": resolved,
+                            "dry_run": args.dry_run,
+                        }
+                    )
+                )
+            else:
+                print("skill-log: nothing to report; the selected rows are resolved")
+            return 0
+        if not args.dry_run:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temp = path.with_name(path.name + ".tmp")
+            temp.write_text("\n".join(merged) + "\n", encoding="utf-8")
+            temp.replace(path)
+        if args.json:
+            print(
+                json.dumps(
+                    {
+                        "path": relative,
+                        "markers": merged,
+                        "already_resolved": resolved,
+                        "dry_run": args.dry_run,
+                    }
+                )
+            )
+        else:
+            verb = "would report" if args.dry_run else "reported"
+            print(
+                f"{verb} {len(merged)} invocation"
+                f"{'' if len(merged) == 1 else 's'} in {relative}"
+            )
+        for name in resolved:
+            print(f"skill-log: {name} already resolved; skipped", file=sys.stderr)
+        return 0
+    except (OSError, sqlite3.Error) as exc:
+        print(f"skill-log: cannot write the report: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+# The remote script runs on the other host: stdlib only, so an older
+# skill-log there is no obstacle. `identity` names the machine it really is —
+# the merge's owner fallback and the self-sync guard both key on that name,
+# never on the ssh alias. `snapshot` opens the remote db read-only and streams
+# a consistent copy of it from SQLite's backup API, so a writer holding the WAL
+# open never yields a torn read. None of the remote's rows are modified;
+# SQLite does create its -shm/-wal sidecars beside a WAL db, so the remote log
+# needs a writable directory (a read-only mount cannot be pulled).
+REMOTE_SCRIPT = """\
+import os, socket, sqlite3, sys, tempfile
+from pathlib import Path
+
+if sys.argv[1] == "identity":
+    print("skill-log-host " + socket.gethostname())
+    raise SystemExit(0)
+if len(sys.argv) > 2:
+    src = os.path.abspath(os.path.expanduser(sys.argv[2]))
+else:
+    state = os.environ.get("XDG_STATE_HOME") or os.path.join(
+        os.path.expanduser("~"), ".local", "state"
+    )
+    src = os.path.join(state, "skill-log", "skills.db")
+if not os.path.isfile(src):
+    sys.exit(f"no log db at {src}")
+handle = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+handle.close()
+tmp = handle.name
+try:
+    try:
+        con = sqlite3.connect(Path(src).as_uri() + "?mode=ro", uri=True, timeout=5)
+        try:
+            dst = sqlite3.connect(tmp)
+            try:
+                con.backup(dst)
+            finally:
+                dst.close()
+        finally:
+            con.close()
+    except sqlite3.Error as exc:
+        sys.exit(f"{src} is not a readable skill-log db: {exc}")
+    with open(tmp, "rb") as fh:
+        sys.stdout.buffer.write(fh.read())
+finally:
+    os.unlink(tmp)
+"""
+
+DEFAULT_REMOTE_DB = ""
+
+# What a merged copy carries from its owning db, in insert order.
+SYNC_COLUMNS = (
+    "ts",
+    "skill",
+    "parent",
+    "model",
+    "project",
+    "t3_thread",
+    "opencode_thread",
+    "worktree",
+    "machine",
+    "fix",
+    "resolved_at",
+)
+
+
+class SyncError(Exception):
+    """A sync that cannot proceed; the message names what failed."""
+
+
+def same_host(left: str, right: str) -> bool:
+    """Two hostnames naming one machine: a short name and its FQDN match, but
+    build.local and build.prod do not."""
+    left, right = left.strip().lower(), right.strip().lower()
+    if not left or not right:
+        return False
+    if left == right:
+        return True
+    return left.split(".")[0] == right.split(".")[0] and (
+        "." not in left or "." not in right
+    )
+
+
+def host_alias(name: str, known: Iterable[str]) -> str:
+    """The spelling this db already uses for the machine called `name`.
+
+    A host renamed from its short name to its FQDN (or the reverse) is still
+    one machine, but the merge key and the marker lookup both key on the
+    string stored in the db. Folding the new spelling into the stored one
+    keeps a rename from landing as a second machine — which would duplicate
+    every row and make the old markers stop matching. Two hosts that merely
+    share a first label (build.local / build.prod) are not the same machine,
+    per same_host's rule."""
+    names = sorted({candidate for candidate in known if candidate})
+    for candidate in names:
+        if candidate == name:
+            return candidate
+    for candidate in names:
+        if same_host(candidate, name):
+            return candidate
+    return name
+
+
+def copy_db(src: Path, dst: Path) -> None:
+    """A consistent copy of a log db, WAL contents included — the same
+    read-only backup the remote snapshot takes, applied locally."""
+    con = sqlite3.connect(f"{src.resolve().as_uri()}?mode=ro", uri=True, timeout=5)
+    try:
+        out = sqlite3.connect(dst)
+        try:
+            con.backup(out)
+        finally:
+            out.close()
+    finally:
+        con.close()
+
+
+def ssh_script(host: str, mode: str, args: tuple[str, ...], timeout: float) -> bytes:
+    """Run one stdlib snippet on the remote host and return its stdout.
+
+    ssh joins its arguments for the remote shell, so every value after the
+    mode is shlex-quoted, the snippet itself arrives on stdin, and `--` ends
+    local option parsing so no host can be read as an option."""
+    argv = [
+        "ssh",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "ConnectTimeout=10",
+        "--",
+        host,
+        "python3",
+        "-",
+        mode,
+        *(shlex.quote(value) for value in args),
+    ]
+    try:
+        proc = subprocess.run(
+            argv,
+            input=REMOTE_SCRIPT.encode(),
+            capture_output=True,
+            check=False,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise SyncError(f"cannot run ssh: {exc}") from exc
+    if proc.returncode != 0:
+        detail = proc.stderr.decode(errors="replace").strip()
+        raise SyncError(detail or f"ssh exited {proc.returncode}")
+    return proc.stdout
+
+
+def remote_hostname(host: str) -> str:
+    """The name the remote reports for itself — an ssh alias is not one.
+
+    Only the marked line counts, so a profile or login banner on stdout can
+    never rename the owner (and with it the merge key)."""
+    reported = [
+        line.split(" ", 1)[1].strip()
+        for line in ssh_script(host, "identity", (), 30)
+        .decode(errors="replace")
+        .splitlines()
+        if line.startswith("skill-log-host ")
+    ]
+    if not reported or not reported[-1]:
+        raise SyncError("the remote did not report a hostname")
+    return reported[-1]
+
+
+def pull_snapshot(host: str, remote_db: str) -> bytes:
+    """One consistent snapshot of the remote log, streamed over SSH. An
+    empty path means the remote's own default (its XDG_STATE_HOME)."""
+    payload = ssh_script(host, "snapshot", (remote_db,) if remote_db else (), 120)
+    if not payload:
+        raise SyncError("the remote snapshot came back empty")
+    return payload
+
+
+def snapshot_rows(path: Path) -> tuple[list[dict[str, object]], dict[int, list[str]]]:
+    """Every invocation in a snapshot, plus its problems. A snapshot from an
+    older skill-log carries none of the later columns; they read as blanks,
+    so an old remote never blocks the merge."""
+    try:
+        conn = sqlite3.connect(
+            f"{path.resolve().as_uri()}?mode=ro", uri=True, timeout=5
+        )
+    except sqlite3.Error as exc:
+        raise SyncError(f"cannot read the snapshot: {exc}") from exc
+    conn.row_factory = sqlite3.Row
+    try:
+        have = {str(row[1]) for row in conn.execute("PRAGMA table_info(invocations)")}
+        if not {"id", "ts", "skill"} <= have:
+            raise SyncError("the remote db is not a skill-log database")
+        # origin_id is the merge identity: a remote that is itself an
+        # aggregate carries its copies' true owner ids, and those travel on
+        # so a chained sync stays idempotent instead of duplicating rows.
+        cols = ", ".join(
+            c if c in have else ("0" if c == "origin_id" else "''") + f" AS {c}"
+            for c in ("id", *SYNC_COLUMNS, "origin_id")
+        )
+        rows = [
+            dict(row)
+            for row in conn.execute(f"SELECT {cols} FROM invocations ORDER BY id")
+        ]
+        problems: dict[int, list[str]] = {}
+        try:
+            for inv_id, _ordinal, text in conn.execute(
+                "SELECT invocation_id, ordinal, problem FROM problems"
+                " ORDER BY invocation_id, ordinal"
+            ):
+                problems.setdefault(int(inv_id), []).append(str(text))
+        except sqlite3.Error as exc:
+            # A log written before the problems table existed has rows and
+            # no problems. Damage, or a foreign table's shape, is named
+            # instead: merging rows without their friction would be silent
+            # data loss on the one thing this tool exists to hold.
+            if "no such table" not in str(exc).lower():
+                raise SyncError(
+                    f"the remote's problems table is unreadable: {exc}"
+                ) from exc
+    except sqlite3.Error as exc:
+        raise SyncError(f"cannot read the snapshot: {exc}") from exc
+    finally:
+        conn.close()
+    return rows, problems
+
+
+@dataclass
+class MergeCounts:
+    """What one merge did, field by field, so the report never guesses."""
+
+    inserted: int = 0
+    updated: int = 0
+    unchanged: int = 0
+    skipped: int = 0
+    replaced: int = 0
+
+
+def insert_invocation(
+    conn: sqlite3.Connection,
+    record: dict[str, str],
+    origin: int,
+    problems: list[str],
+) -> None:
+    cur = conn.execute(
+        "INSERT INTO invocations"
+        " (ts, skill, parent, model, project, t3_thread,"
+        " opencode_thread, worktree, machine, fix, resolved_at,"
+        " origin_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        tuple(record[c] for c in SYNC_COLUMNS) + (origin,),
+    )
+    conn.executemany(
+        "INSERT INTO problems (invocation_id, ordinal, problem) VALUES (?, ?, ?)",
+        [(cur.lastrowid, ordinal, text) for ordinal, text in enumerate(problems, 1)],
+    )
+
+
+def merge_snapshot(
+    db: Path,
+    rows: list[dict[str, object]],
+    problems: dict[int, list[str]],
+    host: str,
+) -> MergeCounts:
+    """Insert rows this db has never seen, take the owner's fix/resolved_at
+    forward, and leave rows this db wrote alone.
+
+    Three shapes get special treatment, each because it would otherwise lose
+    or inflate data silently: a snapshot copy of a row this db owns is
+    skipped (this db is authoritative for its own rows); a key whose ts/skill
+    no longer match means the owner's log was recreated and reused its ids,
+    so the stale copy is replaced rather than patched; and problems always
+    attach by the remote row's own id, never by the owner id it carries."""
+
+    local_host = socket.gethostname() or ""
+
+    def attempt() -> MergeCounts:
+        conn = write_conn(db, timeout=WRITE_CONNECT_TIMEOUT)
+        try:
+            known = {
+                (str(machine), int(origin)): (int(inv_id), str(ts), str(skill))
+                for inv_id, machine, origin, ts, skill in conn.execute(
+                    "SELECT id, machine, origin_id, ts, skill FROM invocations"
+                    " WHERE origin_id > 0"
+                )
+            }
+            machines = {machine for machine, _ in known}
+            counts = MergeCounts()
+            for row in rows:
+                # A row with no machine predates the column this merge keys
+                # on; the host it came from (as the remote names itself) is
+                # its owner. A row merged by the remote keeps its own owner id.
+                record = {c: str(row[c] or "") for c in SYNC_COLUMNS}
+                record["machine"] = host_alias(record["machine"] or host, machines)
+                machines.add(record["machine"])
+                origin = int(str(row["origin_id"] or row["id"]))
+                if same_host(record["machine"], local_host):
+                    counts.skipped += 1
+                    continue
+                hit = known.get((record["machine"], origin))
+                if hit is not None:
+                    local_id, local_ts, local_skill = hit
+                    if (local_ts, local_skill) == (record["ts"], record["skill"]):
+                        cur = conn.execute(
+                            "UPDATE invocations SET fix = ?, resolved_at = ?"
+                            " WHERE id = ? AND (fix <> ? OR resolved_at <> ?)",
+                            (
+                                record["fix"],
+                                record["resolved_at"],
+                                local_id,
+                                record["fix"],
+                                record["resolved_at"],
+                            ),
+                        )
+                        if cur.rowcount:
+                            counts.updated += 1
+                        else:
+                            counts.unchanged += 1
+                        continue
+                    # The owner's log was recreated and reused its ids: the
+                    # copy is stale, and the owner is authoritative for it.
+                    conn.execute(
+                        "DELETE FROM problems WHERE invocation_id = ?", (local_id,)
+                    )
+                    conn.execute("DELETE FROM invocations WHERE id = ?", (local_id,))
+                    counts.replaced += 1
+                insert_invocation(
+                    conn,
+                    record,
+                    origin,
+                    problems.get(int(str(row["id"])), []),
+                )
+                counts.inserted += 1
+            conn.commit()
+            return counts
+        finally:
+            conn.close()
+
+    return with_write_retry(attempt)
+
+
+def cmd_sync(args: argparse.Namespace) -> int:
+    """Merge another machine's log into this db — the aggregate reads every
+    host's rows at once, and only the machine that can reach both dbs runs
+    the merge."""
+    host = args.host
+    try:
+        # The remote names itself: an ssh alias (`vps`, `localhost`, an FQDN)
+        # says nothing about which machine is on the other end, and both the
+        # self-sync guard and the owner fallback key on the real name.
+        remote_host = remote_hostname(host)
+        if same_host(remote_host, socket.gethostname() or ""):
+            print(
+                f"skill-log: {host} is this machine ({remote_host});"
+                " a self-pull would only duplicate its own rows",
+                file=sys.stderr,
+            )
+            return 1
+        payload = pull_snapshot(host, args.remote_db)
+    except SyncError as exc:
+        print(f"skill-log: cannot read {host}'s log: {exc}", file=sys.stderr)
+        return 1
+    temps: list[Path] = []
+
+    def scratch() -> Path:
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as handle:
+            path = Path(handle.name)
+        temps.append(path)
+        return path
+
+    try:
+        snapshot = scratch()
+        snapshot.write_bytes(payload)
+        rows, problems = snapshot_rows(snapshot)
+        # --dry-run merges into a throwaway copy, so the identical merge runs
+        # while the real db's rows are never written (and it is never
+        # created); the read-only copy may still leave SQLite's sidecars.
+        target = args.db
+        if args.dry_run:
+            target = scratch()
+            if args.db.is_file():
+                copy_db(args.db, target)
+        counts = merge_snapshot(target, rows, problems, remote_host)
+    except SyncError as exc:
+        print(f"skill-log: cannot read {host}'s log: {exc}", file=sys.stderr)
+        return 1
+    except (OSError, sqlite3.Error) as exc:
+        print(f"skill-log: cannot merge into {args.db}: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        # A snapshot copy is WAL, so opening it leaves -wal/-shm beside it.
+        for path in temps:
+            for leftover in (path, Path(f"{path}-wal"), Path(f"{path}-shm")):
+                leftover.unlink(missing_ok=True)
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "host": host,
+                    "inserted": counts.inserted,
+                    "updated": counts.updated,
+                    "unchanged": counts.unchanged,
+                    "skipped": counts.skipped,
+                    "replaced": counts.replaced,
+                    "dry_run": args.dry_run,
+                }
+            )
+        )
+    else:
+        verb = "would merge" if args.dry_run else "merged"
+        line = (
+            f"{verb} {host}: {counts.inserted} new, {counts.updated} updated,"
+            f" {counts.unchanged} unchanged"
+        )
+        if counts.skipped:
+            line += f", {counts.skipped} skipped (this machine's rows)"
+        if counts.replaced:
+            line += f", {counts.replaced} replaced (owner rebuilt its log)"
+        print(line)
+    return 0
+
+
+def invocation_rows(
+    conn: sqlite3.Connection,
+    skill: str,
+    machine: str,
+    unresolved: bool,
+    limit: int,
+) -> list[sqlite3.Row]:
+    where, marks = [], []
+    if skill:
+        where.append("skill = ?")
+        marks.append(skill)
+    if machine:
+        where.append("machine = ?")
+        marks.append(machine)
+    if unresolved and has_column(conn, "fix"):
+        # A db without the column predates resolution, so every row in it is
+        # unresolved and the filter is a no-op.
+        where.append("fix = ''")
+    clause = f" WHERE {' AND '.join(where)}" if where else ""
+    # datetime() normalizes each row's ISO timestamp (rows carry their
+    # writer's own UTC offset) so an aggregate orders by when a run happened,
+    # not by the order syncs happened to land.
+    return conn.execute(
+        f"SELECT * FROM invocations{clause}"
+        " ORDER BY datetime(ts) DESC, id DESC LIMIT ?",
+        (*marks, limit),
+    ).fetchall()
+
+
+def gather_problems(conn: sqlite3.Connection, ids: list[int]) -> dict[int, list[str]]:
+    """Problems per invocation id, ordinal order; absent ids map to [] to
+    keep the clean rows visible in show's output."""
+    out: dict[int, list[str]] = {i: [] for i in ids}
+    if not ids:
+        return out
+    marks = ",".join("?" * len(ids))
+    for row in conn.execute(
+        f"SELECT invocation_id, ordinal, problem FROM problems"
+        f" WHERE invocation_id IN ({marks}) ORDER BY ordinal",
+        ids,
+    ):
+        out[int(row[0])].append(str(row[2]))
+    return out
+
+
+def shorten(path: str) -> str:
+    home = str(Path.home()) + os.sep
+    return f"~{os.sep}{path[len(home) :]}" if path.startswith(home) else path
+
+
+def empty_message(skill: str, machine: str = "") -> str:
+    if skill and machine:
+        return f"no invocations match --skill {skill} on machine {machine}"
+    if skill:
+        return f"no invocations match --skill {skill}"
+    if machine:
+        return f"no invocations from machine {machine}"
+    return "no invocations logged yet"
+
+
+def report_damage(db: Path, exc: sqlite3.Error) -> bool:
+    """Name a damaged log on stderr; True when this error means damage."""
+    if not is_corruption(exc):
+        return False
+    print(
+        f"skill-log: {db} is not a skill-log database (corrupt, or not a log db)",
+        file=sys.stderr,
+    )
+    return True
+
+
+def cmd_show(args: argparse.Namespace) -> int:
+    try:
+        conn = read_conn(args.db)
+    except sqlite3.Error as exc:
+        print(f"skill-log: cannot open {args.db}: {exc}", file=sys.stderr)
+        return 1
+    try:
+        if conn is None:
+            rows: list[sqlite3.Row] = []
+            problems: dict[int, list[str]] = {}
+        else:
+            # A pre-migration db gets the columns on first touch, so
+            # snapshot reads work before any add has run. A failed migration
+            # (read-only file) still reads, and the dict guards below render
+            # missing columns as "".
+            try:
+                ensure_columns(conn)
+            except sqlite3.Error as exc:
+                # A read-only db refuses to migrate and still reads; damage
+                # is named once and stops the read.
+                if report_damage(args.db, exc):
+                    return 1
+            try:
+                rows = invocation_rows(
+                    conn, args.skill, args.machine, args.unresolved, args.last
+                )
+            except sqlite3.Error as exc:
+                if report_damage(args.db, exc):
+                    return 1
+                rows = []  # no tables yet: an existing but empty db file
+            problems = {int(r["id"]): [] for r in rows}
+            if rows:
+                try:
+                    problems = gather_problems(conn, [int(r["id"]) for r in rows])
+                except sqlite3.Error as exc:
+                    if report_damage(args.db, exc):
+                        return 1
+                    # A log written before the problems table existed has
+                    # rows and no problems; they render as clean runs.
+    finally:
+        if conn is not None:
+            conn.close()
+    if not rows:
+        if args.json:
+            return 0  # empty JSON-lines stream stays parseable
+        print(empty_message(args.skill, args.machine))
+        return 0
+    if args.json:
+        for r in rows:
+            print(
+                json.dumps(
+                    {
+                        "id": int(r["id"]),
+                        "ts": str(r["ts"]),
+                        "skill": str(r["skill"]),
+                        "parent": str(dict(r).get("parent", "")),
+                        "model": str(dict(r).get("model", "")),
+                        "project": str(r["project"]),
+                        "t3_thread": str(r["t3_thread"]),
+                        "opencode_thread": str(r["opencode_thread"]),
+                        "worktree": str(r["worktree"]),
+                        "machine": str(r["machine"]),
+                        # The marker a fix commit names this row with: its
+                        # host plus the id in the db that wrote it, which is
+                        # origin_id for a synced copy and its own id otherwise.
+                        "origin_id": int(dict(r).get("origin_id", 0) or 0),
+                        "marker": (
+                            f"{str(r['machine']) or socket.gethostname()}"
+                            f"#{int(dict(r).get('origin_id', 0) or r['id'])}"
+                        ),
+                        "fix": str(dict(r).get("fix", "")),
+                        "resolved_at": str(dict(r).get("resolved_at", "")),
+                        "problems": problems[int(r["id"])],
+                    }
+                )
+            )
+        return 0
+    columns = [
+        ("inv", lambda r: str(r["id"])),
+        ("ts", lambda r: str(r["ts"])),
+        ("machine", lambda r: sanitize(str(dict(r).get("machine", "")))),
+        ("project", lambda r: sanitize(str(r["project"]))),
+        ("worktree", lambda r: shorten(str(r["worktree"]))),
+        ("skill", lambda r: sanitize(str(r["skill"]))),
+        ("parent", lambda r: sanitize(str(dict(r).get("parent", "")))),
+        ("model", lambda r: sanitize(str(dict(r).get("model", "")))),
+        ("fix", lambda r: sanitize(str(dict(r).get("fix", "")))),
+        ("resolved_at", lambda r: sanitize(str(dict(r).get("resolved_at", "")))),
+    ]
+    width = {h: max(len(h), *(len(get(r)) for r in rows)) for h, get in columns}
+    print("  ".join(h.ljust(width[h]) for h, _ in columns))
+    for r in rows:
+        print("  ".join(get(r).ljust(width[h]) for h, get in columns))
+        for i, problem in enumerate(problems[int(r["id"])], start=1):
+            print(f"    problem {i}: {sanitize(problem)}")
+    return 0
+
+
+def cmd_stats(args: argparse.Namespace) -> int:
+    # COUNT(DISTINCT i.id), never COUNT(*): the LEFT JOIN fans out one row
+    # per problem, and the invocation count is the rate's denominator.
+    # --by-model slices the rate down to (skill, model) — the rotation view,
+    # friction per model rather than per skill. The plain grouping stays
+    # skill-only, so existing readers of the table never re-parse.
+    model_select = "i.model" if args.by_model else "''"
+    model_tie = ", i.model" if args.by_model else ""
+    where = "WHERE i.skill = ?" if args.skill else ""
+    marks = (args.skill,) if args.skill else ()
+    # A db that predates the fix column (an older skill-log, or a read-only
+    # copy of one) resolves nothing yet; the count is 0 there, never a
+    # "no such column" that the empty-rows fallback would turn into the
+    # "no invocations logged yet" lie. Filled in below once the schema is
+    # known.
+    resolved_select = "0"
+    rows: list[tuple[str, str, int, int, int, int]] = []
+    try:
+        conn = read_conn(args.db)
+    except sqlite3.Error as exc:
+        print(f"skill-log: cannot open {args.db}: {exc}", file=sys.stderr)
+        return 1
+    try:
+        if conn is not None:
+            model_ready = False
+            try:
+                # Same first-touch migration as show: a snapshot read of a
+                # pre-migration db must not lie or crash. model_ready is
+                # read from the schema BEFORE the migration attempts, so a
+                # failed ALTER (a read-only snapshot that has model but
+                # cannot add parent) keeps the schema's own verdict; a
+                # successful one is picked up straight after.
+                model_ready = has_column(conn, "model")
+                ensure_columns(conn)
+                model_ready = model_ready or has_column(conn, "model")
+                if has_column(conn, "fix"):
+                    resolved_select = (
+                        "COUNT(DISTINCT CASE WHEN i.fix <> '' THEN i.id END)"
+                    )
+            except sqlite3.Error as exc:
+                # A damaged file must be named: the empty-rows fallback would
+                # print "no invocations logged yet" over a populated log.
+                if report_damage(args.db, exc):
+                    return 1
+            if args.by_model and not model_ready:
+                # Silence would print "no invocations logged yet" over a
+                # populated log; the honest failure names what migrates it.
+                print(
+                    "skill-log: this log db has no model column yet"
+                    " (--db to a snapshot copy); a write migrates it —"
+                    " run skill-log add once",
+                    file=sys.stderr,
+                )
+                return 1
+            try:
+                # A log written before the problems table existed (or a
+                # snapshot of one) still has invocation rows; the counts read
+                # as 0 rather than as an empty log.
+                if has_problems_table(conn):
+                    join = " LEFT JOIN problems p ON p.invocation_id = i.id"
+                    with_problems_expr = "COUNT(DISTINCT p.invocation_id)"
+                    problems_expr = "COUNT(p.ordinal)"
+                else:
+                    join = ""
+                    with_problems_expr = "0"
+                    problems_expr = "0"
+                query = (
+                    "SELECT i.skill, "
+                    + model_select
+                    + ", COUNT(DISTINCT i.id) AS invocations,"
+                    f" {with_problems_expr} AS with_problems,"
+                    f" {problems_expr} AS problems,"
+                    f" {resolved_select} AS resolved"
+                    " FROM invocations i" + join + f" {where}"
+                    f" GROUP BY i.skill{model_tie} ORDER BY i.skill{model_tie}"
+                )
+                raw = conn.execute(query, marks).fetchall()
+                rows = [
+                    (str(skill), str(model), int(inv), int(wp), int(pr), int(res))
+                    for skill, model, inv, wp, pr, res in raw
+                ]
+            except sqlite3.Error as exc:
+                if report_damage(args.db, exc):
+                    return 1
+                rows = []
+    finally:
+        if conn is not None:
+            conn.close()
+    if not rows:
+        if args.json:
+            return 0
+        print(empty_message(args.skill))
+        return 0
+    if args.json:
+        for skill, model, invocations, with_problems, problems, resolved in rows:
+            ratio = problems / invocations if invocations else 0.0
+            event: dict[str, object] = {
+                "skill": skill,
+                "invocations": invocations,
+                "with_problems": with_problems,
+                "problems": problems,
+                "resolved": resolved,
+                "problems_per_invocation": ratio,
+            }
+            if args.by_model:
+                event["model"] = model
+            print(json.dumps(event))
+        return 0
+    if args.by_model:
+        cols: tuple[tuple[int, str], ...] = (
+            (0, "skill"),
+            (1, "model"),
+            (2, "invocations"),
+            (3, "with_problems"),
+            (4, "problems"),
+            (5, "resolved"),
+        )
+    else:
+        cols = (
+            (0, "skill"),
+            (2, "invocations"),
+            (3, "with_problems"),
+            (4, "problems"),
+            (5, "resolved"),
+        )
+    width = {h: max(len(h), *(len(str(r[j])) for r in rows)) for j, h in cols}
+    header = "  ".join(h.ljust(width[h]) for _, h in cols) + "  problems/invocation"
+    print(header)
+    for row in rows:
+        ratio = row[4] / row[2] if row[2] else 0.0
+        cells = "  ".join(sanitize(str(row[j])).ljust(width[h]) for j, h in cols)
+        print(cells + f"  {ratio:g}")
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = SkillLogParser(
+        prog="skill-log",
+        description="Append a row per skill invocation; problems tie to it.",
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    p_add = sub.add_parser(
+        "add",
+        help="log one invocation (skills call this silently, once, at the end)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  skill-log add --skill create-skill\n"
+            "  skill-log add --skill diagnosing-bugs \\\n"
+            '      --problem "step 3 assumed a core dump exists"\n'
+            '  skill-log add --skill flow --t3-thread thread_abc123 --problem "..." \\\n'
+            '      --problem "second finding"\n'
+            "  skill-log add --skill research --parent thread_abc123 \\\n"
+            '      --problem "reviewer seat could not read the diff"\n'
+            "\n"
+            "Run it exactly once at the end of a skill invocation — a retry\n"
+            "lands a duplicate row. A clean run omits --problem; the row still\n"
+            "lands. A row for a dispatched subagent carries --parent: the T3\n"
+            "thread id of the run that spawned it, so its rows coalesce with\n"
+            "the parent run's under one thread when dedupe is needed.\n"
+            "--dry-run previews the row without writing anything.\n"
+        ),
+    )
+    p_add.add_argument(
+        "--skill", required=True, type=skill_name, help="name of the invoked skill"
+    )
+    p_add.add_argument(
+        "--problem",
+        action="append",
+        default=[],
+        help="one problem or friction found; repeatable (text starting with"
+        " '-' needs the --problem=-text form)",
+    )
+    p_add.add_argument("--t3-thread", default="", help="T3 thread id, when known")
+    p_add.add_argument(
+        "--parent",
+        default="",
+        help="T3 thread id of the run that dispatched this row's subagent;"
+        " on dispatched rows only, so one dispatch tree's rows coalesce for"
+        " dedupe",
+    )
+    p_add.add_argument(
+        "--model", default="", help="override the auto-detected model (provider/id)"
+    )
+    p_add.add_argument(
+        "--opencode-thread", default="", help="override the auto-detected session id"
+    )
+    p_add.add_argument(
+        "--project", default="", help="override the auto-detected project"
+    )
+    p_add.add_argument(
+        "--worktree", default="", help="override the auto-detected worktree"
+    )
+    p_add.add_argument(
+        "--machine", default="", help="override the auto-detected hostname"
+    )
+    p_add.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="print the row as JSON that would be written; insert nothing",
+    )
+    p_add.add_argument("--json", action="store_true", help="emit the row as JSON")
+    p_add.add_argument(
+        "--db", type=db_path, default=default_db(), help="override the database path"
+    )
+    p_add.set_defaults(func=cmd_add)
+
+    p_show = sub.add_parser(
+        "show",
+        help="print the most recent invocations, problems indented under each",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  skill-log show\n"
+            "  skill-log show --skill create-skill --last 5\n"
+            "  skill-log show --machine hersan --last 10\n"
+            "  skill-log show --unresolved --json | jq -r .id\n"
+            "  skill-log show --last 50 --json | jq -r '.skill'\n"
+        ),
+    )
+    p_show.add_argument("--skill", default="", help="filter by skill name")
+    p_show.add_argument(
+        "--machine",
+        default="",
+        help="filter by hostname — a synced row's owning machine",
+    )
+    p_show.add_argument(
+        "--unresolved",
+        action="store_true",
+        help="only rows no fix commit has resolved yet",
+    )
+    p_show.add_argument(
+        "--last", type=last_n, default=20, help="how many rows: 1..500 (default 20)"
+    )
+    p_show.add_argument(
+        "--json",
+        action="store_true",
+        help="emit one JSON object per invocation; nothing when nothing matches",
+    )
+    p_show.add_argument(
+        "--db", type=db_path, default=default_db(), help="override the database path"
+    )
+    p_show.set_defaults(func=cmd_show)
+
+    p_stats = sub.add_parser(
+        "stats",
+        help="per-skill invocation counts and the problems/invocation rate",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  skill-log stats\n"
+            "  skill-log stats --skill create-skill\n"
+            "  skill-log stats --by-model\n"
+            "  skill-log stats --db /tmp/opencode/skill-log/scratch.db --json\n"
+        ),
+    )
+    p_stats.add_argument("--skill", default="", help="restrict to one skill")
+    p_stats.add_argument(
+        "--by-model",
+        action="store_true",
+        help="group by (skill, model) instead of skill alone",
+    )
+    p_stats.add_argument(
+        "--json",
+        action="store_true",
+        help="emit one object per skill instead of the table",
+    )
+    p_stats.add_argument(
+        "--db", type=db_path, default=default_db(), help="override the database path"
+    )
+    p_stats.set_defaults(func=cmd_stats)
+
+    p_resolve = sub.add_parser(
+        "resolve",
+        help="mark one invocation resolved with the commit that carries the fix",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  skill-log resolve --id 42 --fix a1b2c3d\n"
+            "  skill-log resolve --id 42 --fix a1b2c3d --dry-run\n"
+            "\n"
+            "The commit is a post-commit step: the squash merge's hash is the\n"
+            "one the fix ships in, so run this after the merge. Re-running is\n"
+            "safe — the same row, the same commit. --dry-run previews the\n"
+            "update without writing anything.\n"
+        ),
+    )
+    p_resolve.add_argument(
+        "--id",
+        type=int,
+        required=True,
+        help="invocation id to mark resolved (from show)",
+    )
+    p_resolve.add_argument(
+        "--fix",
+        required=True,
+        type=fix_commit,
+        help="commit hash that carries the fix (the squash merge's hash)",
+    )
+    p_resolve.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="preview the update as JSON; no row is written (an old db's"
+        " schema still converges)",
+    )
+    p_resolve.add_argument(
+        "--json", action="store_true", help="emit the update as JSON"
+    )
+    p_resolve.add_argument(
+        "--db", type=db_path, default=default_db(), help="override the database path"
+    )
+    p_resolve.set_defaults(func=cmd_resolve)
+
+    p_resolve_merged = sub.add_parser(
+        "resolve-merged",
+        help="resolve the rows a merged fix commit names with its trailer",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  skill-log resolve-merged\n"
+            "  skill-log resolve-merged --since origin/main~5 --dry-run --json\n"
+            "\n"
+            "Reads the commits on the current branch for a Skill-log-Fix\n"
+            "trailer in the commit's last trailer block — the fix commit names\n"
+            "the rows it addresses, each as machine#id, e.g.\n"
+            "\n"
+            "    Skill-log-Fix: omarchy#12, omarchy#14, hermes#7\n"
+            "\n"
+            "The machine is required: one id means a different row in each\n"
+            "machine's db, and every machine reads the same commit.\n"
+            "`show --json` prints each row's marker in that form.\n"
+            "\n"
+            "(a squash merge takes the PR body as its commit body, so the\n"
+            "trailer goes at the end of the PR body). Each named row this db\n"
+            "owns is stamped with that commit's hash. Re-running is safe; a\n"
+            "git post-merge hook runs this after every pull, so the stamp\n"
+            "lands without anyone remembering. Rows logged after the commit,\n"
+            "rows another machine owns, and ids this db does not have are\n"
+            "reported and left alone; a marker the last-trailer-block rule\n"
+            "hides is reported too, never dropped silently. --dry-run previews,\n"
+            "and --quiet silences the report.\n"
+        ),
+    )
+    p_resolve_merged.add_argument(
+        "--since",
+        default=None,
+        type=revision,
+        metavar="REV",
+        help="scan REV..HEAD instead of all of HEAD's history (the post-merge"
+        " hook passes HEAD@{1}, so a marker is reported once, when it lands)",
+    )
+    p_resolve_merged.add_argument(
+        "--quiet",
+        action="store_true",
+        help="print nothing but errors (the hook's fallback when it cannot"
+        " narrow the scan)",
+    )
+    p_resolve_merged.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="report what would be stamped; write nothing",
+    )
+    p_resolve_merged.add_argument(
+        "--json", action="store_true", help="emit the outcome as JSON"
+    )
+    p_resolve_merged.add_argument(
+        "--db", type=db_path, default=default_db(), help="override the database path"
+    )
+    p_resolve_merged.set_defaults(func=cmd_resolve_merged)
+
+    p_fix = sub.add_parser(
+        "fix",
+        help="write the report file the merge resolves from (.skill-log/fixes)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  skill-log fix --id 42 --id 43\n"
+            "  skill-log fix --thread ses_abc123\n"
+            "  skill-log fix --check\n"
+            "\n"
+            "Writes .skill-log/fixes/<branch>.txt — one machine#id per line,\n"
+            "committed with the change — listing the invocations this change\n"
+            "resolves. That file is the transport: a squash merge keeps tree\n"
+            "content, so the report cannot be reworded or buried the way a\n"
+            "commit-body trailer can. resolve-merged reads the files a pull\n"
+            "added or changed; a repo without .skill-log/fixes/ keeps the\n"
+            "Skill-log-Fix trailer as its input. A row that belongs to another\n"
+            "machine is reported under that machine's name — that machine\n"
+            "resolves it. --check validates the file without writing;\n"
+            "--dry-run previews.\n"
+        ),
+    )
+    p_fix.add_argument(
+        "--id",
+        type=int,
+        action="append",
+        default=[],
+        help="invocation id to report (repeatable; from show)",
+    )
+    p_fix.add_argument(
+        "--thread",
+        default="",
+        help="report every unresolved row this thread logged (opencode session,"
+        " T3 thread, or parent)",
+    )
+    p_fix.add_argument(
+        "--skill", type=skill_name, default=None, help="restrict to one skill's rows"
+    )
+    p_fix.add_argument(
+        "--slug", default="", help="report file name (default: the branch name)"
+    )
+    p_fix.add_argument(
+        "--check",
+        action="store_true",
+        help="validate the branch's report file; write nothing",
+    )
+    p_fix.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="report what would be written; create no file",
+    )
+    p_fix.add_argument("--json", action="store_true", help="emit the outcome as JSON")
+    p_fix.add_argument(
+        "--db", type=db_path, default=default_db(), help="override the database path"
+    )
+    p_fix.set_defaults(func=cmd_fix)
+
+    p_sync = sub.add_parser(
+        "sync",
+        help="merge another machine's log into this one, over SSH",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  skill-log sync --from hersan\n"
+            "  skill-log sync --from hersan --dry-run --json\n"
+            "  skill-log sync --from hersan --remote-db ~/state/skills.db\n"
+            "\n"
+            "The remote's rows are never modified: the merge streams a\n"
+            "consistent sqlite snapshot over ssh (SQLite does create its\n"
+            "own -shm/-wal sidecars beside the remote db). Rows dedupe by\n"
+            "(machine, origin_id) — a row's host and its id in the db that\n"
+            "wrote it — so re-running merges nothing twice and takes the\n"
+            "owner's fix/resolved_at forward. Run it on the machine that can\n"
+            "reach every log it aggregates (the desktop pulling a VPS); rows\n"
+            "this db wrote are never overwritten.\n"
+        ),
+    )
+    p_sync.add_argument(
+        "--from",
+        dest="host",
+        required=True,
+        type=host_name,
+        metavar="HOST",
+        help="ssh host whose log to pull (a hostname or ssh alias)",
+    )
+    p_sync.add_argument(
+        "--remote-db",
+        default=DEFAULT_REMOTE_DB,
+        metavar="PATH",
+        help="the remote log's path (default: the remote's own, honoring"
+        " its XDG_STATE_HOME)",
+    )
+    p_sync.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="merge into a throwaway copy and report what would change;"
+        " this db's rows are never written",
+    )
+    p_sync.add_argument("--json", action="store_true", help="emit the counts as JSON")
+    p_sync.add_argument(
+        "--db", type=db_path, default=default_db(), help="override the database path"
+    )
+    p_sync.set_defaults(func=cmd_sync)
+
+    return parser
+
+
+def main() -> int:
+    args = build_parser().parse_args()
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
