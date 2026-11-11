@@ -17,6 +17,7 @@ Only verbs that actually work are registered. There is no "not implemented"
 stub: a later ticket appends its verb here when it lands.
 """
 
+from skill_log.add import handle_add
 from skill_log.errors import Outcome
 from skill_log.help import top_level_help
 from skill_log.verb import Verb
@@ -42,6 +43,28 @@ def handle_help(args: List[String]) raises -> Outcome:
 def build_verbs() raises -> List[Verb]:
     """The verb table, in the order `--help` lists them."""
     var verbs = List[Verb]()
+
+    var add_examples = List[String]()
+    add_examples.append("skill-log add --skill diagnosing-bugs")
+    add_examples.append(
+        'skill-log add --skill diagnosing-bugs --problem "step 3 assumed a core dump exists"'
+    )
+    add_examples.append("skill-log add --skill create-skill --dry-run --json")
+    verbs.append(
+        Verb(
+            "add",
+            "record one skill invocation and the friction it produced",
+            "skill-log add --skill <name> [--problem <text>]... [--dry-run] [--json] [--db <path>]",
+            add_examples,
+            "A clean run still writes a row: the invocation count is the\n"
+            "denominator of the problems-per-invocation rate.\n"
+            "\n"
+            "add is not idempotent. The log records occurrences, so a retry\n"
+            "after a crashed run is indistinguishable from a genuine repeat\n"
+            "and deduping would hide the second occurrence of one error.\n"
+            "Two identical calls therefore produce two rows.",
+        )
+    )
 
     var version_examples = List[String]()
     version_examples.append("skill-log --version")
@@ -74,6 +97,7 @@ def build_verbs() raises -> List[Verb]:
 def build_handlers() raises -> List[type_of(handle_version)]:
     """The handler table, indexed in step with `build_verbs`."""
     var handlers = List[type_of(handle_version)]()
+    handlers.append(handle_add)
     handlers.append(handle_version)
     handlers.append(handle_help)
     return handlers^
