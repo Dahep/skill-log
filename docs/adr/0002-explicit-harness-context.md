@@ -3,11 +3,11 @@
 **Status:** proposed, 2026-11-11.
 **Amends:** the data model in
 [issue #1](https://github.com/Dahep/skill-log/issues/1), the storage section in
-[issue #3](https://github.com/Dahep/skill-log/issues/3), and ADR-0001's
-"no store migration" consequence. It was written before any code was ported.
+[issue #3](https://github.com/Dahep/skill-log/issues/3), ADR-0001's "no store
+migration" consequence, and 1.0's scope: multi-machine consolidation is out.
 **Reference implementation:** dotfiles branch `t3/e53b1745` (2,323 lines, the
 only copy carrying `fix` and report files). It is the port source and the
-parity target.
+parity target, not a store to inherit.
 
 ## Context
 
@@ -21,12 +21,12 @@ reference implementation assumes T3 Code and opencode in six places:
 | Autodetect | `OPENCODE_SESSION_ID`; `$T3CODE_HOME/worktrees/<project>`; reads `~/.local/share/opencode/opencode.db` (`session_v2.model`, a JSON value) to fill `model` |
 | `fix` selection | `--thread` matches `opencode_thread` OR `t3_thread` OR `parent` |
 | `show --json` | exports both thread ids as stable shape |
-| Sync and skills | `SYNC_COLUMNS` carries both; the usage-log block teaches `--t3-thread` |
+| Skills | the usage-log block teaches `--t3-thread` |
 
-The live store shows what that costs in practice: 102 rows, all carrying
-`opencode_thread`, 12 carrying `t3_thread`, 16 carrying `parent`. A Claude
-Code or Codex user gets blanks in every one of those fields, and a new harness
-needs a schema change plus a binary release.
+The reference store shows what that costs in practice: 102 rows, all carrying
+`opencode_thread`, 12 carrying `t3_thread`, 16 carrying `parent`. A Claude Code
+or Codex user gets blanks in every one of those fields, and a new harness needs
+a schema change plus a binary release.
 
 The specification already says the user owns *what gets logged* (the usage-log
 template) while the schema fixes *which fields exist*. That asymmetry is the
@@ -57,11 +57,11 @@ from. That is why they belong in typed columns rather than a free-form bag.
    | `project` | the T3 project grouping | the `t3` adapter is off, or the run is outside T3 |
    | `t3_thread` | the T3 thread id | the caller did not pass one |
    | `machine` | the hostname | never |
-   | `fix`, `resolved_at`, `origin_id` | the resolution and merge contract from #1, unchanged | never |
+   | `fix`, `resolved_at` | the resolution contract from #1, unchanged | never |
 
-   All text columns are `NOT NULL DEFAULT ''`, as today: empty means "unknown
-   or not applicable". The SQL layer stays free of NULL semantics, and #1's
-   JSON shapes keep one type per field.
+   All text columns are `NOT NULL DEFAULT ''`: empty means "unknown or not
+   applicable". The SQL layer stays free of NULL semantics, and #1's JSON
+   shapes keep one type per field.
 
 2. **`problems.problem` is the agent's description.** One `--problem` per
    finding, each carrying the agent's own sentence about what went wrong.
@@ -69,10 +69,10 @@ from. That is why they belong in typed columns rather than a free-form bag.
    signal and split the rate's numerator across two tables. A run with two
    distinct frictions has two problems; a clean run has none.
 
-3. **`parent` stays a free-form string**, not a foreign key. It is the
-   spawning run's id in the same namespace as `session`, so it survives sync
-   with no id remapping and still expresses a parent that lives on another
-   machine. Dispatch-tree coalescing is `parent = <run id>` or
+3. **`parent` is a free-form string**, not a foreign key. It names the
+   spawning run in the same namespace as `session`, so it survives being read
+   by anything that did not write the row and still expresses a parent that is
+   not in this store. Dispatch-tree coalescing is `parent = <run id>` or
    `session = <run id>`, whichever names the run.
 
 4. **The caller supplies context; adapters fill what they can prove.** Flags:
@@ -106,22 +106,25 @@ from. That is why they belong in typed columns rather than a free-form bag.
    gains `--harness` and `--repo`. `show --json` exposes the new fields flat
    and drops `opencode_thread`; `t3_thread` and `project` stay.
 
-7. **The store migrates additively on first write.** Schema v2 adds `harness`,
-   `session` and `repo`, and stamps `PRAGMA user_version = 2`. The first write
-   backfills in one transaction: `session = opencode_thread`,
-   `harness = 'opencode'` where a session or a T3 thread exists, `parent`,
-   `project`, `t3_thread`, `worktree` and `model` keep their values, and `repo`
-   stays empty because an old worktree path does not prove a repository. The
-   legacy `opencode_thread` column is kept for the transition and dropped in
-   2.0. Reads may converge a missing column as #1 already allows, but they
-   never backfill rows and never stamp a version; a row with an empty `session`
-   falls back to `opencode_thread`, so an unmigrated file renders correctly. A
-   store stamped newer than the binary is refused by name.
+7. **The store is created, not inherited.** 1.0 defines its own schema and
+   creates it on the first write. It does not convert the Python-era store:
+   moving that data is part of switching a machine's setup, not part of this
+   project. An existing file that is not this schema is refused by name
+   ("not a skill-log store" or "an older skill-log store"), with no
+   half-migration. `PRAGMA user_version = 1` stamps the schema; a store
+   stamped newer than the binary is refused by name.
 
-8. **The store rules do not move.** Owner authority, `(machine, origin_id)`
-   dedupe, newest-marker-wins, skip-after-the-commit, idempotent resolution,
-   one-line failures and exit codes are unchanged. New columns ride along in
-   sync like the existing ones.
+8. **One store per machine.** Multi-machine consolidation — `sync`, an
+   aggregate store, merged copies, owner authority — is out of scope for this
+   project at this time; the user's own setup handles it internally. Rows
+   still carry `machine`, because the marker grammar (`machine#id`) and the
+   report contract are unchanged, and because an external consolidator needs
+   the origin of a row.
+
+9. **The store rules that remain do not move.** Newest-marker-wins,
+   skip-a-row-logged-after-the-commit, idempotent resolution, artifact vs
+   trailer mode, hidden-marker reporting, one-line failures and exit codes are
+   unchanged.
 
 ## Why this shape
 
@@ -133,19 +136,19 @@ from. That is why they belong in typed columns rather than a free-form bag.
   `session` are the generic pair; a product-specific field becomes a column
   only when it is genuinely queried (`project`, `t3_thread`), which is why the
   T3 pair is allowed to sit empty.
-- **Nothing in the existing store is lost.** The columns map almost 1:1 onto
-  the 102 rows (`opencode_thread`→`session`, both thread ids preserved), so
-  the migration is a rename plus two columns, not a repack.
 - **Model detection stops being a release dependency.** Reading opencode's
   database becomes one adapter among several, off unless asked for, so an
   upstream schema change degrades to a blank `model`.
+- **Scope stays honest.** A single-writer store needs no origin ids, no copy
+  rules and no SSH transport; leaving them out removes the merge surface from
+  1.0 entirely.
 
 ## Consequences
 
 **Positive**
 
-- One store serves opencode today and any harness later, with no loss of the
-  existing rows.
+- One store serves opencode today and any harness later, with no compatibility
+  code in the port: no backfill, no legacy columns, no origin index.
 - The review skill can cut friction by harness, session, model, repo and
   worktree without parsing.
 - The dotfiles skill suite is re-rendered from one neutral template; the
@@ -155,13 +158,13 @@ from. That is why they belong in typed columns rather than a free-form bag.
 
 - `show --json` drops `opencode_thread` and adds five fields, so 1.0 is a
   shape break for any consumer of the old thread field.
-- The schema-version stamp, the backfill and the read fallback are new code in
-  a rewrite that was scoped to porting statements "close to verbatim".
+- Switching this machine over needs an external data move: the new binary will
+  refuse the Python-era file rather than convert it.
 - Adapters add a seam with two implementations; the seam is only worth it
   because the alternative is compiling harness knowledge into every future
   release.
-- `repo` is empty for every pre-migration row: the old `worktree` path cannot
-  prove a repository existed.
+- `sync` and everything that existed to serve it (origin ids, copy rules,
+  owner handling) leave 1.0; reintroducing them is a new design.
 
 ## Enforced by
 
@@ -171,10 +174,10 @@ from. That is why they belong in typed columns rather than a free-form bag.
 - Explicit context beats an adapter: `--model` wins over the opencode lookup.
 - `fix --run` selects a row and the rows it dispatched; `--thread` behaves
   identically in 1.0.
-- `stats --by repo` and `stats --by harness` group correctly on a mixed store,
-  and a value nobody has recorded yields no rows rather than an error.
-- A v1 fixture migrates on the first write, renders before it, and a v3 stamp
-  is refused with one named line.
+- `stats --by repo` and `stats --by harness` group correctly on a store with
+  mixed values, and a value nobody has recorded yields no rows rather than an
+  error.
+- An older or foreign store is refused with one named line and nothing written.
 - `repo`/`worktree` are empty outside a git checkout and correct inside a
   linked worktree.
 
@@ -185,11 +188,18 @@ from. That is why they belong in typed columns rather than a free-form bag.
   become string lookups.
 - **A single `error` narrative column**: duplicates `problems.problem`, and
   the rate's numerator loses its per-finding count.
-- **`parent_id` as a foreign key**: trivial local tree walks, but sync has to
-  remap ids and a parent on another machine cannot be expressed.
+- **`parent_id` as a foreign key**: trivial local tree walks, but it only
+  names rows this store wrote; a parent in another harness session or another
+  store cannot be expressed.
 - **Keep the T3/opencode columns and nothing else** (what #1 and #3 say
   today): ships a tool named for skills that only understands two agent
   products, and ties `model` to opencode's private schema.
 - **`repo` as `owner/name`**: needs credential-stripping URL parsing for a
   grouping gain the basename does not miss; the worktree path already
   disambiguates two same-named checkouts on one machine.
+- **Migrating the Python-era store in 1.0**: the 102 rows belong to one
+  machine's setup switch, and a conversion path would outlive its usefulness.
+- **Shipping `sync` in 1.0**: it is the largest surface in the reference
+  implementation and the part the user's own setup covers; keeping it would
+  dictate origin ids, copy rules and an SSH transport the product does not
+  need yet.
