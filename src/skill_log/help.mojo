@@ -12,10 +12,12 @@ from skill_log.verb import Verb
 
 
 def render_verb(verb: Verb) -> String:
-    """The usage block for one verb: its summary, its usage line, and
-    two to four real invocations."""
+    """The usage block for one verb: its summary, its usage line, its
+    notes, and two to four real invocations."""
     var text = verb.name + " — " + verb.summary + "\n"
     text += "\nusage:\n  " + verb.usage + "\n"
+    if verb.notes != "":
+        text += "\n" + verb.notes + "\n"
     text += "\nexamples:\n"
     # Indexed, not iterated: a `List` of non-Copyable elements cannot be
     # walked with `for`.
