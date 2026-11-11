@@ -244,10 +244,28 @@ check "a filter that matches nothing says so" \
     "$OUT" "no invocations match --skill nosuch"
 run show --skill nosuch --machine nosuchmachine
 check "two filters that match nothing say so" \
-    "$OUT" "no invocations match --skill nosuch on machine nosuchmachine"
+    "$OUT" "no invocations match --skill nosuch and --machine nosuchmachine"
 run show --machine nosuchmachine
 check "a machine filter that matches nothing says so" \
-    "$OUT" "no invocations from machine nosuchmachine"
+    "$OUT" "no invocations match --machine nosuchmachine"
+
+# Every filter has its own empty message. The log holds rows — the
+# filter cut them all — so the message must not say the log is empty.
+run show --harness nosuchharness
+check "a harness filter that matches nothing names the harness" \
+    "$OUT" "no invocations match --harness nosuchharness"
+run show --repo nosuchrepo
+check "a repo filter that matches nothing names the repo" \
+    "$OUT" "no invocations match --repo nosuchrepo"
+run show --run nosuchrun
+check "a run filter that matches nothing names the run" \
+    "$OUT" "no invocations match --run nosuchrun"
+
+# The filters compose in the message too: a reader who gave two filters
+# learns that both were applied.
+run show --skill nosuch --harness nosuchharness
+check "two filters that match nothing are both named" \
+    "$OUT" "no invocations match --skill nosuch and --harness nosuchharness"
 
 # ------------------------------------------------------------------- run
 
@@ -423,22 +441,30 @@ run show --nope
 check "an unknown flag is a usage error" "$STATUS" "2"
 check "an unknown flag is one named line" \
     "$(printf '%s\n' "$ERR" | grep -c '^skill-log: unknown option: --nope$')" "1"
+check "an unknown flag is one line and no more" "$(err_lines)" "1"
 
 run show --skill
 check "a missing value is a usage error" "$STATUS" "2"
+check "a missing value is one line" "$(err_lines)" "1"
 run show --last
 check "a missing --last value is a usage error" "$STATUS" "2"
+check "a missing --last value is one line" "$(err_lines)" "1"
 run show --run
 check "a missing --run value is a usage error" "$STATUS" "2"
+check "a missing --run value is one line" "$(err_lines)" "1"
 
 run show --last abc
 check "a non-integer --last is a usage error" "$STATUS" "2"
+check "a non-integer --last is one line" "$(err_lines)" "1"
 run show --last 0
 check "--last 0 is a usage error" "$STATUS" "2"
+check "--last 0 is one line" "$(err_lines)" "1"
 run show --last -1
 check "--last -1 is a usage error" "$STATUS" "2"
+check "--last -1 is one line" "$(err_lines)" "1"
 run show --last 501
 check "--last above the cap is a usage error" "$STATUS" "2"
+check "--last above the cap is one line" "$(err_lines)" "1"
 run show --last 500
 check "--last at the cap is accepted" "$STATUS" "0"
 
@@ -447,10 +473,20 @@ check "an empty filter value is a usage error" "$STATUS" "2"
 run show --run ""
 check "an empty run value is a usage error" "$STATUS" "2"
 
-# The usage error names the flag and prints the examples.
+# The usage error names the flag and lists the valid choices, on one
+# line. A reader who asked for a wrong value learns the right one
+# without a second command.
 run show --last abc
 check_contains "the usage error names the flag" "$ERR" "--last"
-check_contains "the usage error prints the examples" "$ERR" "skill-log show"
+check_contains "the usage error lists the valid choices" "$ERR" "1 and 500"
+run show --last 0
+check_contains "the too-small --last lists the valid choices" "$ERR" "1 and 500"
+run show --last 501
+check_contains "the too-large --last lists the valid choices" "$ERR" "1 and 500"
+
+# A usage error keeps stdout empty: the answer belongs on stderr.
+run show --last abc
+check "a usage error keeps stdout empty" "$OUT" ""
 
 # --------------------------------------------------------------- read-only
 

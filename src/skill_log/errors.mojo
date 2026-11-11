@@ -94,20 +94,6 @@ struct Outcome:
         outcome.usage = usage
         return outcome^
 
-    @staticmethod
-    def usage_error_with(message: String, usage: String) -> Outcome:
-        """Exit 2 with one named line and the examples on stderr.
-
-        The line says what is wrong with the call, and the examples say
-        how to make a call that works. Both belong on stderr: stdout
-        stays empty on a failure.
-        """
-        var outcome = Outcome("")
-        outcome.failure = Failure(message, EXIT_USAGE())
-        outcome.failed = True
-        outcome.usage = usage
-        return outcome^
-
 
 def report(failure: Failure):
     """Write the single stderr line this failure is allowed.

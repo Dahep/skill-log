@@ -107,14 +107,7 @@ def main():
             if outcome.usage != "":
                 # A usage error prints the usage and the examples on
                 # stderr, so stdout stays empty. The block is the whole
-                # diagnostic; no extra named line is added on top of it
-                # — unless the handler named the problem, in which case
-                # that line comes first.
-                if outcome.failure.message != "usage":
-                    print(
-                        "skill-log: " + outcome.failure.message,
-                        file=stderr,
-                    )
+                # diagnostic; no extra named line is added on top of it.
                 print(outcome.usage, file=stderr)
                 exit(outcome.failure.code)
             fail(outcome.failure)

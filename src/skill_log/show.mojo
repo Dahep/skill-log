@@ -36,7 +36,17 @@ Two shapes, one flag apart:
 
 An absent or empty store is not an error: the table prints
 `no invocations logged yet` and the JSON stream prints nothing. Both
-exit 0.
+exit 0. A filter that matches nothing says which filter it was, so an
+empty answer is never mistaken for an empty log.
+
+The reference's empty message knew two filters and phrased them
+differently (`no invocations from machine X`). This one knows five and
+phrases them the same way — `no invocations match --skill X and
+--machine Y` — because a reader who gave three filters needs all three
+named, and one rule reads the same however many filters there are.
+
+A usage error is one named line and exit 2: the line says what is wrong
+with the call and what to write instead.
 
 A damaged, foreign, older or newer store is named once on stderr and
 exits 1. A read never creates the store, the state directory or an empty
@@ -45,7 +55,7 @@ database.
 
 from std.os import getenv
 
-from skill_log.errors import Outcome
+from skill_log.errors import EXIT_USAGE, Outcome
 from skill_log.render import render_row_json
 from skill_log.store import (
     DEFAULT_LIMIT,
@@ -105,26 +115,14 @@ def show_notes() -> String:
            "\n" \
            "--last takes a number between 1 and 500, 20 by default.\n" \
            "\n" \
+           "A filter that matches nothing says which filter it was, so\n" \
+           "an empty answer is never mistaken for an empty log.\n" \
+           "\n" \
            "--json prints one flat object per line, with every column,\n" \
            "the marker and the problems. An empty log prints nothing at\n" \
            "all, so the stream stays valid JSON lines.\n" \
            "\n" \
            "A read never writes: it creates no store and changes none."
-
-
-def show_usage_block() -> String:
-    """The block a usage error prints: the usage line and the examples.
-
-    A usage error is one named line plus this block: the line says what
-    is wrong with the call, and the block says how to make a call that
-    works.
-    """
-    var text = "usage:\n  " + show_usage() + "\n"
-    text += "\nexamples:\n"
-    var examples = show_examples()
-    for i in range(len(examples)):
-        text += "  " + examples[i] + "\n"
-    return text
 
 
 struct Options(Movable):
@@ -174,21 +172,31 @@ def parse_last(text: String) raises -> Int:
     below one, a number above the cap — is a usage error, not a silently
     clamped value: a caller who asked for 5000 rows and got 500 would
     read the wrong log.
+
+    The error names the range, so the one line that reports it is also
+    the line that says what to write instead.
     """
     if text == "":
-        raise Error("usage: --last takes a number")
+        raise Error("usage: " + last_range_message())
     for c in text.codepoints():
         var code = Int(c)
         if code < 48 or code > 57:
-            raise Error("usage: --last takes a number")
+            raise Error("usage: " + last_range_message())
     var value = 0
     for c in text.codepoints():
         value = value * 10 + (Int(c) - 48)
-    if value < LAST_MIN:
-        raise Error("usage: --last must be 1 or more")
-    if value > LAST_MAX:
-        raise Error("usage: --last is capped at 500")
+    if value < LAST_MIN or value > LAST_MAX:
+        raise Error("usage: " + last_range_message())
     return value
+
+
+def last_range_message() -> String:
+    """The one line that says what `--last` accepts.
+
+    The range, in one phrase, so the reader never has to guess what
+    number the tool wanted.
+    """
+    return "--last takes a number between 1 and 500"
 
 
 def parse_options(args: List[String]) raises -> Options:
@@ -267,20 +275,36 @@ def parse_options(args: List[String]) raises -> Options:
     return options^
 
 
-def empty_message(skill: String, machine: String) -> String:
+def empty_message(filters: Filters) -> String:
     """What the table prints when nothing matched.
 
-    The plain case names the log; the filtered cases name the filter, so
-    a reader who asked for one skill and got nothing knows the filter
-    was the reason.
+    The plain case names the log. A filtered case names every filter
+    that was given, so a reader who asked for one harness and got
+    nothing learns that the harness was the reason — and not that the
+    log is empty, which it is not.
     """
-    if skill != "" and machine != "":
-        return "no invocations match --skill " + skill + " on machine " + machine
-    if skill != "":
-        return "no invocations match --skill " + skill
-    if machine != "":
-        return "no invocations from machine " + machine
-    return "no invocations logged yet"
+    var parts = List[String]()
+    if filters.skill != "":
+        parts.append("--skill " + filters.skill)
+    if filters.machine != "":
+        parts.append("--machine " + filters.machine)
+    if filters.harness != "":
+        parts.append("--harness " + filters.harness)
+    if filters.repo != "":
+        parts.append("--repo " + filters.repo)
+    if filters.run != "":
+        parts.append("--run " + filters.run)
+
+    if len(parts) == 0:
+        # No filter was given, so the log itself is empty.
+        return "no invocations logged yet"
+
+    var out = "no invocations match "
+    for i in range(len(parts)):
+        if i > 0:
+            out += " and "
+        out += parts[i]
+    return out
 
 
 def home_prefix() -> String:
@@ -479,12 +503,11 @@ def handle_show(args: List[String]) raises -> Outcome:
     except e:
         var message = String(e)
         if message.startswith("usage: "):
-            # One named line, then the usage block: the line says what
-            # is wrong with the call, the block says how to make a call
-            # that works.
-            return Outcome.usage_error_with(
-                String(message[byte=7:]), show_usage_block()
-            )
+            # One named line, and exit 2: the line says what is wrong
+            # with the call and what to write instead. The full usage
+            # block is one `show --help` away, and the same shape every
+            # verb's usage error has.
+            return Outcome.fail(String(message[byte=7:]), EXIT_USAGE())
         raise
 
     var path = resolve_db(options.db)
@@ -512,7 +535,7 @@ def handle_show(args: List[String]) raises -> Outcome:
             # The JSON stream stays parseable: an empty result prints
             # nothing at all, not an empty object.
             return Outcome.ok("")
-        return Outcome.ok(empty_message(filters.skill, filters.machine))
+        return Outcome.ok(empty_message(filters))
 
     if options.json:
         var lines = List[String]()
