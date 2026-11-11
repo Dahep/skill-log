@@ -4,10 +4,12 @@ A local log of agent-skill invocations: one row per run, plus the problems
 that cost it, so friction can be counted, attributed to a skill, and closed by
 a specific change.
 
-**Status:** spec stage. The product contract lives in
-[issue #1](../../issues/1); the working implementation currently sits in the
-dotfiles repo (`bin/skill-log`) and is being extracted here. Until the first
-release, that checkout is the reference implementation.
+**Status:** implementation spec settled ([issue #3](../../issues/3)); build
+starting. The behavior contract lives in [issue #1](../../issues/1), and the
+implementation decisions are recorded in
+[ADR-0001](docs/adr/0001-mojo-binary-and-sqlite.md). Until the first release,
+the Python implementation in the dotfiles repo (`bin/skill-log`) is the
+reference for behavior.
 
 ## What it is
 
@@ -26,16 +28,20 @@ that cannot carry one, a marker trailer) naming `machine#id` markers. A
 post-merge hook stamps the resolved rows, so the log records when and where
 the friction closed.
 
+Reading is a skill, and so is the review: a bundled `skill-friction-review`
+skill clusters the logged problems into themes and decides what to fix. It
+never marks a row resolved — only the merge hook does that, when the change
+lands.
+
 ## Install (planned)
 
 ```bash
-mise use -g pipx:skill-log
+mise use -g github:Dahep/skill-log@1.0.0
 skill-log setup --repo ~/dotfiles --skills-dir ~/dotfiles/.agents/skills
 ```
 
 `setup` provisions the store, the post-merge hook, the repo report directory,
-and optionally the bundled agent skill. `setup --check` verifies the result
-without writing.
+and both bundled skills. `setup --check` verifies the result without writing.
 
 ## Command surface
 
@@ -48,8 +54,11 @@ without writing.
 | `resolve-merged` | Resolve rows from the commits a pull landed; reports in artifact mode, trailers otherwise. |
 | `fix` | Write or update the committed report listing the rows a change resolves. |
 | `sync` | Pull another machine's store over SSH and merge it. |
-| `setup` | Provision or verify the store, hook, report directory, and skill. |
-| `--version` | Print the package version. |
+| `setup` | Provision or verify the store, hook, report directory, and skills. |
+| `skills audit` | Report each skill's usage-log state (`ok`, `missing`, `stale`, `edited`, `legacy`, `unowned`, `vendored`). |
+| `skills adopt` | Append missing blocks and re-render stale ones; never touch edited ones without `--force`. |
+| `skills template` | Show, seed, reset, or override the user-owned templates. |
+| `--version` | Print the release version. |
 
 Exit codes: `0` success or nothing to do, `1` operational failure, `2` usage.
 JSON goes to stdout; one-line diagnostics go to stderr; no tracebacks.
@@ -64,11 +73,18 @@ JSON goes to stdout; one-line diagnostics go to stderr; no tracebacks.
 - Per-machine resolution is the core invariant: the owner's store is the only
   writer of its rows, and an aggregate never claims a resolution its owner
   would overwrite.
+- Skills carry the reporting instruction as a fenced block rendered from a
+  user-owned template. The tool owns the bytes inside the fence and nothing
+  outside it.
 
 ## Documentation
 
-- [Product spec](../../issues/1) — problem, solution, command surface, testing
-  decisions, out-of-scope.
+- [Product spec](../../issues/1) — behavior contract: problem, solution,
+  command surface, testing decisions, out-of-scope.
+- [Implementation spec](../../issues/3) — Mojo, binary distribution, templates,
+  provisioning.
+- [ADR-0001](docs/adr/0001-mojo-binary-and-sqlite.md) — why a Mojo binary and a
+  vendored SQLite binding.
 - [CONTEXT.md](CONTEXT.md) — domain vocabulary and invariants.
 
 ## License
