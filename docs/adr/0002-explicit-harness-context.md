@@ -98,13 +98,18 @@ from. That is why they belong in typed columns rather than a free-form bag.
      row here records the harness and a real session id without every skill
      passing flags.
 
-6. **Command surface deltas.** `fix --thread` becomes `fix --run` (the old
-   flag stays as an alias in 1.0), and it selects rows where `session`,
-   `t3_thread` or `parent` matches. `stats --by-model` becomes `stats --by
-   <column>` (same alias), where the column is `skill` (default), `harness`,
-   `model`, `repo`, `worktree`, `machine`, `session` or `project`. `show`
-   gains `--harness` and `--repo`. `show --json` exposes the new fields flat
-   and drops `opencode_thread`; `t3_thread` and `project` stay.
+6. **Command surface.** The authoring verb is `report` (formerly `fix`):
+   `report --run <id>` selects every row whose `session`, `t3_thread` or
+   `parent` matches, `report --id` and `report --skill` select explicitly, and
+   `report --check` validates an existing file without writing. The artifact
+   lives at `.skill-log/reports/<slug>.md` (formerly `fixes/`), one marker per
+   line; a repo without that directory keeps trailer mode. `stats --by-model`
+   becomes `stats --by <column>` (same alias), with `skill` the default and
+   `harness`, `model`, `repo`, `worktree`, `machine` or `project` as keys.
+   `show` gains `--harness`, `--repo` and `--run`. `skills template` gains real
+   subcommands — `show`, `seed` (with `--force`), `reset` — instead of three
+   exclusive mode flags. `show --json` exposes the new fields flat and drops
+   `opencode_thread`; `t3_thread` and `project` stay.
 
 7. **The store is created, not inherited.** 1.0 defines its own schema and
    creates it on the first write. It does not convert the Python-era store:
@@ -158,6 +163,10 @@ from. That is why they belong in typed columns rather than a free-form bag.
 
 - `show --json` drops `opencode_thread` and adds five fields, so 1.0 is a
   shape break for any consumer of the old thread field.
+- The authoring verb is renamed `fix` → `report` and the artifact directory
+  `fixes/` → `reports/`, so the review template, the loop docs and the
+  reference harness all change, and the parity gate has to run the new CLI
+  against the renamed cases.
 - Switching this machine over needs an external data move: the new binary will
   refuse the Python-era file rather than convert it.
 - Adapters add a seam with two implementations; the seam is only worth it
@@ -172,8 +181,9 @@ from. That is why they belong in typed columns rather than a free-form bag.
   `SKILL_LOG_ADAPTERS`, `add` records `session` from the env only and no
   `model`.
 - Explicit context beats an adapter: `--model` wins over the opencode lookup.
-- `fix --run` selects a row and the rows it dispatched; `--thread` behaves
-  identically in 1.0.
+- `report --run` selects a row and the rows it dispatched; `report --check`
+  validates without writing, and `.skill-log/reports/` is the only directory
+  `setup` creates for it.
 - `stats --by repo` and `stats --by harness` group correctly on a store with
   mixed values, and a value nobody has recorded yields no rows rather than an
   error.
