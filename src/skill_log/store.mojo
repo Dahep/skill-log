@@ -606,6 +606,11 @@ def read_invocation(db: Database, id: Int) raises -> Optional[Invocation]:
     return invocation^
 
 
+# The number of rows a read returns when the caller does not say. The
+# reference's default, and enough to see the recent shape of the log
+# without filling a terminal.
+comptime DEFAULT_LIMIT = 20
+
 # The filters one read carries. Every field is a string, and an empty
 # string means "this filter is not given": the value is matched exactly
 # when it is there, and ignored when it is not.
@@ -632,7 +637,7 @@ struct Filters(Movable):
         self.repo = ""
         self.run = ""
         self.unresolved = False
-        self.limit = 20
+        self.limit = DEFAULT_LIMIT
 
 
 def filter_clause(filters: Filters) -> String:

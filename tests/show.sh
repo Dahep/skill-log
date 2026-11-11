@@ -308,6 +308,50 @@ check "--last one shows one row" "$(printf '%s\n' "$OUT" | grep -c .)" "1"
 run show --last 2 --json
 check "--last two shows two rows" "$(printf '%s\n' "$OUT" | grep -c .)" "2"
 
+# The default is 20 rows: enough to see the recent shape of the log.
+DEFAULT_DB="$SCRATCH/default.db"
+for i in $(seq 1 25); do
+    "$BIN" add --skill "skill-$i" --db "$DEFAULT_DB" >/dev/null
+done
+"$BIN" show --db "$DEFAULT_DB" --json >"$SCRATCH/default.json"
+check "the default shows twenty rows" \
+    "$(grep -c . <"$SCRATCH/default.json")" "20"
+"$BIN" show --db "$DEFAULT_DB" --last 25 --json >"$SCRATCH/all.json"
+check "--last lifts the default" "$(grep -c . <"$SCRATCH/all.json")" "25"
+"$BIN" show --db "$DEFAULT_DB" --last 500 --json >"$SCRATCH/cap.json"
+check "--last at the cap shows every row" \
+    "$(grep -c . <"$SCRATCH/cap.json")" "25"
+
+# ------------------------------------------------------------ sanitization
+
+# A control character in a stored problem must not split it into two
+# lines, in either shape: the table and the JSON stream both sanitize
+# the way the store does.
+python3 - "$DEFAULT_DB" <<'PY'
+import sqlite3
+import sys
+
+db = sqlite3.connect(sys.argv[1])
+db.execute(
+    "INSERT INTO invocations (ts, skill, machine)"
+    " VALUES ('2026-01-01T00:00:00+00:00', 'control', 'box')"
+)
+row_id = db.execute("select max(id) from invocations").fetchone()[0]
+db.execute(
+    "INSERT INTO problems (invocation_id, ordinal, problem) VALUES (?, 1, ?)",
+    (row_id, "bad\x01char\nnewline"),
+)
+db.commit()
+PY
+run show --db "$DEFAULT_DB" --skill control
+check "a control character stays on one line" \
+    "$(printf '%s\n' "$OUT" | grep -c '^    problem 1: bad char newline$')" "1"
+check "the control character split nothing" \
+    "$(printf '%s\n' "$OUT" | grep -c '^    problem')" "1"
+run show --db "$DEFAULT_DB" --skill control --json
+check "json sanitizes the control character too" \
+    "$(printf '%s\n' "$OUT" | grep -c '"problems":\["bad char newline"\]')" "1"
+
 # ---------------------------------------------------------------- refusals
 
 printf 'not a database' >"$SCRATCH/damaged.db"

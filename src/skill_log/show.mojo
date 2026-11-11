@@ -48,6 +48,7 @@ from std.os import getenv
 from skill_log.errors import Outcome
 from skill_log.render import render_row_json
 from skill_log.store import (
+    DEFAULT_LIMIT,
     Filters,
     Invocation,
     classify,
@@ -56,11 +57,6 @@ from skill_log.store import (
     resolve_db,
     sanitize,
 )
-
-# How many rows `--last` shows when the caller does not say. The
-# reference's default, and enough to see the recent shape of the log
-# without filling a terminal.
-comptime DEFAULT_LAST = 20
 
 # The ends of the `--last` range. The upper bound keeps one call from
 # pulling the whole log into memory; the lower bound is one, because
@@ -161,7 +157,7 @@ struct Options(Movable):
         self.repo = ""
         self.run = ""
         self.unresolved = False
-        self.last = DEFAULT_LAST
+        self.last = DEFAULT_LIMIT
         self.json = False
         self.db = ""
         self.given_skill = False
