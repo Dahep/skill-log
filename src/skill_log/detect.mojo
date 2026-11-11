@@ -83,15 +83,17 @@ def strip_userinfo(url: String) -> String:
     """A remote URL with any credentials removed.
 
     `https://user:token@host/owner/repo.git` becomes
+    `host/owner/repo.git`, and `ssh://user@host/owner/repo.git` becomes
     `host/owner/repo.git`. A URL without userinfo is returned unchanged,
     and so is one whose `@` sits after the path's first `/` — that is a
     path segment, not a credential separator.
+
+    An scp-style remote (`git@host:owner/repo.git`) is returned
+    unchanged: its `git` is the login name in the host position, not a
+    credential, and the basename below discards the host anyway.
     """
-    if not url.startswith("http://") and not url.startswith("https://"):
-        # ssh:// and scp-style remotes (`git@host:owner/repo.git`) name
-        # the user in the host position, not as a credential. The
-        # basename below discards the host anyway, so there is nothing
-        # to strip.
+    if not url.startswith("http://") and not url.startswith("https://") \
+            and not url.startswith("ssh://"):
         return url
 
     var cut = url.find("@")
@@ -160,13 +162,14 @@ def repo_name(url: String) -> String:
     return name
 
 
-def detect_repo() -> String:
+def detect_repo(top: String) -> String:
     """The repository the run happened in.
 
-    The origin remote's basename, and the toplevel directory's name when
-    there is no origin remote. Empty outside a git repository.
+    `top` is the working-tree root, as `detect_worktree` found it. The
+    origin remote's basename is the name; the toplevel directory's name
+    is the fallback when the repository has no origin remote. Empty
+    outside a git repository.
     """
-    var top = git_toplevel()
     if top == "":
         return ""
 

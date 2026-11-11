@@ -156,6 +156,18 @@ run add --skill detect --dry-run --json
 check "a repository without an origin falls back to the directory name" \
     "$(field "$OUT" repo)" "no-remote"
 
+# A credentialed ssh remote loses its userinfo too, and the name is
+# still the repository's.
+SSH_REPO="$SCRATCH/ssh-repo"
+mkdir -p "$SSH_REPO"
+git -C "$SSH_REPO" init -q
+git -C "$SSH_REPO" remote add origin "ssh://user:secret@example.com/owner/thing.git"
+cd "$SSH_REPO" || exit 1
+run add --skill detect --dry-run --json
+check "an ssh remote's credentials never reach the row" \
+    "$(printf '%s' "$OUT" | grep -c 'secret')" "0"
+check "an ssh remote's basename is the repo" "$(field "$OUT" repo)" "thing"
+
 # ------------------------------------------------------------ precedence
 
 cd "$REPO" || exit 1

@@ -268,11 +268,12 @@ def handle_add(args: List[String]) raises -> Outcome:
     # The worktree comes first: the t3 adapter needs it to find the
     # project, and the adapter's value sits below the flag and the
     # variable.
+    var detected_worktree = detect_worktree()
     var worktree = resolve_field(
         options.worktree,
         env_or_empty("SKILL_LOG_WORKTREE"),
         "",
-        detect_worktree(),
+        detected_worktree,
     )
 
     var adapter_names = enabled_adapters(options.adapters)
@@ -296,8 +297,13 @@ def handle_add(args: List[String]) raises -> Outcome:
     row.model = resolve_field(
         options.model, env_or_empty("SKILL_LOG_MODEL"), adapter.model, ""
     )
+    # The repository is detected from the same working-tree root, so
+    # the two fields always describe the same checkout.
     row.repo = resolve_field(
-        options.repo, env_or_empty("SKILL_LOG_REPO"), "", detect_repo()
+        options.repo,
+        env_or_empty("SKILL_LOG_REPO"),
+        "",
+        detect_repo(detected_worktree),
     )
     row.worktree = worktree
     row.project = resolve_field(
