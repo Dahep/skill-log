@@ -29,8 +29,8 @@ post-merge hook stamps the resolved rows, so the log records when and where
 the friction closed.
 
 A bundled `skill-friction-review` skill reads the log and decides what to fix;
-CONTEXT.md defines that session and the rule that only the merge hook closes a
-row.
+it never marks a row resolved itself. CONTEXT.md defines that session and the
+resolution rules.
 
 ## Install (planned)
 
