@@ -45,7 +45,7 @@ database.
 
 from std.os import getenv
 
-from skill_log.errors import EXIT_USAGE, Outcome
+from skill_log.errors import Outcome
 from skill_log.render import render_row_json
 from skill_log.store import (
     Filters,
@@ -67,6 +67,68 @@ comptime DEFAULT_LAST = 20
 # zero rows is not a question anyone asks of a log.
 comptime LAST_MIN = 1
 comptime LAST_MAX = 500
+
+
+def show_usage() -> String:
+    """The usage line, as `--help` shows it.
+
+    The verb's own text lives here, with its handler, so the usage a
+    usage error prints and the usage `--help` prints are the same
+    text — one source, two readers.
+    """
+    return "skill-log show [--skill <name>] [--machine <name>]\n" \
+           "                   [--harness <name>] [--repo <name>] [--run <id>]\n" \
+           "                   [--unresolved] [--last <n>] [--json] [--db <path>]"
+
+
+def show_examples() -> List[String]:
+    """The verb's real invocations, as `--help` shows them.
+
+    Two to four, every one of them a call that works.
+    """
+    var examples = List[String]()
+    examples.append("skill-log show")
+    examples.append("skill-log show --skill diagnosing-bugs --last 5")
+    examples.append("skill-log show --unresolved --json")
+    return examples^
+
+
+def show_notes() -> String:
+    """The paragraph between the usage line and the examples.
+
+    The things a caller has to know before running the verb: what the
+    order is, what `--run` matches, and that a read never writes.
+    """
+    return "Rows come back newest first. The table indents each problem\n" \
+           "under the invocation it belongs to, and shortens a worktree\n" \
+           "under your home directory to ~/.\n" \
+           "\n" \
+           "--run names a run in whichever namespace it was recorded in:\n" \
+           "its session, its T3 thread or its parent. Matching all three\n" \
+           "is what finds the tree around a run, not one row of it.\n" \
+           "\n" \
+           "--last takes a number between 1 and 500, 20 by default.\n" \
+           "\n" \
+           "--json prints one flat object per line, with every column,\n" \
+           "the marker and the problems. An empty log prints nothing at\n" \
+           "all, so the stream stays valid JSON lines.\n" \
+           "\n" \
+           "A read never writes: it creates no store and changes none."
+
+
+def show_usage_block() -> String:
+    """The block a usage error prints: the usage line and the examples.
+
+    A usage error is one named line plus this block: the line says what
+    is wrong with the call, and the block says how to make a call that
+    works.
+    """
+    var text = "usage:\n  " + show_usage() + "\n"
+    text += "\nexamples:\n"
+    var examples = show_examples()
+    for i in range(len(examples)):
+        text += "  " + examples[i] + "\n"
+    return text
 
 
 struct Options(Movable):
@@ -421,7 +483,12 @@ def handle_show(args: List[String]) raises -> Outcome:
     except e:
         var message = String(e)
         if message.startswith("usage: "):
-            return Outcome.fail(String(message[byte=7:]), EXIT_USAGE())
+            # One named line, then the usage block: the line says what
+            # is wrong with the call, the block says how to make a call
+            # that works.
+            return Outcome.usage_error_with(
+                String(message[byte=7:]), show_usage_block()
+            )
         raise
 
     var path = resolve_db(options.db)
