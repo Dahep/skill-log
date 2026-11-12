@@ -1,21 +1,24 @@
-"""The `skills` verb: `audit`, `template show|seed|reset`, and `adopt`.
+"""The `skills` verb: `audit`, `adopt`, and `template show|seed|reset`.
 
-This is ticket #17's command surface. Three subcommands live under
-`skills`, split at the sub-verb (not as mode flags):
+The subcommands live under `skills`, split at the sub-verb (not as mode
+flags):
 
 - `skills audit` — read-only. Classify every skill's fenced usage-log
   block as `ok`, `missing`, `stale`, `edited` or `vendored`, one line
   per skill, exit 1 on anything but `ok`/`vendored`. Writes nothing —
   not even a state directory.
+- `skills adopt` — write: append a block where there is none, rewrite a
+  `stale` one, rewrite an `edited` one only with `--force`, skip
+  `vendored` skills and leave `ok` ones alone. Every write goes through
+  the `document` module's splice and `files.mojo`'s atomic replacement;
+  no byte outside the fence is ever touched. Exit 0 when the directory
+  ends conformant, 1 when any skill is refused.
 - `skills template show|seed|reset` — the two shipped default templates
   and the user's copies of them. `show` reports the effective templates,
   their source, hashes and whether the shipped default moved since the
   copy was seeded. `seed` copies the shipped defaults into the user
   directory. `reset` deletes the user copies. Both refuse without
   `--force` and both support `--dry-run`.
-- `skills adopt` — write: append, rewrite or (with `--force`) rewrite an
-  `edited` block. That verb belongs to ticket #18; the seam it will use
-  is the `document` module's `Block`, unchanged here.
 
 ## The templates
 
@@ -47,6 +50,7 @@ vendored `tuicr` skill being the model.
 
 from std.os import getenv, listdir, makedirs, remove, rmdir
 from std.pathlib import Path
+from std.sys import argv
 
 from skill_log.document import (
     STATE_EDITED,
@@ -54,13 +58,16 @@ from skill_log.document import (
     STATE_OK,
     STATE_STALE,
     STATE_VENDORED,
+    append,
     classify,
+    frontmatter_name,
     is_vendored,
     render,
+    rewrite,
     validate_template,
 )
 from skill_log.errors import EXIT_FAILURE, EXIT_USAGE, Outcome
-from skill_log.files import write_text
+from skill_log.files import resolve_path, write_text
 from skill_log.flags import take_value
 from skill_log.hash import fnv1a64_hex
 from skill_log.json import json_bool, json_string
@@ -83,6 +90,13 @@ comptime SEEDED_DIR = "seeded-from"
 # The two files `seed` writes and `reset` deletes.
 comptime USAGE_LOG_FILE = "usage-log.md"
 comptime REVIEW_FILE = "skill-friction-review.md"
+
+# The five actions `adopt` reports, exactly the SPEC §5.10 vocabulary.
+comptime ACTION_APPENDED = "appended"
+comptime ACTION_REWRITTEN = "rewritten"
+comptime ACTION_UNCHANGED = "unchanged"
+comptime ACTION_REFUSED = "refused"
+comptime ACTION_SKIPPED = "skipped"
 
 
 # --------------------------------------------------------------- paths
@@ -132,6 +146,50 @@ def resolve_template_dir(flag: String) -> String:
     if String(env.strip()) != "":
         return String(env.strip())
     return default_template_dir()
+
+
+def find_in_path(program: String) -> String:
+    """`program` as the first executable name on `PATH`, or unchanged.
+
+    The shell's own first-match rule, for when the tool is invoked by
+    bare name: `PATH` is walked left to right and the first entry that
+    holds the file wins. A name `PATH` does not carry comes back as it
+    went in — the caller still resolves it, and still falls back to the
+    given name.
+    """
+    var path = getenv("PATH", "")
+    var start = 0
+    var n = path.byte_length()
+    while start <= n:
+        var cut = path.find(":", start)
+        if cut < 0:
+            cut = n
+        var entry = String(path[byte=start:cut])
+        if entry != "":
+            var candidate = entry + "/" + program
+            if Path(candidate).is_file():
+                return candidate
+        start = cut + 1
+    return program
+
+
+def resolved_command() -> String:
+    """The path of this binary, resolved: `<command>`'s value.
+
+    "The resolved binary path" is one answer no matter how the tool was
+    invoked: a bare name is looked up on `PATH`, and whatever is found —
+    or given — is resolved to one absolute, symlink-free path by
+    `resolve_path`. A name the filesystem cannot resolve (a deleted
+    binary, say) is used as it was given rather than dropped.
+    """
+    var all = argv()
+    var program = String(all[0])
+    if program.find("/") < 0:
+        program = find_in_path(program)
+    var real = resolve_path(program)
+    if real != "":
+        return real
+    return program
 
 
 # ------------------------------------------------------- the seeded-from
@@ -326,6 +384,114 @@ def audit_skill(
     return result^
 
 
+# ---------------------------------------------------------- adopting
+
+
+struct Adopted(Movable):
+    """One skill's adoption result: name, path, state, action."""
+
+    var skill: String
+    var path: String
+    var state: String
+    var action: String
+
+    def __init__(out self):
+        self.skill = ""
+        self.path = ""
+        self.state = ""
+        self.action = ""
+
+
+def adopt_skill(
+    dir: String,
+    name: String,
+    template: Template,
+    command: String,
+    force: Bool,
+    dry_run: Bool,
+) raises -> Adopted:
+    """Make one skill's document conform, and say what happened.
+
+    The state is the document's state *before* the run (the same answer
+    `audit` gives), and the action is what this run did with it:
+    `missing` is appended to, `stale` rewritten, `edited` rewritten only
+    with `--force` and otherwise refused, `ok` is left `unchanged`, and
+    `vendored` is `skipped` entirely.
+
+    The write is the `document` module's splice — `append` or `rewrite`
+    — through `files.mojo`'s atomic replacement, so no byte outside the
+    fence can change and no half-written file is ever visible. A dry
+    run reports the same actions and writes nothing.
+    """
+    var result = Adopted()
+    result.skill = name
+    result.path = dir + "/" + name
+    var doc_path = result.path + "/SKILL.md"
+    var text = String("")
+    try:
+        text = Path(doc_path).read_text()
+    except e:
+        raise Error("cannot read " + doc_path + ": " + String(e))
+
+    # The rendered block names the skill: `name:` from its frontmatter,
+    # else the directory name it is called by everywhere else.
+    var skill_name = frontmatter_name(text)
+    if skill_name == "":
+        skill_name = name
+    var rendered = render(template.content, skill_name, command)
+    result.state = classify(
+        text,
+        rendered.template_hash,
+        rendered.content_hash,
+        is_vendored(text),
+    )
+
+    if result.state == STATE_VENDORED:
+        result.action = ACTION_SKIPPED
+        return result^
+    if result.state == STATE_OK:
+        result.action = ACTION_UNCHANGED
+        return result^
+    if result.state == STATE_EDITED and not force:
+        result.action = ACTION_REFUSED
+        return result^
+
+    var updated = String("")
+    if result.state == STATE_MISSING:
+        updated = append(text, rendered.text)
+        result.action = ACTION_APPENDED
+    else:
+        updated = rewrite(text, rendered.text)
+        result.action = ACTION_REWRITTEN
+    if not dry_run:
+        try:
+            write_text(doc_path, updated)
+        except e:
+            raise Error("cannot write " + doc_path + ": " + String(e))
+    return result^
+
+
+def adopt_json_line(item: Adopted) -> String:
+    """One adopt object, exactly `skill`, `path`, `state`, `action`
+    (SPEC §5.10)."""
+    return (
+        "{\"skill\":"
+        + json_string(item.skill)
+        + ",\"path\":"
+        + json_string(item.path)
+        + ",\"state\":"
+        + json_string(item.state)
+        + ",\"action\":"
+        + json_string(item.action)
+        + "}"
+    )
+
+
+def adopt_text_line(item: Adopted) -> String:
+    """One adopt line for a person: the action, the state, the skill."""
+    return item.action + "  " + item.state + "  " + item.skill + "  " + item.path
+
+
 # ------------------------------------------------------- JSON and text
 
 
@@ -443,6 +609,7 @@ def skills_usage() -> String:
     return "skill-log skills <subcommand> [options]\n" \
            "\n" \
            "  skill-log skills audit --dir <dir> [--json] [--dry-run]\n" \
+           "  skill-log skills adopt --dir <dir> [--force] [--dry-run] [--json]\n" \
            "  skill-log skills template show [--json] [--template-dir <dir>]\n" \
            "  skill-log skills template seed [--force] [--dry-run]\n" \
            "  skill-log skills template reset [--force] [--dry-run]"
@@ -452,7 +619,7 @@ def skills_examples() -> List[String]:
     """The verb's real invocations, as `--help` shows them."""
     var examples = List[String]()
     examples.append("skill-log skills audit --dir .agents/skills")
-    examples.append("skill-log skills audit --dir .agents/skills --json")
+    examples.append("skill-log skills adopt --dir .agents/skills")
     examples.append("skill-log skills template show")
     examples.append("skill-log skills template seed --force")
     return examples^
@@ -472,6 +639,12 @@ def skills_notes() -> String:
            "manages the two shipped defaults, adopt writes. audit is\n" \
            "read-only and exits 1 on any state but ok or vendored.\n" \
            "\n" \
+           "adopt appends a block where there is none and rewrites a\n" \
+           "stale one; an edited block is rewritten only with --force.\n" \
+           "It never touches a byte outside the fence, and a second run\n" \
+           "changes nothing. It exits 0 when the directory ends\n" \
+           "conformant, 1 when any skill is refused.\n" \
+           "\n" \
            "The templates resolve by --template-dir, then\n" \
            "SKILL_LOG_TEMPLATE_DIR, then\n" \
            "${XDG_CONFIG_HOME:-~/.config}/skill-log/templates/, then the\n" \
@@ -484,7 +657,8 @@ def skills_notes() -> String:
            "to its upstream, not to this tool.\n" \
            "\n" \
            "See `skill-log skills template show --help` for the template\n" \
-           "surface and `skill-log skills audit --help` for the states."
+           "surface, `skill-log skills audit --help` for the states and\n" \
+           "`skill-log skills adopt --help` for the write."
 
 
 def render_verb_text() -> String:
@@ -496,8 +670,8 @@ def render_verb_text() -> String:
     below it.
     """
     var text = (
-        "skills — audit a skills directory and manage the usage-log"
-        " templates\n"
+        "skills — audit and adopt a skills directory, and manage the"
+        " usage-log templates\n"
     )
     text += "\nusage:\n  " + skills_usage() + "\n"
     text += "\n" + skills_notes() + "\n"
@@ -528,6 +702,33 @@ def subcommand_help(sub: String) -> String:
             "  skill-log skills audit --dir .agents/skills\n"
             "  skill-log skills audit --dir .agents/skills --json\n"
             "  skill-log skills audit --dir .agents/skills --dry-run\n"
+        )
+    if sub == "adopt":
+        return (
+            "skills adopt — make a repo's skills conform\n"
+            "\nusage:\n"
+            "  skill-log skills adopt --dir <dir> [--force] [--dry-run]"
+            " [--json]\n"
+            "\n"
+            "Appends a fenced block where there is none, rewrites a block\n"
+            "whose content is an older render, and rewrites a hand-edited\n"
+            "block only with --force. A vendored skill is skipped entirely.\n"
+            "Not one byte outside the fence is rewritten or removed —\n"
+            "unfenced text is never touched, not even with --force. A\n"
+            "second run changes nothing.\n"
+            "\n"
+            "One line per skill: the action (appended, rewritten,\n"
+            "unchanged, refused, skipped), the state it was in, the skill\n"
+            "and its path. --json emits the same as one object per skill.\n"
+            "--dry-run prints the same answer and writes nothing.\n"
+            "\n"
+            "Exits 0 when the directory ends conformant, 1 when any skill\n"
+            "is refused — an edited block left untouched without --force.\n"
+            "A directory that holds no skills is refused.\n"
+            "\nexamples:\n"
+            "  skill-log skills adopt --dir .agents/skills\n"
+            "  skill-log skills adopt --dir .agents/skills --force\n"
+            "  skill-log skills adopt --dir .agents/skills --dry-run --json\n"
         )
     if sub == "template show":
         return (
@@ -652,6 +853,8 @@ def handle_skills(args: List[String]) raises -> Outcome:
 
     if options.sub == "audit":
         return handle_audit(options)
+    if options.sub == "adopt":
+        return handle_adopt(options)
     if options.sub == "template show":
         return handle_template_show(options)
     if options.sub == "template seed":
@@ -716,6 +919,78 @@ def handle_audit(options: SkillsOptions) raises -> Outcome:
         # exit code says "not clean"; the summary is the one stderr line
         # the failure is allowed.
         var outcome = Outcome.fail("some skills need adoption", EXIT_FAILURE())
+        outcome.text = text
+        return outcome^
+    return Outcome.ok(text)
+
+
+def handle_adopt(options: SkillsOptions) raises -> Outcome:
+    """`skills adopt`: make every skill in `--dir` conform.
+
+    One line (or object) per skill, exit 0 when the directory ends
+    conformant, exit 1 when any skill is refused — an `edited` block
+    left untouched because `--force` was not given. `--dry-run` prints
+    the same answer and writes nothing.
+    """
+    if String(options.dir.strip()) == "":
+        return Outcome.fail("usage: skills adopt needs --dir <dir>", EXIT_USAGE())
+    var dir = String(options.dir.strip())
+
+    # The effective template is validated first: rendering from a broken
+    # template would write blocks no skill can log from.
+    var template_dir = resolve_template_dir(options.template_dir)
+    var template: Template
+    try:
+        template = load_template(USAGE_LOG_NAME, template_dir)
+        validate_effective(USAGE_LOG_NAME, template)
+    except e:
+        return Outcome.fail(String(e), EXIT_FAILURE())
+
+    var command = resolved_command()
+    var names = skill_dirs(dir)
+    if len(names) == 0:
+        return Outcome.fail(
+            "no skills in " + dir + " (no subdirectory holds a SKILL.md)",
+            EXIT_FAILURE(),
+        )
+
+    var lines = List[String]()
+    var refused = False
+    for i in range(len(names)):
+        var item = Adopted()
+        try:
+            item = adopt_skill(
+                dir,
+                names[i],
+                template,
+                command,
+                options.force,
+                options.dry_run,
+            )
+        except e:
+            return Outcome.fail(String(e), EXIT_FAILURE())
+        if item.action == ACTION_REFUSED:
+            refused = True
+        if options.json:
+            lines.append(adopt_json_line(item))
+        else:
+            lines.append(adopt_text_line(item))
+
+    var text = String("")
+    for i in range(len(lines)):
+        if i > 0:
+            text += "\n"
+        text += lines[i]
+
+    if refused:
+        # The report is the answer and goes to stdout even when the exit
+        # code says "not conformant"; the summary is the one stderr line
+        # the failure is allowed.
+        var outcome = Outcome.fail(
+            "some skills were refused (an edited block is rewritten"
+            " only with --force)",
+            EXIT_FAILURE(),
+        )
         outcome.text = text
         return outcome^
     return Outcome.ok(text)

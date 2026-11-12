@@ -1,18 +1,21 @@
 #!/usr/bin/env bash
-# The skills test: templates, audit, and the document states, against the
-# built artifact.
+# The skills test: templates, audit, adopt, and the document states, against
+# the built artifact.
 #
 #   tests/skills.sh
 #
-# It exercises ticket #17's surface: the two shipped templates, their
-# resolution chain and placeholder validation, `skills template
-# show|seed|reset`, and `skills audit` over the five document states. The
-# cases are the promises the spec makes — all five states classify, a
-# `missing` skill with stale unfenced text nearby leaves that text
-# untouched, a moved shipped default is reported with the two adopting
-# commands and never applied, seed/reset refuse without `--force` and
-# honour `--dry-run`, an empty directory is refused, the audit writes
-# nothing, and every help block ends with real invocations.
+# It exercises tickets #17 and #18's surface: the two shipped templates,
+# their resolution chain and placeholder validation, `skills template
+# show|seed|reset`, `skills audit` over the five document states, and
+# `skills adopt`'s append/rewrite/refuse/skip actions with their
+# byte-exactness and idempotency. The cases are the promises the spec
+# makes — all five states classify, a `missing` skill with stale unfenced
+# text nearby leaves that text untouched, a moved shipped default is
+# reported with the two adopting commands and never applied, seed/reset
+# refuse without `--force` and honour `--dry-run`, an empty directory is
+# refused, the audit writes nothing, adopt changes no byte outside the
+# fence and a second run changes nothing, and every help block ends with
+# real invocations.
 #
 # Fence fixtures are built through the CLI where a render exists
 # (`skills template show --json` carries the template source, and the
@@ -72,6 +75,7 @@ run skills --help
 check "skills --help exits 0" "$STATUS" "0"
 check "skills --help is the verb block" \
     "$(printf '%s\n' "$OUT" | grep -c '^usage:$')" "1"
+check_contains "skills --help lists adopt" "$OUT" "skills adopt"
 EXAMPLES="$(count_examples "$OUT")"
 if [ "$EXAMPLES" -ge 2 ] && [ "$EXAMPLES" -le 4 ]; then
     pass "skills --help ends with 2 to 4 real invocations"
@@ -79,7 +83,7 @@ else
     fail "skills --help ends with 2 to 4 real invocations (got $EXAMPLES)"
 fi
 
-for sub in "audit" "template show" "template seed" "template reset"; do
+for sub in "audit" "adopt" "template show" "template seed" "template reset"; do
     # shellcheck disable=SC2086  # $sub is deliberately word-split: "template show" is two args
     run skills $sub --help
     check "skills $sub --help exits 0" "$STATUS" "0"
@@ -394,10 +398,236 @@ check "audit --dry-run is accepted" "$STATUS" "1"
 check "the audit still writes nothing with --dry-run" \
     "$(test -e "$XDG_STATE_HOME" && echo yes || echo no)" "no"
 
+# ------------------------------------------------------------- adopt
+
+# adopt writes: it appends a block where there is none, rewrites a stale
+# one, rewrites an edited one only with --force, skips vendored skills
+# and leaves an ok one alone. The five fixtures from the audit section
+# are still pristine (the audit is read-only); their originals are kept
+# so byte-exactness can be proved by removing the fence block again.
+cp -r "$SKILLS" "$SCRATCH/skills.orig"
+
+# The resolved binary the adopted block names: the tool resolves its own
+# path, so the suite computes the same answer independently.
+EXPECTED_CMD="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$BIN")"
+
+# strip_block <file>: the file with its fenced usage-log block removed —
+# every byte outside the fence, in order. Comparing it with the
+# pre-adopt original is the byte-exactness proof: nothing outside the
+# fence changed.
+strip_block() {
+    python3 - "$1" <<'PY'
+import sys
+lines = open(sys.argv[1], encoding="utf-8").readlines()
+out, inside = [], False
+for line in lines:
+    if line.startswith("<!-- skill-log:usage-log"):
+        inside = True
+        continue
+    if inside:
+        if line.startswith("<!-- /skill-log:usage-log -->"):
+            inside = False
+        continue
+    out.append(line)
+sys.stdout.write("".join(out))
+PY
+}
+
+# adopt's dry run previews every action and writes nothing.
+run skills adopt --dir "$SKILLS" --json --dry-run
+check "adopt --dry-run exits 1 when a skill would be refused" "$STATUS" "1"
+check "adopt --dry-run emits one object per skill" \
+    "$(printf '%s\n' "$OUT" | grep -c '^{')" "5"
+check "adopt --json object keys are exactly skill, path, state, action" \
+    "$(printf '%s\n' "$OUT" | head -1 | python3 -c 'import json,sys; print(" ".join(sorted(json.loads(sys.stdin.read()).keys())))')" \
+    "action path skill state"
+check "adopt --json classifies all five states" \
+    "$(printf '%s\n' "$OUT" | python3 -c 'import json,sys; s={json.loads(l)["state"] for l in sys.stdin if l.strip()}; print(" ".join(sorted(s)))')" \
+    "edited missing ok stale vendored"
+check "adopt --dry-run previews all five actions" \
+    "$(printf '%s\n' "$OUT" | python3 -c 'import json,sys; s={json.loads(l)["action"] for l in sys.stdin if l.strip()}; print(" ".join(sorted(s)))')" \
+    "appended refused rewritten skipped unchanged"
+check "adopt --dry-run writes nothing" \
+    "$(diff -r "$SCRATCH/skills.orig" "$SKILLS" >/dev/null 2>&1 && echo same || echo differ)" "same"
+
+# The real run does what the dry run said and prints the same lines,
+# and exits 1 because the edited block was refused without --force.
+run skills adopt --dir "$SKILLS" --dry-run
+DRY_TEXT="$OUT"
+run skills adopt --dir "$SKILLS"
+check "adopt without --force exits 1 on a refused skill" "$STATUS" "1"
+check "adopt names the refusal on stderr" "$ERR" \
+    "skill-log: some skills were refused (an edited block is rewritten only with --force)"
+check "adopt prints what its dry run printed" "$OUT" "$DRY_TEXT"
+check_contains "adopt reports the append" "$OUT" "appended  missing  missing  $SKILLS/missing"
+check_contains "adopt reports the rewrite" "$OUT" "rewritten  stale  stale  $SKILLS/stale"
+check_contains "adopt reports the refusal" "$OUT" "refused  edited  edited  $SKILLS/edited"
+check_contains "adopt reports the skip" "$OUT" "skipped  vendored  vendored  $SKILLS/vendored"
+check_contains "adopt reports the unchanged skill" "$OUT" "unchanged  ok  ok  $SKILLS/ok"
+
+# missing: the block is appended at the end, rendered for the skill —
+# <name> from its frontmatter (absent here: the directory name), and
+# <command> the resolved binary path.
+check "the missing skill got exactly one block appended" \
+    "$(grep -c '^<!-- skill-log:usage-log' "$SKILLS/missing/SKILL.md")" "1"
+check_contains "the appended block names the skill" \
+    "$(cat "$SKILLS/missing/SKILL.md")" "add --skill missing"
+check_contains "the appended block names the resolved binary" \
+    "$(cat "$SKILLS/missing/SKILL.md")" "$EXPECTED_CMD add --skill missing"
+{
+    cat "$SCRATCH/skills.orig/missing/SKILL.md"
+    render_block missing "$EXPECTED_CMD" "$USAGE_TEMPLATE"
+} > "$SCRATCH/missing.expected"
+check "the appended block is exactly the current render" \
+    "$(md5sum < "$SKILLS/missing/SKILL.md")" \
+    "$(md5sum < "$SCRATCH/missing.expected")"
+check "the append changed no byte outside the fence" \
+    "$(strip_block "$SKILLS/missing/SKILL.md" | md5sum)" \
+    "$(md5sum < "$SCRATCH/skills.orig/missing/SKILL.md")"
+check_contains "the unfenced usage-log text survives beyond the block" \
+    "$(cat "$SKILLS/missing/SKILL.md")" "$UNFENCED"
+check_absent "the unfenced text was not folded into the block" \
+    "$(strip_block "$SKILLS/missing/SKILL.md")" "skill-log:usage-log"
+
+# The rendered <name> is the skill's frontmatter name, not its
+# directory name.
+FRONT="$SCRATCH/front"
+rm -rf "$FRONT"
+mkdir -p "$FRONT/dirname"
+printf -- '---\nname: frontname\ndescription: a fixture\n---\n\n# Fixture\n' \
+    > "$FRONT/dirname/SKILL.md"
+run skills adopt --dir "$FRONT"
+check "adopt renders a skill with frontmatter" "$STATUS" "0"
+check_contains "the block names the frontmatter name" \
+    "$(cat "$FRONT/dirname/SKILL.md")" "add --skill frontname"
+check_absent "the block does not fall back to the directory name" \
+    "$(cat "$FRONT/dirname/SKILL.md")" "add --skill dirname"
+
+# stale: the block is rewritten inside its fence and the file is exactly
+# the original outside of it. The expected file is the untouched prefix
+# plus the render the current template produces for that skill.
+{
+    printf 'name: stale\n'
+    render_block stale "$EXPECTED_CMD" "$USAGE_TEMPLATE"
+} > "$SCRATCH/stale.expected"
+check "the stale skill's block is exactly the current render" \
+    "$(md5sum < "$SKILLS/stale/SKILL.md")" \
+    "$(md5sum < "$SCRATCH/stale.expected")"
+check "the rewrite changed no byte outside the fence" \
+    "$(strip_block "$SKILLS/stale/SKILL.md" | md5sum)" \
+    "$(strip_block "$SCRATCH/skills.orig/stale/SKILL.md" | md5sum)"
+check_contains "the rewritten block carries the current render" \
+    "$(cat "$SKILLS/stale/SKILL.md")" "add --skill stale"
+
+# edited: left untouched without --force, rewritten with it.
+check "the edited skill is untouched without --force" \
+    "$(md5sum < "$SKILLS/edited/SKILL.md")" \
+    "$(md5sum < "$SCRATCH/skills.orig/edited/SKILL.md")"
+
+# ok and vendored are never written, even under --force.
+check "the ok skill is untouched" \
+    "$(md5sum < "$SKILLS/ok/SKILL.md")" \
+    "$(md5sum < "$SCRATCH/skills.orig/ok/SKILL.md")"
+check "the vendored skill is untouched" \
+    "$(md5sum < "$SKILLS/vendored/SKILL.md")" \
+    "$(md5sum < "$SCRATCH/skills.orig/vendored/SKILL.md")"
+
+run skills adopt --dir "$SKILLS" --force
+check "adopt --force exits 0 when the directory ends conformant" "$STATUS" "0"
+{
+    printf 'name: edited\n'
+    render_block edited "$EXPECTED_CMD" "$USAGE_TEMPLATE"
+} > "$SCRATCH/edited.expected"
+check "adopt --force rewrites the edited block" \
+    "$(md5sum < "$SKILLS/edited/SKILL.md")" \
+    "$(md5sum < "$SCRATCH/edited.expected")"
+check "the forced rewrite changed no byte outside the fence" \
+    "$(strip_block "$SKILLS/edited/SKILL.md" | md5sum)" \
+    "$(strip_block "$SCRATCH/skills.orig/edited/SKILL.md" | md5sum)"
+check "the vendored skill stays untouched under --force" \
+    "$(md5sum < "$SKILLS/vendored/SKILL.md")" \
+    "$(md5sum < "$SCRATCH/skills.orig/vendored/SKILL.md")"
+
+# Idempotent: a second run changes nothing and every skill is
+# unchanged or skipped.
+cp -r "$SKILLS" "$SCRATCH/skills.adopted"
+run skills adopt --dir "$SKILLS" --json
+check "a second adopt exits 0" "$STATUS" "0"
+check "a second adopt changes nothing" \
+    "$(diff -r "$SCRATCH/skills.adopted" "$SKILLS" >/dev/null 2>&1 && echo same || echo differ)" "same"
+check "a second adopt reports only unchanged and skipped" \
+    "$(printf '%s\n' "$OUT" | python3 -c 'import json,sys; s={json.loads(l)["action"] for l in sys.stdin if l.strip()}; print(" ".join(sorted(s)))')" \
+    "skipped unchanged"
+
+# A file with no trailing newline still gets its block on its own line;
+# the original bytes survive as a prefix and the second run is a no-op.
+NONL="$SCRATCH/nonl"
+rm -rf "$NONL"
+mkdir -p "$NONL/gamma"
+printf 'name: gamma' > "$NONL/gamma/SKILL.md"
+cp "$NONL/gamma/SKILL.md" "$SCRATCH/gamma.orig"
+run skills adopt --dir "$NONL"
+check "adopt appends to a file without a trailing newline" "$STATUS" "0"
+check "the no-newline file kept its bytes as a prefix" \
+    "$(head -c "$(wc -c < "$SCRATCH/gamma.orig")" "$NONL/gamma/SKILL.md" | md5sum)" \
+    "$(md5sum < "$SCRATCH/gamma.orig")"
+check "the no-newline file's block is on its own line" \
+    "$(grep -c '^<!-- skill-log:usage-log' "$NONL/gamma/SKILL.md")" "1"
+cp "$NONL/gamma/SKILL.md" "$SCRATCH/gamma.adopted"
+run skills adopt --dir "$NONL"
+check "the no-newline file is idempotent" \
+    "$(diff "$SCRATCH/gamma.adopted" "$NONL/gamma/SKILL.md" >/dev/null 2>&1 && echo same || echo differ)" "same"
+
+# An empty directory (no SKILL.md subdirectories) is refused, exactly as
+# the audit refuses it.
+run skills adopt --dir "$EMPTY"
+check "adopt refuses an empty directory" "$STATUS" "1"
+check "the refusal names the directory" "$ERR" \
+    "skill-log: no skills in $EMPTY (no subdirectory holds a SKILL.md)"
+
+# ------------------------------- a moved user template makes blocks stale
+
+# The block was written from the shipped default; a user copy that
+# differs is the current render, so the block is an older one — stale —
+# and adopt rewrites it from the user copy.
+run skills template seed
+check "seed writes a user copy for the adopt fixtures" "$STATUS" "0"
+MOVED="$SCRATCH/moved"
+rm -rf "$MOVED"
+mkdir -p "$MOVED/alpha"
+printf 'name: alpha\n' > "$MOVED/alpha/SKILL.md"
+run skills adopt --dir "$MOVED"
+check "the first adopt writes the block" "$STATUS" "0"
+cp "$MOVED/alpha/SKILL.md" "$SCRATCH/alpha.before"
+
+printf '\nthe user added this line\n' >> "$TPL/usage-log.md"
+run skills adopt --dir "$MOVED" --json
+check "a moved template is adopted as a rewrite" "$STATUS" "0"
+check "the rewrite reports the stale state" \
+    "$(printf '%s\n' "$OUT" | head -1 | python3 -c 'import json,sys; o=json.loads(sys.stdin.read()); print(o["state"], o["action"])')" \
+    "stale rewritten"
+check_contains "the rewritten block carries the user's wording" \
+    "$(cat "$MOVED/alpha/SKILL.md")" "the user added this line"
+check "the rewrite changed no byte outside the fence" \
+    "$(strip_block "$MOVED/alpha/SKILL.md" | md5sum)" \
+    "$(strip_block "$SCRATCH/alpha.before" | md5sum)"
+cp "$MOVED/alpha/SKILL.md" "$SCRATCH/alpha.adopted"
+run skills adopt --dir "$MOVED" --json
+check "the rewritten block is idempotent" \
+    "$(diff "$SCRATCH/alpha.adopted" "$MOVED/alpha/SKILL.md" >/dev/null 2>&1 && echo same || echo differ)" "same"
+
+# Back to the shipped defaults for whatever runs next.
+run skills template reset --force
+check "reset returns to the shipped defaults" "$STATUS" "0"
+
 # ---------------------------------------------------- usage errors
 
 run skills
 check "skills with no subcommand is a usage error" "$STATUS" "2"
+run skills adopt
+check "adopt with no --dir is a usage error" "$STATUS" "2"
+run skills adopt --dir
+check "adopt --dir with no value is a usage error" "$STATUS" "2"
 run skills audit
 check "audit with no --dir is a usage error" "$STATUS" "2"
 run skills audit --dir

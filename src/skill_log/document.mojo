@@ -31,8 +31,11 @@ and keeps them distinct (ADR-0003):
 The shipped-default-moved question is *not* one of these: it lives in
 the state directory's seeded-from record, outside this module.
 
-Ticket #18 adds only `rewrite` (and the append it needs); the seam for
-that is `Block` plus this module's own text, and nothing here changes.
+`rewrite` and `append` (ticket #18) are the write half: both splice
+through `parse`'s `before · block · after` split, so no byte outside the
+fence is touched — `rewrite` replaces the block in place, `append` adds
+one at the end of a document that has none. Everything else here is
+unchanged.
 """
 
 from skill_log.hash import fnv1a64_hex
@@ -61,6 +64,7 @@ comptime STATE_VENDORED = "vendored"
 comptime FRONTMATTER = "---"
 comptime METADATA_KEY = "metadata:"
 comptime SOURCE_KEY = "source:"
+comptime NAME_KEY = "name:"
 
 
 struct Block(Movable):
@@ -309,6 +313,39 @@ def find_newline(text: String, start: Int) -> Int:
     return text.find("\n", start)
 
 
+def append(document: String, block: String) -> String:
+    """`document` with the fenced `block` appended at the end.
+
+    The whole document is user-owned when no block exists yet, so every
+    one of its bytes is kept as-is and the block lands after the last of
+    them. The block opens on its own line: a document whose last byte is
+    not a newline gets one separator newline in front of it. That
+    separator is the one byte `append` adds outside the fence, and it is
+    required — a fence that opens mid-line is not a fence, and the next
+    run would append a second block instead of recognising the first.
+    """
+    if document == "" or document.endswith("\n"):
+        return document + block
+    return document + "\n" + block
+
+
+def rewrite(document: String, block: String) -> String:
+    """`document` with its fenced block replaced by `block`.
+
+    The splice is `before + block + after`, the parts `parse` split at
+    the fence: the bytes outside the fence are carried through
+    untouched — they are never read, matched or trimmed, and the caller
+    writes them back exactly as they came in.
+
+    A document with no fenced block is appended to instead: that is the
+    `missing` case, and rewriting nothing would silently drop the block.
+    """
+    var parsed = parse(document)
+    if parsed.block is None:
+        return append(document, block)
+    return parsed.before + block + parsed.after
+
+
 def classify(
     document: String,
     current_template_hash: String,
@@ -380,3 +417,41 @@ def is_vendored(document: String) -> Bool:
             return True
         line_start = line_end + 1
     return False
+
+
+def frontmatter_name(document: String) -> String:
+    """The skill's name, from its frontmatter `name:` key, or "".
+
+    The same line scan as `is_vendored`: the first `name:` line inside
+    the frontmatter wins. Its value is the rest of the line, stripped of
+    whitespace and of one matching pair of quotes (a YAML `name: "foo"`
+    is the name `foo`). A document with no frontmatter, or no `name:`
+    key in it, answers "" — the caller falls back to the skill's
+    directory name, which is what the skill is called everywhere else.
+    """
+    if not document.startswith(FRONTMATTER):
+        return ""
+    var n = document.byte_length()
+    var first_end = find_newline(document, 0)
+    if first_end < 0:
+        return ""
+    var line_start = first_end + 1
+    while line_start < n:
+        var line_end = find_newline(document, line_start)
+        if line_end < 0:
+            line_end = n
+        var line = String(document[byte=line_start:line_end]).strip()
+        if line == FRONTMATTER:
+            return ""
+        if line.startswith(NAME_KEY):
+            var value = String(
+                String(line[byte=NAME_KEY.byte_length() :]).strip()
+            )
+            if value.byte_length() >= 2:
+                if value.startswith("\"") and value.endswith("\""):
+                    return String(value[byte=1 : value.byte_length() - 1])
+                if value.startswith("'") and value.endswith("'"):
+                    return String(value[byte=1 : value.byte_length() - 1])
+            return value
+        line_start = line_end + 1
+    return ""

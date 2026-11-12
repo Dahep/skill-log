@@ -17,13 +17,16 @@ target and its directory as they were.
 
 `open`, `write`, `close`, `rename` and `unlink` are reached through the
 same `dlopen` seam as the rest of the tool (`ffi.mojo`); Mojo 1.2's
-`Path` can read and write text but cannot rename.
+`Path` can read and write text but cannot rename. `resolve_path` reaches
+libc's `realpath` through the same seam: it is how a command path is
+resolved to one absolute, symlink-free answer.
 
 The mode is `0600` (what `O_EXCL` creation gives): a report is the
 author's working file, and git records only the executable bit.
 """
 
-from std.ffi import OwnedDLHandle, RTLD
+from std.ffi import CStringSpan, OwnedDLHandle, RTLD, c_char
+from std.memory import Pointer
 from std.pathlib import Path
 from std.time import monotonic
 
@@ -107,6 +110,38 @@ def rename_path(from_path: String, to_path: String) raises:
     _ = dst^
     if rc != 0:
         raise Error("cannot replace " + to_path)
+
+
+def resolve_path(path: String) -> String:
+    """`path` as one absolute, symlink-resolved path, or "".
+
+    libc's `realpath` does both jobs in one call: it resolves a relative
+    path against the current directory and follows symlinks, so the same
+    binary named three ways answers one path. It answers NULL when the
+    file does not exist — an empty string here, and the caller keeps the
+    name it was given. The answer is `malloc`'d, so it is copied out and
+    freed. Nothing raises: resolution is best-effort, and a name the
+    filesystem cannot resolve is still a usable command.
+    """
+    try:
+        var lib = OwnedDLHandle("libc.so.6", RTLD.NOW)
+        var realpath_fn = dl_sym[def(Int, Int) thin abi("C") -> Int](
+            lib, "realpath"
+        )
+        var free_fn = dl_sym[def(Int) thin abi("C") -> Int](lib, "free")
+        var buffer = c_string(path)
+        var addr = realpath_fn(Int(buffer.unsafe_ptr()), 0)
+        _ = buffer^
+        if addr == 0:
+            return ""
+        var p = Pointer[c_char, MutUntrackedOrigin](unsafe_from_address=addr)
+        var out = String(
+            StringSlice(unsafe_from_utf8=CStringSpan(unsafe_from_ptr=p))
+        )
+        _ = free_fn(addr)
+        return out
+    except:
+        return ""
 
 
 def write_text(path: String, text: String) raises:

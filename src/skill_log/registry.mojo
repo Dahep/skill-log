@@ -215,7 +215,7 @@ def build_verbs() raises -> List[Verb]:
     verbs.append(
         Verb(
             "skills",
-            "audit a skills directory and manage the usage-log templates",
+            "audit and adopt a skills directory and manage the usage-log templates",
             skills_usage(),
             skills_examples(),
             skills_value_flags(),
