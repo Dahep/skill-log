@@ -34,6 +34,13 @@ from skill_log.report import (
     report_usage,
     report_value_flags,
 )
+from skill_log.resolve import (
+    handle_resolve,
+    resolve_examples,
+    resolve_notes,
+    resolve_usage,
+    resolve_value_flags,
+)
 from skill_log.stats import (
     handle_stats,
     stats_examples,
@@ -166,6 +173,18 @@ def build_verbs() raises -> List[Verb]:
         )
     )
 
+    # The manual half of resolution: stamp one row by hand.
+    verbs.append(
+        Verb(
+            "resolve",
+            "stamp one row with the commit that carries its fix",
+            resolve_usage(),
+            resolve_examples(),
+            resolve_value_flags(),
+            resolve_notes(),
+        )
+    )
+
     var version_examples = List[String]()
     version_examples.append("skill-log --version")
     version_examples.append("skill-log --help")
@@ -203,6 +222,7 @@ def build_handlers() raises -> List[type_of(handle_version)]:
     handlers.append(handle_show)
     handlers.append(handle_stats)
     handlers.append(handle_report)
+    handlers.append(handle_resolve)
     handlers.append(handle_version)
     handlers.append(handle_help)
     return handlers^

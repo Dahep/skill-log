@@ -59,7 +59,7 @@ from sqlite.db import Database
 from skill_log.detect import git_branch, git_toplevel
 from skill_log.errors import EXIT_FAILURE, EXIT_USAGE, Outcome
 from skill_log.files import read_text, write_text
-from skill_log.flags import take_value
+from skill_log.flags import parse_positive, take_value
 from skill_log.json import json_string, json_string_array
 from skill_log.markers import Marker, marker_text, parse_marker
 from skill_log.store import (
@@ -130,29 +130,6 @@ def report_notes() -> String:
            "not have is refused, and an already-resolved row is skipped and\n" \
            "named. --check validates the branch's report without writing;\n" \
            "--dry-run previews the write."
-
-
-def parse_number(value: String, what: String) raises -> Int:
-    """A positive decimal number, or a usage error naming `what`.
-
-    Digits only: a sign, a space or a fraction is not an invocation id.
-    The cap is checked while the digits are consumed, so an oversized
-    number cannot wrap into the valid range.
-    """
-    var text = String(value.strip())
-    if text == "":
-        raise Error("usage: " + what)
-    var number = 0
-    for c in text.codepoints():
-        var code = Int(c)
-        if code < 48 or code > 57:
-            raise Error("usage: " + what)
-        number = number * 10 + (code - 48)
-        if number > 2_000_000_000:
-            raise Error("usage: " + what)
-    if number < 1:
-        raise Error("usage: " + what)
-    return number
 
 
 def branch_slug(branch: String) -> String:
@@ -345,7 +322,7 @@ def parse_options(args: List[String]) raises -> Options:
         var arg = args[i]
         if arg == "--id":
             options.ids.append(
-                parse_number(
+                parse_positive(
                     take_value(args, i, "--id", "an id"),
                     "--id takes a positive integer",
                 )
