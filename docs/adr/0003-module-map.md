@@ -198,6 +198,73 @@ unit harness.
 - `setup --check` after an audit on a freshly adopted skills directory is
   clean, which is the test that install and audit agree.
 
+## Implementation status
+
+This record was written before the port. The port is done, and it kept some of
+the shape below and not all of it. What shipped, what did not, and why — so the
+next reader does not take the map above for the tree as it is.
+
+### Shipped
+
+- **The marker grammar is a leaf.** `markers.mojo` depends on nothing and owns
+  `marker_text(machine, id)`; the store, the resolver and the report all call
+  it, so nobody builds `machine#id` by hand. The scan data (`Located`) is
+  separate from the grammar, as §2 promised.
+- **The resolution plan is pure.** `plan(located, rows, host)` decides with no
+  git, no clock and no store, and the writer applies what it decided. The
+  newest-marker rule, the unknown id, the same-commit no-op, the restamp and
+  the foreign marker are all decided in one place.
+- **The store owns the taxonomy.** A refusal is a value (`Refusal`), never a
+  word inside a message, and a SQLite failure is classified by the store
+  (`read_failure`) rather than inspected by a handler — damage is damage, a
+  lock is a lock. That much of §1's promise is kept.
+- **The document module answers the five questions.** `parse` splits at the
+  fence, `classify` decides the state, `rewrite` and `append` splice without
+  touching a byte outside the fence.
+- **The CLI is the only seam.** Every suite runs the installed binary as a
+  process, and `SKILL_LOG_NOW` is the only clock injection.
+
+### Not shipped
+
+- **A typed store surface.** §1 says the surface is typed operations and that
+  "SQL never leaves the module". The SQL does stay in the store — the verbs
+  build no statement of their own — but the *handle* leaves it: `report.mojo`
+  imports `sqlite.db`'s `Database`, holds one, and hands it to the store's
+  read functions, and those functions take a `Database` rather than being the
+  operations the module was supposed to expose. The taxonomy is one place; the
+  queries are one place; the handle that reaches them is not.
+- **A settings descriptor table.** §4 wants one descriptor per context key,
+  emitting the flag, the environment name, the help line and the precedence
+  order from the same row. Today a key is spelled out in `flags`, in `add`, in
+  `context` and in the help text, and the precedence is a hand-written chain.
+- **A `Process` seam.** §3 wants `run(argv)` and `git(argv)` with typed
+  causes, so no caller decodes an error string. `detect.mojo` and
+  `merged.mojo` still build shell command strings and still read an empty
+  answer as a failure — and the two git wrappers still have opposite failure
+  semantics, which is what §3 set out to remove.
+- **One help renderer.** The verb table and the top-level block share a
+  renderer, but `skills` builds its own blocks in `skills.mojo`, and the two
+  disagree about what a block contains.
+- **A single-sourced schema column list.** `store_column_names()` writes the
+  `invocations` columns by hand, and the single-row read and the multi-row
+  read spell out the same list, in the same order, twice more. One list, read
+  by all three, is the whole change.
+
+### Why
+
+The behaviour is met and the contract holds — every promise in `SPEC.md` is
+pinned by a suite, and the four reviews that examined the tree found no
+contract violation in any of these. What is missing is the *shape*: the same
+decisions are still re-derived in more than one place, and each of the five
+items above is one of them. A rewrite of the tree is out of proportion to a
+behaviour that is already right, so the debt is recorded here and worked as a
+separate change.
+
+The follow-up is
+[issue #26](https://github.com/Dahep/skill-log/issues/26), labelled
+`ready-for-agent`: it lists the five items with this section as the review
+evidence, and its acceptance criteria are shape, not behaviour.
+
 ## Alternatives rejected
 
 - **A connection plus retry helper** instead of typed operations: closer to
