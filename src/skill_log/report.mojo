@@ -807,10 +807,11 @@ def handle_report(args: List[String]) raises -> Outcome:
     try:
         opened = open_read(store_path)
     except e:
-        return Outcome.fail(
-            "cannot read the store: " + store_path + ": " + String(e),
-            EXIT_FAILURE(),
-        )
+        # The store classifies the failure and this handler renders it:
+        # damage is damage, a lock is a lock, and nothing here inspects
+        # a SQLite message (SPEC §3).
+        var failure = read_failure(store_path, String(e))
+        return Outcome.fail(failure.message, failure.code)
     if opened.refusal.refused():
         var failure = opened.refusal.failure()
         return Outcome.fail(failure.message, failure.code)

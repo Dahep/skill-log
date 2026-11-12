@@ -314,9 +314,11 @@ def handle_stats(args: List[String]) raises -> Outcome:
     try:
         opened = open_read(path)
     except e:
-        return Outcome.fail(
-            "cannot read the store: " + path + ": " + String(e), EXIT_FAILURE()
-        )
+        # The store classifies the failure and this handler renders it:
+        # damage is damage, a lock is a lock, and nothing here inspects
+        # a SQLite message (SPEC §3).
+        var failure = read_failure(path, String(e))
+        return Outcome.fail(failure.message, failure.code)
 
     if opened.refusal.refused():
         var failure = opened.refusal.failure()
