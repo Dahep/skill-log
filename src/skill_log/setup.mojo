@@ -524,10 +524,17 @@ def skills_verdict(skills_dir: String, options: Options) raises -> Verdict:
 
     # Per-skill verdicts, in the order the artifact names them. Each
     # answer is one install; the aggregate status and detail follow.
-    var entries = List[String]()
+    #
+    # The aggregate is decided from the statuses themselves, never from
+    # the prose: `created` if a skill was created, `updated` if one was
+    # updated, `drift` if one drifted under `--check`, `skipped` if all
+    # were skipped, and `unchanged` otherwise. A run that wrote nothing
+    # says `skipped` — never `updated`.
+    var entries = List[SkillInstall]()
     var created = False
-    var anything = False
+    var updated = False
     var drift = False
+    var skipped = False
     for i in range(2):
         var name: String
         var wanted: String
@@ -538,19 +545,23 @@ def skills_verdict(skills_dir: String, options: Options) raises -> Verdict:
             name = REVIEW_SKILL
             wanted = wanted_review
         var entry = installed_skill_action(dir, name, wanted, options)
-        entries.append(entry)
-        if entry.find(":created") > 0:
+        # The status is read before the answer is moved into the list.
+        var status = entry.status
+        entries.append(entry^)
+        if status == STATUS_CREATED:
             created = True
-        if entry.find(":drift") > 0:
+        elif status == STATUS_UPDATED:
+            updated = True
+        elif status == STATUS_DRIFT:
             drift = True
-        if entry.find(":unchanged") < 0:
-            anything = True
+        elif status == STATUS_SKIPPED:
+            skipped = True
 
     var detail = String("")
     for i in range(len(entries)):
         if i > 0:
             detail += ", "
-        detail += entries[i]
+        detail += entries[i].text()
 
     # A shipped default that moved since the user copy was seeded is
     # named here too (SPEC §7): the installed skills were rendered from
@@ -568,18 +579,40 @@ def skills_verdict(skills_dir: String, options: Options) raises -> Verdict:
 
     if drift:
         return Verdict(ARTIFACT_SKILLS, STATUS_DRIFT, detail)
-    if anything:
-        # `created` only when every skill landed fresh — a first run, or
-        # its `--dry-run` preview. A run that replaced one copy of two is
-        # an update and does not claim it created the directory.
-        var all_created = True
-        for i in range(len(entries)):
-            if entries[i].find(":created") < 0:
-                all_created = False
-        if created and all_created:
-            return Verdict(ARTIFACT_SKILLS, STATUS_CREATED, detail)
+    if created:
+        return Verdict(ARTIFACT_SKILLS, STATUS_CREATED, detail)
+    if updated:
         return Verdict(ARTIFACT_SKILLS, STATUS_UPDATED, detail)
+    if skipped:
+        # Every skill was left alone: nothing was written, and the
+        # verdict says so.
+        return Verdict(ARTIFACT_SKILLS, STATUS_SKIPPED, detail)
     return Verdict(ARTIFACT_SKILLS, STATUS_UNCHANGED, detail)
+
+
+struct SkillInstall(Movable):
+    """One skill's install answer: its status and the reason for it.
+
+    The status is one of the five the JSON contract names, so the
+    aggregate can be decided from values rather than from prose: the
+    human line is `name:status (reason)` and the reason names the
+    path and why, so an operator can act on the line alone.
+    """
+
+    var name: String
+    var status: String
+    var reason: String
+
+    def __init__(
+        out self, name: String = "", status: String = "", reason: String = ""
+    ):
+        self.name = name
+        self.status = status
+        self.reason = reason
+
+    def text(self) -> String:
+        """The human line: the skill, its status, and the reason."""
+        return self.name + ":" + self.status + " (" + self.reason + ")"
 
 
 def installed_skill_action(
@@ -587,7 +620,7 @@ def installed_skill_action(
     name: String,
     wanted: String,
     options: Options,
-) raises -> String:
+) raises -> SkillInstall:
     """One skill's install answer, as `name:verdict` with its reason.
 
     The verdict is one of the five statuses the JSON contract names; the
@@ -619,19 +652,23 @@ def installed_skill_action(
     var path = dir + "/" + name + "/SKILL.md"
     if not Path(path).is_file():
         if options.check:
-            return name + ":drift (missing at " + path + ")"
+            return SkillInstall(name, STATUS_DRIFT, "missing at " + path)
         if options.dry_run:
-            return name + ":created (would write " + path + ")"
+            return SkillInstall(
+                name, STATUS_CREATED, "would write " + path
+            )
         if not Path(dir + "/" + name).is_dir():
             makedirs(dir + "/" + name, exist_ok=True)
         write_text(path, wanted)
-        return name + ":created (" + path + ")"
+        return SkillInstall(name, STATUS_CREATED, path)
 
     var text = read_text(path)
     if text == wanted:
-        return name + ":unchanged (" + path + ")"
+        return SkillInstall(name, STATUS_UNCHANGED, path)
     if is_vendored(text):
-        return name + ":skipped (vendored; " + path + " is left alone)"
+        return SkillInstall(
+            name, STATUS_SKIPPED, "vendored; " + path + " is left alone"
+        )
 
     # `skill-log` is copied verbatim, so the only thing that can tell a
     # stale install from a hand edit is its version stamp. The stamp
@@ -642,59 +679,58 @@ def installed_skill_action(
         stamp = stamp_version(text)
     if stamp == "" and name == SKILL_LOG_SKILL:
         if options.check:
-            return name + ":drift (no version stamp at " + path + ")"
+            return SkillInstall(
+                name, STATUS_DRIFT, "no version stamp at " + path
+            )
         if options.force:
             if not options.dry_run:
                 write_text(path, wanted)
-            return name + ":updated (" + path + ")"
-        return (
-            name
-            + ":skipped (no version stamp; left alone at "
+            return SkillInstall(name, STATUS_UPDATED, path)
+        return SkillInstall(
+            name,
+            STATUS_SKIPPED,
+            "no version stamp; left alone at "
             + path
-            + "; use --force to replace)"
+            + "; use --force to replace",
         )
     if stamp != "" and stamp != version():
         if options.check:
-            return (
-                name
-                + ":drift (installed by "
-                + stamp
-                + " at "
-                + path
-                + ")"
+            return SkillInstall(
+                name, STATUS_DRIFT, "installed by " + stamp + " at " + path
             )
         if options.force:
             if not options.dry_run:
                 write_text(path, wanted)
-            return (
-                name
-                + ":updated (was installed by "
-                + stamp
-                + ", this is "
-                + version()
-                + ")"
+            return SkillInstall(
+                name,
+                STATUS_UPDATED,
+                "was installed by " + stamp + ", this is " + version(),
             )
-        return (
-            name
-            + ":stale (installed by "
+        # A copy another version installed is left alone: the status is
+        # `skipped` (nothing was written) and the reason names both
+        # versions.
+        return SkillInstall(
+            name,
+            STATUS_SKIPPED,
+            "installed by "
             + stamp
             + ", this is "
             + version()
             + "; left alone at "
-            + path
-            + ")"
+            + path,
         )
     if options.check:
-        return name + ":drift (differs from this version at " + path + ")"
+        return SkillInstall(
+            name, STATUS_DRIFT, "differs from this version at " + path
+        )
     if options.force:
         if not options.dry_run:
             write_text(path, wanted)
-        return name + ":updated (" + path + ")"
-    return (
-        name
-        + ":skipped (differing copy left alone at "
-        + path
-        + "; use --force to replace)"
+        return SkillInstall(name, STATUS_UPDATED, path)
+    return SkillInstall(
+        name,
+        STATUS_SKIPPED,
+        "differing copy left alone at " + path + "; use --force to replace",
     )
 
 

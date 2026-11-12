@@ -694,6 +694,10 @@ run setup --repo "$TMP/r1" --skills-dir "$DIR" --db "$TMP/skills-store.db"
 check "a differing copy exits 0" "$STATUS" "0"
 check_contains "the differing copy is refused by name" \
     "$(detail_of "$OUT" skills)" "skill-log:skipped"
+# The aggregate says what happened: nothing was written, so the
+# verdict is `skipped`, not `updated`.
+check "a differing copy: the verdict is skipped" \
+    "$(status_of "$OUT" skills)" "skipped"
 check_contains "the refusal names the skill's path" \
     "$(detail_of "$OUT" skills)" "$LOG_DOC"
 check_contains "the refusal names --force" "$(detail_of "$OUT" skills)" \
@@ -773,6 +777,21 @@ check "check: a stale install exits 1" "$STATUS" "1"
 check_contains "check: the stale install names its version" \
     "$(detail_of "$OUT" skills)" \
     "skill-log:drift (installed by 0.0.1"
+
+# A normal run leaves a stale install alone: nothing was written, so
+# the per-skill answer is `skipped` and the aggregate says `skipped`.
+cp "$LOG_DOC" "$SCRATCH/skill-log.stale"
+run setup --repo "$TMP/r1" --skills-dir "$DIR" --db "$TMP/skills-store.db"
+check "a stale install: the run exits 0" "$STATUS" "0"
+check_contains "a stale install: the answer names its version" \
+    "$(detail_of "$OUT" skills)" "skill-log:skipped (installed by 0.0.1"
+check "a stale install: the verdict is skipped" \
+    "$(status_of "$OUT" skills)" "skipped"
+if cmp -s "$LOG_DOC" "$SCRATCH/skill-log.stale"; then
+    pass "a stale install: the copy is left byte-for-byte alone"
+else
+    fail "a stale install: the copy is left byte-for-byte alone"
+fi
 cp "$SCRATCH/skill-log.before" "$LOG_DOC"
 
 # The skills verdict keeps the artifact/status/detail shape, with each
