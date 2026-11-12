@@ -2,8 +2,17 @@
 
 skill-log — a local log of agent-skill invocations: one row per run, plus the
 problems that cost it, so friction can be counted, attributed to a skill, and
-closed by a specific change. Domain language lives in `CONTEXT.md`; design
-decisions in `docs/adr/`.
+closed by a specific change. The specification is `SPEC.md`; domain language
+lives in `CONTEXT.md`; design decisions in `docs/adr/`.
+
+## Specification
+
+- `SPEC.md` is the single source of truth for behavior. An issue body is never
+  the specification; a rule that lives only in a ticket is a ticket bug.
+- Spec changes go through a PR that edits `SPEC.md`, never an edit to an issue
+  body. Reasoning that deserves to outlive the change goes in a new ADR.
+- Issues carry work items: acceptance criteria and blockers. They may cite
+  `SPEC.md`; they may not restate it.
 
 ## Build and test
 
@@ -34,7 +43,7 @@ The five canonical triage roles, each label string equal to its role name. See `
 
 ### Domain docs
 
-Single-context: root `CONTEXT.md` + `docs/adr/`. Per the `domain-modeling` skill.
+Single-context: root `SPEC.md` + `CONTEXT.md` + `docs/adr/`. Per the `domain-modeling` skill.
 
 ### Model pins
 
