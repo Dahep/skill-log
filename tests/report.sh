@@ -336,6 +336,36 @@ check "a missing report file exits 0" "$STATUS" "0"
 check "a missing report file says so" "$OUT" \
     "no report file at .skill-log/reports/no-such-report.md"
 
+# ------------------------------------------- the check names the right file
+#
+# The check reads two things: the report file and the store. A failure in
+# one is not a failure in the other, and the message has to name the one
+# that actually failed. The store's verdict is a value the store owns, so
+# a report whose *path* carries a word from the refusal vocabulary must
+# not flip the store's verdict either.
+printf 'boxA#4\n' >"$REPO/.skill-log/reports/unreadable.md"
+chmod 000 "$REPO/.skill-log/reports/unreadable.md"
+run report --check --slug unreadable
+check "an unreadable report exits 1" "$STATUS" "1"
+check_contains "an unreadable report is named as the report" "$ERR" \
+    "cannot read the report: $REPO/.skill-log/reports/unreadable.md"
+check_absent "an unreadable report is not blamed on the store" "$ERR" \
+    "damaged store"
+check_absent "an unreadable report is not called a store failure" "$ERR" \
+    "cannot read the store"
+check_one_line "an unreadable report is one line" "$ERR"
+chmod 0644 "$REPO/.skill-log/reports/unreadable.md"
+
+# A report path that carries the vocabulary does not decide the store's
+# verdict: the check still succeeds, and the store is not named at all.
+printf 'boxA#4\n' >"$REPO/.skill-log/reports/malformed.md"
+run report --check --slug malformed --db "$SCRATCH/malformed/locked.db"
+check "a report path with a vocabulary word still checks" "$STATUS" "0"
+check_contains "the check names the valid report" "$OUT" \
+    ".skill-log/reports/malformed.md is valid (1 marker)"
+check_absent "the store is not blamed for the report" "$ERR" "damaged store"
+check_absent "the store is not called locked" "$ERR" "locked store"
+
 # --------------------------------------------------------------- naming
 
 run report --id 4 --slug "../evil"

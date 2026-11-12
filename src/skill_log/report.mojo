@@ -695,8 +695,19 @@ def check_outcome(
             store_warning.append("store unavailable: " + String(e))
 
     var result = CheckResult()
+    var text = String("")
     try:
-        var text = read_text(path)
+        text = read_text(path)
+    except e:
+        # The report file is not the store. A file that cannot be read
+        # is named as the report — the path and the reason — and the
+        # store's verdict is left alone: a report path may carry any
+        # word, so the store's answer must not be re-derived from it.
+        return Outcome.fail(
+            "cannot read the report: " + path + ": " + String(e),
+            EXIT_FAILURE(),
+        )
+    try:
         result = validate_report(text, relative, opened, have_store)
     except e:
         # The store classifies the failure and this handler renders it:
