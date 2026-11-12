@@ -83,6 +83,42 @@ from skill_log.text import prefixed, sanitize
 # what puts a checkout in artifact mode; its absence is trailer mode.
 comptime REPORT_DIR = ".skill-log/reports"
 
+# The report directory's README and keep file, which `setup` creates
+# with the directory and never touches again.
+comptime README_NAME = "README.md"
+comptime KEEP_NAME = ".keep"
+
+
+def report_dir_readme() -> String:
+    """The README `setup` writes into a new report directory.
+
+    It is the operator's one-page explanation of the transport, kept
+    beside the format rules in this module so the two cannot disagree.
+    The wording follows the reference implementation's
+    `reference/report-dir-README.md`, with the file names and commands
+    the 1.0 contract uses (`report` and `<slug>.md`) in place of the
+    report era's (`fix` and `fixes/<slug>.txt`).
+    """
+    return """\
+# .skill-log/reports
+
+The report a change commits when it fixes friction recorded in the local
+skill log. Resolution reads it after the merge, so the fix cannot be
+forgotten.
+
+- `<slug>.md` — one report per fix change, one `machine#id` per line.
+  `skill-log report --id …` writes it (and validates the ids against the
+  local log); commit it with the change.
+- `resolve-merged` (the `post-merge` hook) reads the files a pull added or
+  changed and stamps each named row with the commit that carries it. Each
+  machine resolves only the rows it owns; a row named for another machine
+  is reported there and resolves on that machine's next pull.
+
+A repo without this directory still uses the commit-body
+`Skill-log-Fix:` trailer. This directory is the transport for repos that
+have it, because a squash merge keeps tree content exactly as committed.
+"""
+
 # The commit-body trailer a checkout without the report directory uses.
 comptime TRAILER_KEY = "Skill-log-Fix"
 

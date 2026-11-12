@@ -39,6 +39,8 @@ from std.subprocess import run
 comptime GIT_TOPLEVEL_ARGS = "rev-parse --show-toplevel"
 comptime GIT_ORIGIN_ARGS = "remote get-url origin"
 comptime GIT_BRANCH_ARGS = "rev-parse --abbrev-ref HEAD"
+comptime GIT_COMMON_DIR_ARGS = "rev-parse --path-format=absolute --git-common-dir"
+comptime GIT_COMMON_DIR_OLD_ARGS = "rev-parse --git-common-dir"
 
 # The directory T3 keeps its worktrees in, relative to the T3 home.
 comptime T3_WORKTREES_DIR = "worktrees"
@@ -118,6 +120,29 @@ def git_toplevel_of(dir: String) -> String:
     if dir == "":
         return ""
     return run_git(dir, GIT_TOPLEVEL_ARGS)
+
+
+def git_common_dir(dir: String) -> String:
+    """The repository's common git directory, or an empty string.
+
+    The common directory is the one every linked worktree shares — the
+    main repository's `.git` — and it is where the hooks directory
+    belongs. A worktree's own `worktrees/<name>` directory is per-checkout
+    state and git never looks there for hooks.
+
+    Older git without `--path-format` answers with a path relative to
+    `dir`; it is joined back onto `dir` so the caller always gets a path
+    it can open.
+    """
+    var out = run_git(dir, GIT_COMMON_DIR_ARGS)
+    if out != "":
+        return out
+    out = run_git(dir, GIT_COMMON_DIR_OLD_ARGS)
+    if out == "" or out.startswith("/"):
+        return out
+    if dir == "":
+        return out
+    return dir + "/" + out
 
 
 def git_origin_url(dir: String) -> String:

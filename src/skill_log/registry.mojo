@@ -55,6 +55,13 @@ from skill_log.merged import (
     resolve_merged_usage,
     resolve_merged_value_flags,
 )
+from skill_log.setup import (
+    handle_setup,
+    setup_examples,
+    setup_notes,
+    setup_usage,
+    setup_value_flags,
+)
 from skill_log.stats import (
     handle_stats,
     stats_examples,
@@ -211,6 +218,18 @@ def build_verbs() raises -> List[Verb]:
         )
     )
 
+    # Make a machine and a repo ready: the store, the hook, the reports.
+    verbs.append(
+        Verb(
+            "setup",
+            "make a machine and a repo ready: store, hook, report directory",
+            setup_usage(),
+            setup_examples(),
+            setup_value_flags(),
+            setup_notes(),
+        )
+    )
+
     # The skills surface: audit, template show/seed/reset, adopt.
     verbs.append(
         Verb(
@@ -263,6 +282,7 @@ def build_handlers() raises -> List[type_of(handle_version)]:
     handlers.append(handle_report)
     handlers.append(handle_resolve)
     handlers.append(handle_resolve_merged)
+    handlers.append(handle_setup)
     handlers.append(handle_skills)
     handlers.append(handle_version)
     handlers.append(handle_help)
