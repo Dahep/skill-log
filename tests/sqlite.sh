@@ -21,6 +21,7 @@ ROOT="$(cd "$HERE/.." && pwd)"
 SCRATCH="${SCRATCH:-/tmp/opencode/skill-log-sqlite}"
 
 # shellcheck shell=bash
+# shellcheck disable=SC1091  # the harness sits beside the suite, not on PATH
 . "$HERE/lib.sh"
 
 # The pinned library: the one scripts/package.sh fetches and verifies.
@@ -78,6 +79,7 @@ for lib in "$ROOT"/dist/lib/*.so*; do
     cp "$lib" "$SCRATCH/build/lib/"
 done
 cp "$PINNED" "$SCRATCH/build/lib/libsqlite3.so.0"
+# shellcheck disable=SC2016  # $ORIGIN must reach patchelf literally
 patchelf --set-rpath '$ORIGIN/lib' "$SCRATCH/build/skill-log"
 BIN="$SCRATCH/build/skill-log"
 
@@ -86,6 +88,7 @@ run() {
         "$BIN" "$@" 2>"$SCRATCH/stderr")"
     STATUS=$?
     ERR="$(cat "$SCRATCH/stderr")"
+    export ERR
 }
 
 # The write path: the row, its timestamp, and its marker. The clock is
