@@ -1,6 +1,10 @@
 # ADR-0001: a Mojo binary with a vendored SQLite binding
 
-**Status:** accepted, 2026-11-11.
+**Superseded by:** [ADR-0004](0004-go-binary-and-pure-go-sqlite.md) — the
+implementation clauses (language, storage binding, artifact layout) were
+replaced by a Go binary with a pure-Go SQLite driver. The body below is the
+historical record and is not rewritten.
+**Status:** accepted, 2026-11-11; superseded by ADR-0004, 2026-11-12.
 **Amends:** the implementation clauses of
 [issue #1](https://github.com/Dahep/skill-log/issues/1) — language,
 distribution, test suite, `--version` semantics, and consumer integration.

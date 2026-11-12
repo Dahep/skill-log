@@ -4,7 +4,7 @@ A local log of agent-skill invocations: one row per run, plus the problems
 that cost it, so friction can be counted, attributed to a skill, and closed by
 a specific change.
 
-**Status:** build done, release plumbing in place. The specification is [SPEC.md](SPEC.md); the
+**Status:** the Go port is in progress. The specification is [SPEC.md](SPEC.md); the
 decisions behind it are in [docs/adr/](docs/adr/), and the vocabulary in
 [CONTEXT.md](CONTEXT.md). Until the first release, the Python implementation
 it replaces is archived verbatim in [`reference/`](reference/README.md): that
@@ -40,39 +40,51 @@ skill-log setup --repo ~/dotfiles --skills-dir ~/dotfiles/.agents/skills
 `mise use -g github:Dahep/skill-log@<tag>` installs the released archive
 through mise's `github:` backend: it downloads the
 `skill-log-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz` asset of that tag's
-release and verifies the digest the release records. Pin a version by
+release and verifies the digest the release records. The archive holds one
+statically linked `skill-log` executable plus the licence and notice files —
+no runtime libraries, so the install works on any Linux machine with no Go
+toolchain and no system SQLite. Pin a version by
 the tag (`@1.0.0`); `@latest` takes the newest release.
 
 `setup` provisions the store, the post-merge hook, the repo report directory,
 and both bundled skills. `setup --check` verifies the result without writing.
-`setup --dry-run` shows what a real run would change.
+`setup --dry-run` shows what a real run would change. The verb is specified
+in [SPEC.md](SPEC.md) §5 but is not in the binary yet — see
+[Command surface](#command-surface).
 
 ## Build and test
 
 ```bash
-scripts/build.sh    # dist/skill-log plus dist/lib/, rpath $ORIGIN/lib
+scripts/build.sh    # dist/skill-log: one statically linked executable
 scripts/test.sh     # the suites against dist/
 scripts/package.sh --version vX.Y.Z   # the release archive + its sha256
 tests/packaging.sh  # the archive in a clean container (needs docker)
 ```
 
 The suites are black-box: they run the built binary with a scratch HOME and a
-scratch store. `scripts/test.sh --build` rebuilds first. `tests/packaging.sh`
-installs the packed archive into a container with no toolchain and no system
-SQLite and asserts the bundled SQLite is the one that loads; it is a separate
-command, not part of `scripts/test.sh`, so the default gate stays offline.
+scratch store. `scripts/test.sh --build` rebuilds first. The build is
+`CGO_ENABLED=0 go build`, so the executable links no SQLite library and no
+other shared object: it runs on a machine with no Go toolchain and no system
+SQLite. `tests/packaging.sh` installs the packed archive into such a container
+and asserts the artifact is static; it is a separate command, not part of
+`scripts/test.sh`, so the default gate stays offline.
 
 ## Releasing
 
 Push a `vX.Y.Z` tag and the release workflow (`.github/workflows/release.yml`)
-does the rest: it installs the pinned toolchain, builds with the bundled
-SQLite fetched and verified against the runner's glibc floor (never a
-development machine's copy), packs the archive and its sha256, runs the
-packaging test in a clean container, creates the release for the tag,
-uploads the assets, and attaches a build-provenance attestation
-(`gh attestation verify` checks it). A `workflow_dispatch` run builds and
-tests without publishing; the workflow also installs the published tag back
-through mise's `github:` backend in a clean container afterwards.
+does the rest: it installs the pinned toolchain, builds the binary, packs the
+archive and its sha256, runs the packaging test in a clean container, creates
+the release for the tag, uploads the assets, and attaches a build-provenance
+attestation (`gh attestation verify` checks it). A `workflow_dispatch` run
+builds and tests without publishing; the workflow also installs the published
+tag back through mise's `github:` backend in a clean container afterwards.
+
+The archive shape is the one `SPEC.md` §8 fixes:
+`skill-log-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz`, holding the static
+`skill-log` executable plus the licence and notice files. The packaging half
+of the workflow — `scripts/package.sh` and `tests/packaging.sh` — is still
+the Mojo-era implementation and is being ported to the static layout; the
+Go port is not releasable until it is.
 
 ## Command surface
 
@@ -82,13 +94,16 @@ through mise's `github:` backend in a clean container afterwards.
 | `show` | Recent rows, their problems, and the cuts: skill, machine, harness, repo, run, unresolved, last. |
 | `stats` | Invocation, problem and resolved counts, and problems per invocation, per cut (`--by`). |
 | `resolve` | Stamp one local row with the commit that fixed it, by hand. |
-| `resolve-merged` | Resolve rows from the commits a pull landed; reports in artifact mode, trailers otherwise. |
 | `report` | Name the rows a change fixes: the committed report file, or the trailer in a repo without one. |
-| `setup` | Provision or verify the store, hook, report directory, and skills. |
 | `skills audit` | Report each skill's usage-log state (`ok`, `missing`, `stale`, `edited`, `vendored`). |
 | `skills adopt` | Append a block where none is fenced and re-render a stale one; rewrite an `edited` block only with `--force`. |
 | `skills template` | Show, seed, reset, or override the user-owned templates; reports when the shipped default moved. |
 | `--version` | Print the release version. |
+
+Two verbs the specification defines are not in the binary yet: `setup`, which
+provisions the store, the post-merge hook, the report directory and the
+skills, and `resolve-merged`, which stamps the rows a landed pull resolved.
+The Go port is in progress; `SPEC.md` §5 is the contract they will meet.
 
 Exit codes: `0` success or nothing to do, `1` operational failure, `2` usage.
 JSON goes to stdout; one-line diagnostics go to stderr; no tracebacks.
@@ -110,11 +125,15 @@ copy.
 - [SPEC.md](SPEC.md) — the specification: behavior, store, commands, reports,
   resolution, skills, distribution, testing.
 - [ADR-0001](docs/adr/0001-mojo-binary-and-sqlite.md) — why a Mojo binary and a
-  vendored SQLite binding.
+  vendored SQLite binding (superseded by ADR-0004).
 - [ADR-0002](docs/adr/0002-explicit-harness-context.md) — explicit harness
   context, adapters, `report`, one store per machine.
 - [ADR-0003](docs/adr/0003-module-map.md) — the module map behind the CLI.
+- [ADR-0004](docs/adr/0004-go-binary-and-pure-go-sqlite.md) — why a Go binary
+  and a pure-Go SQLite driver.
 - [CONTEXT.md](CONTEXT.md) — vocabulary: what the terms mean.
+- [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) — the modules the binary
+  includes, and their licences.
 - [Issue #1](https://github.com/Dahep/skill-log/issues/1) and
   [issue #3](https://github.com/Dahep/skill-log/issues/3) — the historical
   contracts this specification replaces.

@@ -1,5 +1,14 @@
 # libsqlite3 `$ORIGIN` rpath spike (ticket #4)
 
+> **Historical record.** This directory holds the Mojo-era spike that
+> answered the bundled-SQLite question: yes, a packaged `libsqlite3.so.0`
+> resolves through an `$ORIGIN` rpath. The project moved to a Go binary with
+> a pure-Go SQLite driver
+> ([ADR-0004](../../adr/0004-go-binary-and-pure-go-sqlite.md)), so the
+> question no longer arises: the artifact is statically linked, there is no
+> bundled library and no rpath. The files are kept as the record of what was
+> tried and why — they are not part of any current build.
+
 Does a Mojo binary built against the vendored `ehsanmok/sqlite` binding find
 the `libsqlite3.so.0` we ship in `lib/` beside the executable, once
 `patchelf --set-rpath '$ORIGIN/lib'` is applied?

@@ -27,6 +27,14 @@ close to verbatim, so the port would inherit that shape.
 This ADR records the module map decided before the port starts, and the
 semantics that changed while deciding it.
 
+**Where the map landed.** The port is written in Go
+([ADR-0004](0004-go-binary-and-pure-go-sqlite.md)), so the seven modules
+below are seven packages under `internal/`: `store`, `marker`, `process`,
+`settings`, `document`, `format`, and the CLI boundary `cli`. The names in
+this record are the module boundaries, not the file names; the table in
+[Implementation status](#implementation-status) says which Go package holds
+each one and what actually shipped.
+
 ## Decision
 
 Seven modules, none of them a verb, plus the CLI boundary #7 already owns.
@@ -188,6 +196,10 @@ unit harness.
 
 ## Enforced by
 
+These are the checks the record is held to. Two of them name verbs the Go
+port has not shipped yet — `resolve-merged` and `setup` — so they are
+enforced by the contract, not yet by the binary.
+
 - #21 runs the store matrix per verb: absent, empty, damaged, foreign, older,
   newer.
 - A marker built by hand anywhere fails review; round-trip parse/format is one
@@ -204,65 +216,100 @@ This record was written before the port. The port is done, and it kept some of
 the shape below and not all of it. What shipped, what did not, and why — so the
 next reader does not take the map above for the tree as it is.
 
+The tree is Go now ([ADR-0004](0004-go-binary-and-pure-go-sqlite.md)), so the
+module names below are Go packages under `internal/`, and the file names are
+the Go ones.
+
+| § | Module | Go package | Holds |
+|---|---|---|---|
+| 1 | Store | `internal/store` | `store.go`, `read.go`, `write.go`, `plan.go` — the schema, the refusal taxonomy, the reads, the write and the resolution plan |
+| 2 | Marker | `internal/marker` | `marker.go` — the `machine#id` grammar and its parse/format |
+| 3 | Process | `internal/process` | `process.go` — `Run` and `Git` with typed causes |
+| 4 | Settings | `internal/settings` | `paths.go`, `detect.go`, `clock.go`, `adapters.go` — store path, clock, machine, git detection, the opt-in adapters |
+| 5 | Resolution | `internal/store` | `plan.go` — `Plan`, the pure decision; `cli/resolve.go` applies it |
+| 6 | Document | `internal/document` | `document.go`, `hash.go` — parse, classify, render, rewrite around the fence |
+| 7 | Output | `internal/format` | `json.go`, `text.go`, `table.go`, `files.go` — the JSON writer, the sanitizer, the table helpers, atomic file writes |
+| — | CLI boundary | `internal/cli` | `main.go`, `cli.go`, `flags.go`, `help.go`, `render.go` and one file per verb |
+
+`internal/assets` holds the two shipped default templates, embedded into the
+binary with `go:embed`. `cmd/skill-log` is the entry point and holds nothing
+but `cli.Main()`.
+
 ### Shipped
 
-- **The marker grammar is a leaf.** `markers.mojo` depends on nothing and owns
-  `marker_text(machine, id)`; the store, the resolver and the report all call
+- **The marker grammar is a leaf.** `internal/marker` depends on nothing and
+  owns `Format(machine, id)`; the store, the resolver and the report all call
   it, so nobody builds `machine#id` by hand. The scan data (`Located`) is
   separate from the grammar, as §2 promised.
-- **The resolution plan is pure.** `plan(located, rows, host)` decides with no
-  git, no clock and no store, and the writer applies what it decided. The
-  newest-marker rule, the unknown id, the same-commit no-op, the restamp and
-  the foreign marker are all decided in one place.
+- **The resolution plan is pure.** `store.Plan(located, rows, localHost)`
+  decides with no git, no clock and no store, and the writer applies what it
+  decided. The newest-marker rule, the unknown id, the same-commit no-op,
+  the restamp and the foreign marker are all decided in one place.
 - **The store owns the taxonomy.** A refusal is a value (`Refusal`), never a
   word inside a message, and a SQLite failure is classified by the store
-  (`read_failure`) rather than inspected by a handler — damage is damage, a
+  (`ClassifyError`) rather than inspected by a handler — damage is damage, a
   lock is a lock. That much of §1's promise is kept.
-- **The document module answers the five questions.** `parse` splits at the
-  fence, `classify` decides the state, `rewrite` and `append` splice without
+- **The document module answers the five questions.** `Parse` splits at the
+  fence, `Classify` decides the state, `Rewrite` and `Append` splice without
   touching a byte outside the fence.
 - **The CLI is the only seam.** Every suite runs the installed binary as a
   process, and `SKILL_LOG_NOW` is the only clock injection.
+- **The process seam exists.** `internal/process` offers `Run(dir, name,
+  args...)` returning a status and both streams, and `Git(dir, args...)`
+  returning a typed cause (`GitOk`, `GitNotARepository`, `GitNoCommits`,
+  `GitMissing`, `GitFailed`). No caller decodes an error string to find out
+  what happened. §3's promise is kept.
+- **One help renderer for the verbs.** `cli.RenderVerb` renders every verb's
+  usage block, and `cli.TopLevelHelp` renders the top-level one; both read
+  the same `Verb` row the dispatcher holds.
 
 ### Not shipped
 
 - **A typed store surface.** §1 says the surface is typed operations and that
-  "SQL never leaves the module". The SQL does stay in the store — the verbs
-  build no statement of their own — but the *handle* leaves it: `report.mojo`
-  imports `sqlite.db`'s `Database`, holds one, and hands it to the store's
-  read functions, and those functions take a `Database` rather than being the
-  operations the module was supposed to expose. The taxonomy is one place; the
-  queries are one place; the handle that reaches them is not.
+  "SQL never leaves the module". The SQL does stay in the store — no verb
+  builds a statement of its own, and `internal/cli` does not import
+  `database/sql` at all. But the *handle* still leaves it: `store.OpenRead`
+  and `store.OpenWrite` return a `*store.Store`, and the verbs hold one and
+  call its methods. The taxonomy is one place, the queries are one place, and
+  the handle that reaches them is a public type rather than a set of
+  operations behind one. The one exception is `internal/settings`, whose
+  opencode adapter opens `opencode.db` itself to read another tool's store —
+  a read-only foreign database, which §1 never covered.
 - **A settings descriptor table.** §4 wants one descriptor per context key,
   emitting the flag, the environment name, the help line and the precedence
-  order from the same row. Today a key is spelled out in `flags`, in `add`, in
-  `context` and in the help text, and the precedence is a hand-written chain.
-- **A `Process` seam.** §3 wants `run(argv)` and `git(argv)` with typed
-  causes, so no caller decodes an error string. `detect.mojo` and
-  `merged.mojo` still build shell command strings and still read an empty
-  answer as a failure — and the two git wrappers still have opposite failure
-  semantics, which is what §3 set out to remove.
-- **One help renderer.** The verb table and the top-level block share a
-  renderer, but `skills` builds its own blocks in `skills.mojo`, and the two
-  disagree about what a block contains.
-- **A single-sourced schema column list.** `store_column_names()` writes the
-  `invocations` columns by hand, and the single-row read and the multi-row
-  read spell out the same list, in the same order, twice more. One list, read
-  by all three, is the whole change.
+  order from the same row. That table is **not adopted**. The precedence
+  chain lives in `internal/cli/add.go` — `resolveField(flag, variable,
+  adapterValue, detected)` — over the detections and adapters that
+  `internal/settings` provides. A key is still spelled out in the verb's
+  `Usage` string, in its `ValueFlags` list, in the parser and in the help
+  text; the settings package holds the paths, the clock, the hostname, the
+  git detection and the adapters, and no descriptor table.
+- **One help renderer everywhere.** The verb table and the top-level block
+  share a renderer, but `skills` builds its own blocks in
+  `internal/cli/skills.go` (`subcommandHelp`), and the two disagree about
+  what a block contains: the verb renderer takes its text from the `Verb`
+  row, the skills blocks are literals.
+- **A single-sourced schema column list.** The `invocations` column list is
+  written once, in `internal/store/store.go` as `invocationColumns`, and the
+  schema check reads it (`missingColumns("invocations", invocationColumns)`).
+  The two readers do **not** read that list: they share one SQL constant,
+  `invocationSelect`, which spells the column list out again. So the list is
+  single-sourced between the schema check and the DDL's readers, and spelled
+  once more in the select the readers use.
 
 ### Why
 
 The behaviour is met and the contract holds — every promise in `SPEC.md` is
-pinned by a suite, and the four reviews that examined the tree found no
-contract violation in any of these. What is missing is the *shape*: the same
-decisions are still re-derived in more than one place, and each of the five
+pinned by a suite, and the reviews that examined the tree found no contract
+violation in any of these. What is missing is the *shape*: the same
+decisions are still re-derived in more than one place, and each of the four
 items above is one of them. A rewrite of the tree is out of proportion to a
 behaviour that is already right, so the debt is recorded here and worked as a
 separate change.
 
 The follow-up is
 [issue #26](https://github.com/Dahep/skill-log/issues/26), labelled
-`ready-for-agent`: it lists the five items with this section as the review
+`ready-for-agent`: it lists the items with this section as the review
 evidence, and its acceptance criteria are shape, not behaviour.
 
 ## Alternatives rejected
