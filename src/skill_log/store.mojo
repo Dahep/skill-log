@@ -549,9 +549,15 @@ def open_read(path: String) raises -> StoreOpen:
     # not.
     disable_close_checkpoint(db)
 
+    # The busy timeout is connection state, not file state, so it comes
+    # before the schema check: a read that arrives while another process
+    # holds the write lock must wait for it, not fail with "database is
+    # locked" from the very first `sqlite_master` query. The rest of the
+    # pragmas stay after the check, so a refused file is not touched.
+    db.execute("PRAGMA busy_timeout=" + String(READ_BUSY_TIMEOUT))
+
     # The schema check comes before the version check: a file that is
-    # not a skill-log store is foreign whatever its stamp says. It comes
-    # before the pragmas too, so a refused file is not even touched.
+    # not a skill-log store is foreign whatever its stamp says.
     var refusal = schema_refusal(db, True)
     if refusal.refused():
         refusal.path = path
@@ -587,6 +593,12 @@ def open_write(path: String) raises -> StoreOpen:
             raise Error("cannot create the store's directory: " + String(e))
 
     var db = Database(path)
+
+    # The busy timeout comes before the schema check for the same reason
+    # it does on the read path: a lock held by another writer must make
+    # this attempt wait, not turn a usable store into a refusal. A
+    # refusal is final, so it may only follow a read that waited.
+    db.execute("PRAGMA busy_timeout=" + String(WRITE_BUSY_TIMEOUT))
 
     var refusal = schema_refusal(db, existed)
     if refusal.refused():

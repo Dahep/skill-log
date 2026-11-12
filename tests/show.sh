@@ -586,6 +586,21 @@ else
     pass "a read creates no store directory"
 fi
 
+# A read that arrives while another process holds the write lock waits
+# for it (the connection's busy timeout) instead of failing: a routine
+# concurrent `add` must not turn a `show` into "database is locked".
+(
+    printf 'BEGIN IMMEDIATE;\n'
+    sleep 0.5
+    printf 'ROLLBACK;\n'
+) | sqlite3 "$DB" >/dev/null &
+HOLDER=$!
+sleep 0.1
+run show --last 1
+wait "$HOLDER"
+check "a read waits for a concurrent writer" "$STATUS" "0"
+check_absent "a read behind a writer reports no lock" "$ERR" "locked"
+
 # ------------------------------------------------------------------ report
 
 tally
