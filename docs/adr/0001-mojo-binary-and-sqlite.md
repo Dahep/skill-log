@@ -34,7 +34,9 @@ command.
 2. **Storage: SQLite, unchanged**, reached through `ehsanmok/sqlite` v0.2.2
    (MIT), vendored as `vendor/sqlite/{ffi,db}.mojo`, with the ORM layer and its
    `morph` dependency left out. The store schema, migrations and SQL are the
-   ones #1 defines.
+   ones #1 defines. The SQL stays inside what the bundled library has: the
+   release ships the pinned jammy SQLite 3.37, so the epoch seconds come from
+   `strftime('%s', ...)` and not from `unixepoch()`, which 3.38 added.
 3. **Artifact:** a release tarball containing the executable plus `lib/` — the
    three Mojo runtime `.so` files and `libsqlite3.so.0` — with
    `patchelf --set-rpath '$ORIGIN/lib'`.

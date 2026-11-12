@@ -597,6 +597,12 @@ session decides how the log gets read. Neither changes the other's contract.
   `vendor/sqlite/ffi.mojo` + `db.mojo` with the upstream commit and license
   recorded. No ORM layer, no `morph`, no live dependency. Upgrades are a
   deliberate copy-forward.
+- **SQLite floor**: the bundled library is the pinned jammy
+  `libsqlite3-0_3.37.2-2ubuntu0.8_amd64.deb`, so the tool's SQL stays inside
+  what SQLite 3.37 has. In particular the epoch seconds come from
+  `strftime('%s', ...)`: `unixepoch()` was added in 3.38 and the release does
+  not bundle it. `tests/sqlite.sh` runs the artifact against the pinned
+  library, so a query the release cannot answer fails the gate.
 - **Artifact**: one release archive, installable with mise's `github:` backend:
 
   ```
@@ -659,6 +665,11 @@ session decides how the log gets read. Neither changes the other's contract.
 - **Write contention** is exercised with a real second process holding a write
   lock, not another injection variable. The bounded retry budget is what the
   case asserts.
+- **The artifact runs against the SQLite it ships.** The default gate builds
+  against the machine's own SQLite, which is newer than the release's pinned
+  one, so `tests/sqlite.sh` builds the artifact against the pinned library and
+  runs the write, read and resolve paths against it. A query the release cannot
+  answer fails the gate.
 - **Coverage that the contract names**: the store matrix (absent, empty,
   damaged, foreign, older, newer) per verb; an adapter off by default;
   flag-over-adapter precedence; repo and worktree inside, outside and across
