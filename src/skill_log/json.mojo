@@ -11,8 +11,13 @@ Every other character is passed through unchanged, so the text the user
 wrote is the text that comes back out.
 """
 
-# The seven characters JSON reserves: the six it requires escaped and the
-# one it only allows escaped.
+# The seven characters JSON requires escaped: the quotation mark, the
+# backslash, and the five control characters that have a short escape
+# (`\n`, `\r`, `\t`, `\b`, `\f`).
+#
+# JSON *allows* one more escape — `\/` for the solidus — but does not
+# require it, and this writer does not emit it: the solidus is not a
+# character the grammar reserves.
 #
 # Two parallel lists rather than pairs: Mojo 1.2 cannot index a tuple
 # with a runtime index, and the escape loop needs one. They are built

@@ -42,14 +42,24 @@ fi
 
 printf 'pinned library: %s\n' "$PINNED"
 
+# The tools the case needs: the pinned toolchain, the patcher that
+# points the artifact at its own libraries, and the SQLite CLI that
+# inspects what the artifact wrote. A suite that cannot run must say so
+# and stop, rather than compare the empty output of a missing command
+# against empty.
+require_tools mise patchelf sqlite3
+
 rm -rf "$SCRATCH"
 mkdir -p "$SCRATCH/home" "$SCRATCH/build" "$SCRATCH/src"
 
 # The artifact, built against the pinned library: the same sources, the
 # same build script, the library the release ships.
+#
+# The copy creates the directory it lands in, and the version file it
+# brings is replaced by the heredoc below — the build writes its own
+# version there, and a build that read the checkout's placeholder would
+# not be the release-shaped build.
 cp -r "$ROOT/src/skill_log/." "$SCRATCH/src/skill_log/"
-mkdir -p "$SCRATCH/src/skill_log"
-cp "$ROOT/src/skill_log/version.mojo" "$SCRATCH/src/skill_log/version.mojo"
 cat >"$SCRATCH/src/skill_log/version.mojo" <<'EOF'
 """The release version, baked in at build time."""
 
