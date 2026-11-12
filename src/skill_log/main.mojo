@@ -1,7 +1,9 @@
 """The entry point.
 
-`main` is the only place that writes to stdout or stderr and the only place
-that sets an exit code. Everything else returns what to print.
+No handler writes to a stream and no handler exits: a handler returns the
+text to print or a failure, and this module prints what it got. The one
+failure path is `errors.fail`, which prints the single named line and
+exits with the failure's code; `main` hands it every failure it sees.
 
 The order is fixed:
 
@@ -26,6 +28,7 @@ from skill_log.errors import EXIT_FAILURE, EXIT_OK, EXIT_USAGE, Outcome, fail
 from skill_log.help import render_verb, top_level_help
 from skill_log.registry import build_handlers, build_verbs
 from skill_log.sqlite_preflight import preflight
+from skill_log.text import sanitize
 
 
 def find_verb(name: String) raises -> Optional[Int]:
@@ -78,13 +81,19 @@ def run(args: List[String]) raises -> Outcome:
 
     var handlers = build_handlers()
     var rest = tail(args)
+    var verbs = build_verbs()
 
     # `skill-log <verb> --help` prints that verb's own usage and its real
-    # invocations, and exits 0.
-    for i in range(len(rest)):
+    # invocations, and exits 0. A token that is a *value* of a
+    # value-taking flag is not a help request: `add --problem -h` records
+    # the problem `-h`, so the scan steps over every flag's value.
+    var i = 0
+    while i < len(rest):
         if rest[i] == "--help" or rest[i] == "-h":
-            var verbs = build_verbs()
             return Outcome.ok(render_verb(verbs[index.value()]))
+        if verbs[index.value()].takes_value(rest[i]):
+            i += 1
+        i += 1
 
     return handlers[index.value()](rest)
 
@@ -115,6 +124,8 @@ def main():
         print(outcome.text, file=stdout)
         exit(EXIT_OK())
     except e:
-        # The catch-all: one line, exit 1, no traceback.
-        print("skill-log: " + String(e), file=stderr)
+        # The catch-all: one line, exit 1, no traceback. The message is
+        # sanitized like every other diagnostic, so a path with a newline
+        # in it cannot become two lines.
+        print("skill-log: " + sanitize(String(e)), file=stderr)
         exit(EXIT_FAILURE())

@@ -34,17 +34,13 @@ writes nothing.
 """
 
 from skill_log.adapters import apply_adapters, enabled_adapters
-from skill_log.context import hostname, preview_timestamp, read_stdin_line, stdin_is_tty
+from skill_log.context import hostname, preview_timestamp
 from skill_log.detect import detect_repo, detect_worktree, env_or_empty
-from skill_log.errors import EXIT_USAGE, Outcome
+from skill_log.errors import EXIT_FAILURE, EXIT_USAGE, Outcome
 from skill_log.json import json_string, json_string_array
-from skill_log.store import (
-    Invocation,
-    classify,
-    resolve_db,
-    sanitize,
-    write_invocation,
-)
+from skill_log.stdin import read_stdin_line, stdin_is_tty
+from skill_log.store import Invocation, WriteResult, resolve_db, write_invocation
+from skill_log.text import sanitize
 
 
 struct Options(Movable):
@@ -84,6 +80,21 @@ struct Options(Movable):
         self.adapters = List[String]()
 
 
+def take_value(
+    args: List[String], at: Int, flag: String, what: String
+) raises -> String:
+    """The value of `flag`, which sits at `at + 1`.
+
+    Every value-taking flag reads its value through this one function, so
+    a flag added later is two lines and cannot forget the missing-value
+    check or invent its own wording for it.
+    """
+    var next = at + 1
+    if next >= len(args):
+        raise Error("usage: " + flag + " needs " + what)
+    return String(args[next])
+
+
 def parse_options(args: List[String]) raises -> Options:
     """Read `add`'s flags.
 
@@ -91,76 +102,54 @@ def parse_options(args: List[String]) raises -> Options:
     repeatable and also accepts a comma-separated list. An unknown flag
     or a missing value is a usage error, raised as a `usage` marker the
     caller turns into exit 2: one line, no write.
+
+    A value is taken as written, whatever it looks like: `--problem -h`
+    is the problem text `-h`, and the dispatcher's help scan knows that
+    `--problem` consumes the next argument (`Verb.value_flags`).
     """
     var options = Options()
     var i = 0
     while i < len(args):
         var arg = args[i]
         if arg == "--skill":
+            options.skill = take_value(args, i, "--skill", "a name")
             i += 1
-            if i >= len(args):
-                raise Error("usage: --skill needs a name")
-            options.skill = String(args[i])
         elif arg == "--problem":
+            options.problems.append(take_value(args, i, "--problem", "a text"))
             i += 1
-            if i >= len(args):
-                raise Error("usage: --problem needs a text")
-            options.problems.append(String(args[i]))
         elif arg == "--db":
+            options.db = take_value(args, i, "--db", "a path")
             i += 1
-            if i >= len(args):
-                raise Error("usage: --db needs a path")
-            options.db = String(args[i])
         elif arg == "--harness":
+            options.harness = take_value(args, i, "--harness", "a name")
             i += 1
-            if i >= len(args):
-                raise Error("usage: --harness needs a name")
-            options.harness = String(args[i])
         elif arg == "--session":
+            options.session = take_value(args, i, "--session", "an id")
             i += 1
-            if i >= len(args):
-                raise Error("usage: --session needs an id")
-            options.session = String(args[i])
         elif arg == "--parent":
+            options.parent = take_value(args, i, "--parent", "an id")
             i += 1
-            if i >= len(args):
-                raise Error("usage: --parent needs an id")
-            options.parent = String(args[i])
         elif arg == "--model":
+            options.model = take_value(args, i, "--model", "provider/id")
             i += 1
-            if i >= len(args):
-                raise Error("usage: --model needs provider/id")
-            options.model = String(args[i])
         elif arg == "--repo":
+            options.repo = take_value(args, i, "--repo", "a name")
             i += 1
-            if i >= len(args):
-                raise Error("usage: --repo needs a name")
-            options.repo = String(args[i])
         elif arg == "--worktree":
+            options.worktree = take_value(args, i, "--worktree", "a path")
             i += 1
-            if i >= len(args):
-                raise Error("usage: --worktree needs a path")
-            options.worktree = String(args[i])
         elif arg == "--project":
+            options.project = take_value(args, i, "--project", "a name")
             i += 1
-            if i >= len(args):
-                raise Error("usage: --project needs a name")
-            options.project = String(args[i])
         elif arg == "--t3-thread":
+            options.t3_thread = take_value(args, i, "--t3-thread", "an id")
             i += 1
-            if i >= len(args):
-                raise Error("usage: --t3-thread needs an id")
-            options.t3_thread = String(args[i])
         elif arg == "--machine":
+            options.machine = take_value(args, i, "--machine", "a name")
             i += 1
-            if i >= len(args):
-                raise Error("usage: --machine needs a name")
-            options.machine = String(args[i])
         elif arg == "--adapter":
+            options.adapters.append(take_value(args, i, "--adapter", "a name"))
             i += 1
-            if i >= len(args):
-                raise Error("usage: --adapter needs a name")
-            options.adapters.append(String(args[i]))
         elif arg == "--dry-run":
             options.dry_run = True
         elif arg == "--json":
@@ -297,13 +286,13 @@ def handle_add(args: List[String]) raises -> Outcome:
     row.model = resolve_field(
         options.model, env_or_empty("SKILL_LOG_MODEL"), adapter.model, ""
     )
-    # The repository is detected from the same working-tree root, so
+    # The repository is detected from the worktree the row carries, so
     # the two fields always describe the same checkout.
     row.repo = resolve_field(
         options.repo,
         env_or_empty("SKILL_LOG_REPO"),
         "",
-        detect_repo(detected_worktree),
+        detect_repo(worktree),
     )
     row.worktree = worktree
     row.project = resolve_field(
@@ -314,8 +303,16 @@ def handle_add(args: List[String]) raises -> Outcome:
     )
     # The machine is always detected: ADR-0002's environment list has
     # no `SKILL_LOG_MACHINE`, so the flag and the hostname are the only
-    # two sources.
-    row.machine = resolve_field(options.machine, "", "", hostname())
+    # two sources. A hostname that cannot be read is an error rather
+    # than a blank: the machine namespaces the marker, so a row without
+    # one is a row nothing can resolve.
+    if String(options.machine.strip()) != "":
+        row.machine = String(options.machine.strip())
+    else:
+        try:
+            row.machine = hostname()
+        except e:
+            return Outcome.fail(String(e), EXIT_FAILURE())
 
     # The problems are sanitized on the way in as well as on the way
     # out: a control character in a problem must never reach the store
@@ -332,13 +329,22 @@ def handle_add(args: List[String]) raises -> Outcome:
         row.problems = clean^
         return Outcome.ok(render_json(row))
 
+    var result: WriteResult
     try:
-        var written = write_invocation(path, row, clean)
-        row.id = written
-        row.problems = clean^
-        if options.json:
-            return Outcome.ok(render_json(row))
-        return Outcome.ok(row.marker())
+        result = write_invocation(path, row, clean)
     except e:
-        var failure = classify(path, String(e))
+        # A refused store never reaches here: the refusal is a value, and
+        # only a genuine failure to write raises.
+        return Outcome.fail(
+            "cannot use the store: " + path + ": " + String(e), EXIT_FAILURE()
+        )
+
+    if result.refusal.refused():
+        var failure = result.refusal.failure()
         return Outcome.fail(failure.message, failure.code)
+
+    row.id = result.id
+    row.problems = clean^
+    if options.json:
+        return Outcome.ok(render_json(row))
+    return Outcome.ok(row.marker())

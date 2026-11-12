@@ -92,18 +92,6 @@ def json_string(text: String) -> String:
     return escape_string(text)
 
 
-def json_number(value: Int) -> String:
-    """A JSON integer value."""
-    return String(value)
-
-
-def json_bool(value: Bool) -> String:
-    """A JSON boolean value."""
-    if value:
-        return "true"
-    return "false"
-
-
 def json_string_array(items: List[String]) -> String:
     """A JSON array of strings."""
     var out = "["

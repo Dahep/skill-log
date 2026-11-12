@@ -11,7 +11,10 @@
 #
 # The version is baked in at build time from SKILL_LOG_VERSION, else
 # `git describe --tags`, else 0.0.0-dev. It is written into a generated
-# source file; nothing in the tree holds a tracked version constant.
+# source file that shadows the checked-in placeholder: the tree's
+# `src/skill_log/version.mojo` returns 0.0.0-dev, and only a build through
+# this script replaces it in the artifact. A bare `mojo build` ships that
+# placeholder, so this script is the one way to produce a versioned artifact.
 #
 # Only src/ and vendor/ are built, and only the binary and its libraries
 # are staged. The reference/ area is the verbatim report-era implementation

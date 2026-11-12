@@ -20,7 +20,9 @@ The refusal vocabulary is ADR-0002's: a damaged file is *damaged*, a
 SQLite file that is not a skill-log store is *foreign*, a store written by
 the pre-ADR-0002 schema (the Python era) is *older*, and a store stamped
 newer than this binary is *newer*. Every one of them is one named line,
-and none of them is written to.
+and none of them is written to. The kind is a value (`Refusal`), never a
+word inside a message: a path the caller named can contain any word, so a
+refusal re-derived from message text would let the path choose the answer.
 
 The write path follows the reference: one transaction covers the
 invocation row and every problem row, and a BUSY/LOCKED failure is retried
@@ -35,6 +37,7 @@ from std.time import monotonic, sleep
 from sqlite.db import Database
 from skill_log.context import local_timestamp
 from skill_log.errors import Failure, operational_failure
+from skill_log.text import sanitize
 
 # The schema version this binary writes and understands. A store stamped
 # higher is refused: an older CLI must not touch a newer store.
@@ -108,11 +111,6 @@ comptime WRITE_CONNECT_TIMEOUT = 2
 # path uses the short one; a read may wait longer.
 comptime READ_BUSY_TIMEOUT = 5000
 comptime WRITE_BUSY_TIMEOUT = WRITE_CONNECT_TIMEOUT * 1000
-
-# The control characters the reference strips on read: C0 minus tab, plus
-# DEL. A newline becomes a space so one problem stays one line and cannot
-# inject a terminal escape. The set itself lives in `is_control`.
-
 
 # --------------------------------------------------------------- paths
 
@@ -230,13 +228,57 @@ def version_failure(path: String, found: Int) -> Failure:
     )
 
 
-def newer_marker(found: Int) -> Error:
-    """The marker the store raises for a store that is too new.
+# The refusal kinds, one value per named refusal. A caller compares the
+# kind; it never reads the prose back to find out which one it got.
+comptime REFUSAL_NONE = 0
+comptime REFUSAL_DAMAGED = 1
+comptime REFUSAL_FOREIGN = 2
+comptime REFUSAL_OLDER = 3
+comptime REFUSAL_NEWER = 4
 
-    The found version rides in the message, so the refusal can name it
-    without a second query against a store that may be newer still.
+
+struct Refusal(Movable):
+    """A store that was refused, and why.
+
+    The kind is a value rather than a word inside a message. A path the
+    caller named can contain any word at all, so a scheme that
+    re-derived the kind from the message text would let the path decide
+    which refusal the tool reports — `/proc/older/foo.db` would be an
+    older store, and `newer5` would surrender a schema version.
+
+    `found` is the version a newer store carries, and zero for every
+    other kind.
     """
-    return Error("newer " + String(found))
+
+    var kind: Int
+    var path: String
+    var found: Int
+
+    def __init__(
+        out self, kind: Int = REFUSAL_NONE, path: String = "", found: Int = 0
+    ):
+        self.kind = kind
+        self.path = path
+        self.found = found
+
+    def refused(self) -> Bool:
+        """True when this names an actual refusal."""
+        return self.kind != REFUSAL_NONE
+
+    def failure(self) -> Failure:
+        """The named failure for this refusal.
+
+        Called only on a refusal: `refused()` is the caller's check.
+        """
+        if self.kind == REFUSAL_DAMAGED:
+            return damaged_failure(self.path)
+        if self.kind == REFUSAL_FOREIGN:
+            return foreign_failure(self.path)
+        if self.kind == REFUSAL_OLDER:
+            return older_failure(self.path)
+        if self.kind == REFUSAL_NEWER:
+            return version_failure(self.path, self.found)
+        return operational_failure("cannot use the store: " + self.path)
 
 
 # --------------------------------------------------------------- schema
@@ -280,9 +322,35 @@ def missing_store_columns(db: Database) raises -> List[String]:
     carries the two store tables but misses one of these is the
     pre-ADR-0002 store, which is refused rather than converted.
     """
+    return missing_columns(db, "invocations", store_column_names())
+
+
+def store_problem_column_names() -> List[String]:
+    """Every problems column the 1.0 schema has."""
+    var names = List[String]()
+    names.append("invocation_id")
+    names.append("ordinal")
+    names.append("problem")
+    return names^
+
+
+def missing_problem_columns(db: Database) raises -> List[String]:
+    """The 1.0 columns the problems table lacks.
+
+    A file that carries both tables and the right invocations columns
+    but a different problems table is not this schema: it is refused as
+    foreign, because *writing* into it is what would fail, and it would
+    fail after the store had already been accepted.
+    """
+    return missing_columns(db, "problems", store_problem_column_names())
+
+
+def missing_columns(
+    db: Database, table: String, required: List[String]
+) raises -> List[String]:
+    """The columns of `required` that `table` does not carry."""
     var missing = List[String]()
-    var have = columns_of(db, "invocations")
-    var required = store_column_names()
+    var have = columns_of(db, table)
     for i in range(len(required)):
         var found = False
         for j in range(len(have)):
@@ -303,7 +371,9 @@ def is_skill_log_store(db: Database) raises -> Bool:
     """True when the database carries the 1.0 skill-log schema."""
     if not has_store_tables(db):
         return False
-    return len(missing_store_columns(db)) == 0
+    if len(missing_store_columns(db)) > 0:
+        return False
+    return len(missing_problem_columns(db)) == 0
 
 
 def is_older_store(db: Database) raises -> Bool:
@@ -364,45 +434,98 @@ def user_table_count(db: Database) raises -> Int:
     return row.value().int_val(0)
 
 
-def open_read(path: String) raises -> Optional[Database]:
+struct StoreOpen(Movable):
+    """What opening a store produced: the connection, or the refusal.
+
+    `db` is `None` either because the file does not exist (a read that
+    never creates) or because the open was refused; `refusal.refused()`
+    tells the two apart.
+    """
+
+    var db: Optional[Database]
+    var refusal: Refusal
+
+    def __init__(out self):
+        self.db = None
+        self.refusal = Refusal()
+
+
+def schema_refusal(db: Database, existed: Bool) raises -> Refusal:
+    """What, if anything, is wrong with this file's schema.
+
+    A refusal is an answer about the file, so it is returned rather than
+    raised: the caller turns it into the named line, and nothing else in
+    the write path has to recognise an error. A file with no tables at
+    all is not a refusal — it is a store waiting to be initialised — and
+    only an *existing* file that already holds something else is foreign.
+
+    The path is filled in by the caller, which is the only place that
+    knows it.
+    """
+    try:
+        if is_older_store(db):
+            return Refusal(REFUSAL_OLDER, "", 0)
+
+        var ours = is_skill_log_store(db)
+        if not ours and existed and (
+            user_table_count(db) > 0 or user_version(db) != 0
+        ):
+            # A concurrent `add` may have committed the schema between
+            # those two queries. Ask once more before calling the file
+            # foreign: the answer "foreign" is final, and a store that
+            # another writer just initialised is not foreign at all.
+            ours = is_skill_log_store(db)
+            if not ours:
+                return Refusal(REFUSAL_FOREIGN, "", 0)
+
+        if ours:
+            var found = user_version(db)
+            if found > SCHEMA_VERSION:
+                return Refusal(REFUSAL_NEWER, "", found)
+        return Refusal()
+    except e:
+        if is_corruption(String(e)):
+            return Refusal(REFUSAL_DAMAGED, "", 0)
+        raise
+
+
+def open_read(path: String) raises -> StoreOpen:
     """Open an existing store for reading.
 
-    `None` when the file does not exist: a read never creates the state
-    directory, the file, or an empty database. A file that exists but is
-    not a usable store is refused by name; nothing is written.
+    `db` is `None` when the file does not exist: a read never creates
+    the state directory, the file, or an empty database. A file that
+    exists but is not a usable store is refused by name; nothing is
+    written to it, not even its journal mode.
     """
+    var opened = StoreOpen()
     if not Path(path).is_file():
-        return None
+        return opened^
 
     var db = Database(path)
 
     # The schema check comes before the version check: a file that is
     # not a skill-log store is foreign whatever its stamp says. It comes
     # before the pragmas too, so a refused file is not even touched.
-    try:
-        if is_older_store(db):
-            raise Error("older")
-        if not is_skill_log_store(db):
-            raise Error("foreign")
-        var found = user_version(db)
-        if found > SCHEMA_VERSION:
-            raise newer_marker(found)
-    except e:
-        if is_corruption(String(e)):
-            raise Error("damaged")
-        raise
+    var refusal = schema_refusal(db, True)
+    if refusal.refused():
+        refusal.path = path
+        opened.refusal = refusal^
+        return opened^
 
     apply_read_pragmas(db, READ_BUSY_TIMEOUT)
+    opened.db = db^
+    return opened^
 
-    return db^
 
-
-def open_write(path: String) raises -> Database:
+def open_write(path: String) raises -> StoreOpen:
     """Open the store for writing, creating it when it does not exist.
 
     The state directory and the file are created here, and only here: a
-    write is the one thing that may bring a store into being.
+    write is the one thing that may bring a store into being. What this
+    file *is* — ours, older, foreign, damaged, newer — is decided before
+    anything is written to it.
     """
+    var opened = StoreOpen()
     var existed = Path(path).is_file()
 
     var dir = parent_dir(path)
@@ -414,66 +537,31 @@ def open_write(path: String) raises -> Database:
 
     var db = Database(path)
 
-    # Decide what this file is before touching it. A refused store is not
-    # even switched to WAL: "nothing written" includes its header.
-    try:
-        if is_older_store(db):
-            raise Error("older")
-        if not is_skill_log_store(db):
-            # A file that already holds something else is never converted.
-            # An empty SQLite file (or one we just created) has no tables,
-            # and neither has a stamp, so it is ours to initialise.
-            if existed and (user_table_count(db) > 0 or user_version(db) != 0):
-                raise Error("foreign")
+    var refusal = schema_refusal(db, existed)
+    if refusal.refused():
+        refusal.path = path
+        opened.refusal = refusal^
+        return opened^
+
+    if not is_skill_log_store(db):
+        # Both tables, one transaction. Two auto-committed `CREATE`s
+        # would leave a window in which a concurrent `add` sees a store
+        # with one table and refuses it as foreign, and a failure on the
+        # second statement would leave that half-built store behind for
+        # good.
+        try:
+            var tx = db.transaction()
             db.execute(INVOCATION_DDL)
             db.execute(PROBLEM_DDL)
-        var found = user_version(db)
-        if found > SCHEMA_VERSION:
-            raise newer_marker(found)
-    except e:
-        if is_corruption(String(e)):
-            raise Error("damaged")
-        raise
+            tx.commit()
+        except e:
+            raise Error("cannot create the store's schema: " + String(e))
 
     apply_write_pragmas(db, WRITE_BUSY_TIMEOUT)
 
     stamp_version(db)
-    return db^
-
-
-def classify(path: String, message: String) -> Failure:
-    """The named failure for a refused store.
-
-    The store module raises `damaged`, `foreign`, `older` and
-    `newer <version>` as markers; this turns one into the line the user
-    sees.
-    """
-    if message.find("damaged") != -1:
-        return damaged_failure(path)
-    if message.find("foreign") != -1:
-        return foreign_failure(path)
-    if message.find("older") != -1:
-        return older_failure(path)
-    if message.find("newer") != -1:
-        return version_failure(path, trailing_number(message))
-    return operational_failure("cannot use the store: " + message)
-
-
-def trailing_number(message: String) -> Int:
-    """The number a marker carries after its first word.
-
-    `newer 7` yields 7; a message with no number yields 0.
-    """
-    var found = 0
-    var digits = 0
-    for c in message.codepoints():
-        var code = Int(c)
-        if code >= 48 and code <= 57:
-            found = found * 10 + (code - 48)
-            digits += 1
-        elif digits > 0:
-            break
-    return found
+    opened.db = db^
+    return opened^
 
 
 # --------------------------------------------------------------- reading
@@ -529,36 +617,6 @@ struct Invocation(Movable):
         if self.id == 0:
             return ""
         return self.machine + "#" + String(self.id)
-
-
-def sanitize(text: String) -> String:
-    """Readable render: control characters become spaces.
-
-    The reference's set — C0 minus tab, plus DEL. A newline becomes a
-    space, so one problem stays one line and cannot inject a terminal
-    escape.
-    """
-    var out = String("")
-    for c in text.codepoints():
-        var code = Int(c)
-        if is_control(code):
-            out += " "
-        else:
-            out += String(c)
-    return out
-
-
-def is_control(code: Int) -> Bool:
-    """True when a code point is one the reference strips.
-
-    C0 below 0x20 except tab, plus DEL. Tab is left alone: it is a
-    character a person meant to type.
-    """
-    if code == 9:
-        return False
-    if code < 0x20:
-        return True
-    return code == 0x7F
 
 
 def read_invocation(db: Database, id: Int) raises -> Optional[Invocation]:
@@ -624,15 +682,34 @@ def now_seconds() -> Float64:
     return Float64(monotonic()) / 1_000_000_000.0
 
 
+struct WriteResult(Movable):
+    """What a write produced: the new row's id, or the refusal.
+
+    One or the other, never both: `refusal.refused()` false means `id`
+    names the row that was committed.
+    """
+
+    var id: Int
+    var refusal: Refusal
+
+    def __init__(out self):
+        self.id = 0
+        self.refusal = Refusal()
+
+
 def write_invocation(
     path: String, mut row: Invocation, mut problems: List[String]
-) raises -> Int:
+) raises -> WriteResult:
     """Write one invocation and its problems, atomically.
 
     One transaction covers the invocation row and every problem row: a
     failed write leaves nothing behind. A BUSY/LOCKED failure is retried
     as a whole attempt inside the write budget, because a concurrent
     skill run holding the lock costs milliseconds, not the command.
+
+    A refused store is not an exception: the result carries the refusal,
+    and the caller reports it by name. Only a genuine SQLite failure
+    raises.
 
     The returned id is the row's local id. The row's timestamp is
     stamped here, from the same connection and inside the same
@@ -655,14 +732,23 @@ def write_invocation(
 
 def write_attempt(
     path: String, mut row: Invocation, mut problems: List[String]
-) raises -> Int:
+) raises -> WriteResult:
     """One write attempt: open, insert, insert, commit.
 
     The transaction guard rolls back when an insert fails, so a partial
     write is impossible. The invocation row is inserted first and its
     id is read back inside the same transaction.
     """
-    var db = open_write(path)
+    var result = WriteResult()
+
+    var opened = open_write(path)
+    if opened.refusal.refused():
+        result.refusal = Refusal(
+            opened.refusal.kind, opened.refusal.path, opened.refusal.found
+        )
+        return result^
+
+    var db = opened.db.take()
 
     var tx = db.transaction()
 
@@ -708,5 +794,6 @@ def write_attempt(
         problem_stmt.bind_text(3, problems[i])
         _ = problem_stmt.step()
 
+    result.id = id
     tx.commit()
-    return id
+    return result^

@@ -123,55 +123,135 @@ def enabled_adapters(flags: List[String]) -> List[String]:
 # ------------------------------------------------------------- the model
 
 
-def json_string_field(text: String, key: String) -> String:
-    """The value of a string field in a flat JSON object.
+def is_json_space(ch: String) -> Bool:
+    """True for the whitespace JSON allows between tokens."""
+    return ch == " " or ch == "\n" or ch == "\r" or ch == "\t"
 
-    A small targeted scanner, not a JSON parser: the only shape this
-    tool reads is opencode's `{"id":"...","providerID":"..."}`, and the
-    project has no JSON parser to borrow. The scan finds `"key"` at the
-    top level of the object and reads the string that follows it.
 
-    An empty string when the key is absent, when its value is not a
-    string, or when the text is not a JSON object at all. The caller
-    then leaves the value alone.
+def json_string_span(text: String, at: Int) -> Int:
+    """The index just past the closing quote of the string opening at `at`.
+
+    `at` is the opening quote. Escapes are skipped as a pair, so a
+    `\\"` inside the string does not end it. `-1` when the string never
+    closes.
     """
-    var needle = "\"" + key + "\""
-    var at = text.find(needle)
-    if at == -1:
-        return ""
-
-    var i = at + needle.byte_length()
-
-    # Skip the whitespace between the key and its colon.
-    while i < text.byte_length() and String(text[byte=i]) == " ":
-        i += 1
-    if i >= text.byte_length() or String(text[byte=i]) != ":":
-        return ""
-    i += 1
-
-    # Skip the whitespace after the colon.
-    while i < text.byte_length() and String(text[byte=i]) == " ":
-        i += 1
-    if i >= text.byte_length() or String(text[byte=i]) != "\"":
-        return ""
-
-    i += 1
-    var out = String("")
-    while i < text.byte_length():
+    var n = text.byte_length()
+    var i = at + 1
+    while i < n:
         var c = String(text[byte=i])
         if c == "\\":
-            # An escape: the next character stands for itself.
-            if i + 1 >= text.byte_length():
-                return out
-            i += 1
-            out += String(text[byte=i])
-            i += 1
+            i += 2
             continue
         if c == "\"":
-            return out
-        out += c
+            return i + 1
         i += 1
+    return -1
+
+
+def json_string_value(text: String, at: Int) -> String:
+    """The text of the string that opens at `at`, its escapes resolved.
+
+    The unescaped case is one slice, so multi-byte text survives intact.
+    The escapes JSON allows are decoded; a `\\uXXXX` escape (or anything
+    this reader does not recognise) makes the value unreadable, and the
+    caller falls back to the raw text rather than writing a mangled id.
+    """
+    var end = json_string_span(text, at)
+    if end == -1:
+        return ""
+    var inner = String(text[byte=at + 1:end - 1])
+    if inner.find("\\") == -1:
+        return inner
+
+    var out = String("")
+    var i = 0
+    while i < inner.byte_length():
+        var c = String(inner[byte=i])
+        if c != "\\":
+            out += c
+            i += 1
+            continue
+        if i + 1 >= inner.byte_length():
+            return ""
+        var escape = String(inner[byte=i + 1])
+        if escape == "\"":
+            out += "\""
+        elif escape == "\\":
+            out += "\\"
+        elif escape == "/":
+            out += "/"
+        elif escape == "n":
+            out += "\n"
+        elif escape == "t":
+            out += "\t"
+        elif escape == "r":
+            out += "\r"
+        elif escape == "b":
+            out += "\b"
+        elif escape == "f":
+            out += "\f"
+        else:
+            return ""
+        i += 2
     return out
+
+
+def json_string_field(text: String, key: String) -> String:
+    """The value of a string field at the top level of a JSON object.
+
+    A small targeted scanner, not a JSON parser: the only shape this tool
+    reads is opencode's `{"id":"...","providerID":"..."}`, and the
+    project has no JSON reader to borrow. The scan walks the object one
+    token at a time and tracks nesting, so a key spelled inside a nested
+    object never answers for the top-level one.
+
+    An empty string when the key is absent, when its value is not a
+    string, or when the text is not a JSON object at all. The caller then
+    leaves the value alone.
+    """
+    var n = text.byte_length()
+    var i = 0
+    while i < n and is_json_space(String(text[byte=i])):
+        i += 1
+    if i >= n or String(text[byte=i]) != "{":
+        return ""
+    i += 1
+
+    var depth = 1
+    while i < n:
+        var c = String(text[byte=i])
+        if c == "\"":
+            var end = json_string_span(text, i)
+            if end == -1:
+                return ""
+            var name = json_string_value(text, i)
+            i = end
+
+            # A string is a key only when a colon follows it. A string
+            # value has a comma or a closing brace instead, and the loop
+            # simply carries on past it.
+            var j = i
+            while j < n and is_json_space(String(text[byte=j])):
+                j += 1
+            if j < n and String(text[byte=j]) == ":":
+                if depth == 1 and name == key:
+                    var k = j + 1
+                    while k < n and is_json_space(String(text[byte=k])):
+                        k += 1
+                    if k < n and String(text[byte=k]) == "\"":
+                        return json_string_value(text, k)
+                    return ""
+                i = j + 1
+            continue
+
+        if c == "{" or c == "[":
+            depth += 1
+        elif c == "}" or c == "]":
+            depth -= 1
+            if depth == 0:
+                return ""
+        i += 1
+    return ""
 
 
 def render_model(raw: String) -> String:

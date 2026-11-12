@@ -7,11 +7,15 @@ The codes are the contract from issue #1:
 - 1 — operational failure (the store, the filesystem, the environment)
 - 2 — usage error (unknown verb, bad flag, missing argument)
 
-`main` is the only place that writes to a stream and sets an exit code. A
-handler returns what to print; it never prints and it never exits.
+A handler returns what to print; it never prints and it never exits.
+`report`/`fail` below are the single failure path — one sanitized line on
+stderr, then the exit code — and `main` and the preflight call them rather
+than printing a failure themselves.
 """
 
 from std.sys import stderr, exit
+
+from skill_log.text import sanitize
 
 # Exit codes, named so a handler cannot invent a fourth one.
 def EXIT_OK() -> Int:
@@ -99,9 +103,11 @@ def report(failure: Failure):
     """Write the single stderr line this failure is allowed.
 
     Every line is prefixed `skill-log: ` so a caller can recognise it
-    without parsing the message.
+    without parsing the message, and every control character in the
+    message becomes a space: a path or an option can carry a newline of
+    its own, and the contract is one line, not one per control character.
     """
-    print("skill-log: " + failure.message, file=stderr)
+    print("skill-log: " + sanitize(failure.message), file=stderr)
 
 
 def fail(failure: Failure):

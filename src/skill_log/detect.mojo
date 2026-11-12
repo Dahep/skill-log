@@ -17,21 +17,27 @@ Everything here degrades to an empty string rather than raising. A row
 that says "unknown" is a useful row; a failed write is not.
 
 The git calls go through `std.subprocess.run`, which takes a command
-string and returns its stdout. Both commands are *constants* — no user
-input ever reaches that string, so nothing is quoted into a shell — and
-both redirect stderr to `/dev/null` so a repository without an origin
-remote stays quiet. An empty result means "not a repository" or "no
-origin", which is exactly the signal the callers want.
+string and returns its stdout. The arguments of each are *constants*; the
+only thing a caller supplies is a directory, which is passed with
+`git -C` and shell-quoted (`shell_quote`), so a path can never be read as
+a command. Both calls redirect stderr to `/dev/null`, so a repository
+without an origin remote stays quiet. An empty result means "not a
+repository" or "no origin", which is exactly the signal the callers want.
+
+`repo` is resolved *from the worktree the row carries*, not from the
+process's current directory: a caller that names `--worktree` gets the
+repository of that checkout, so the two fields always describe the same
+one.
 """
 
 from std.os import getenv
 from std.subprocess import run
 
-# The two git commands the detection uses. They are constants on purpose:
-# the command string is passed to a shell, so it must never carry user
-# input.
-comptime GIT_TOPLEVEL_CMD = "git rev-parse --show-toplevel 2>/dev/null"
-comptime GIT_ORIGIN_CMD = "git remote get-url origin 2>/dev/null"
+# The arguments of the two git commands the detection uses. They are
+# constants on purpose: the command string is passed to a shell, so only
+# the directory — quoted — may vary.
+comptime GIT_TOPLEVEL_ARGS = "rev-parse --show-toplevel"
+comptime GIT_ORIGIN_ARGS = "remote get-url origin"
 
 # The directory T3 keeps its worktrees in, relative to the T3 home.
 comptime T3_WORKTREES_DIR = "worktrees"
@@ -46,13 +52,39 @@ def env_or_empty(name: String) -> String:
     return getenv(name, "")
 
 
-def run_git(command: String) -> String:
-    """Run one constant git command and return its trimmed stdout.
+def shell_quote(text: String) -> String:
+    """`text` as one single-quoted shell word.
+
+    A path the caller named reaches a shell command string, so it is
+    quoted the one way a POSIX shell always reads back literally: single
+    quotes, with an embedded single quote closed, escaped and re-opened.
+    """
+    var out = "'"
+    for c in text.codepoints():
+        var ch = String(c)
+        if ch == "'":
+            out += "'\\''"
+        else:
+            out += ch
+    out += "'"
+    return out
+
+
+def run_git(dir: String, args: String) -> String:
+    """Run one constant git command in `dir` and return its trimmed stdout.
+
+    `args` is a constant from this module. `dir` is the one part of the
+    command a caller supplies, and it is quoted. An empty `dir` means the
+    process's own directory.
 
     An empty string means the command failed or printed nothing: git is
     missing, the directory is not a repository, or the remote does not
     exist. None of those is an error.
     """
+    var command = "git "
+    if dir != "":
+        command += "-C " + shell_quote(dir) + " "
+    command += args + " 2>/dev/null"
     try:
         var out = run(command)
         return String(out.strip())
@@ -61,22 +93,29 @@ def run_git(command: String) -> String:
 
 
 def git_toplevel() -> String:
-    """The working-tree root, or an empty string outside a repository.
+    """The working-tree root of the current directory, or an empty string.
 
     `git rev-parse --show-toplevel` answers with the root of the current
     worktree, so a linked worktree (`git worktree add`) reports its own
     directory and not the main checkout's.
     """
-    return run_git(GIT_TOPLEVEL_CMD)
+    return run_git("", GIT_TOPLEVEL_ARGS)
 
 
-def git_origin_url() -> String:
-    """The origin remote's URL, or an empty string.
+def git_toplevel_of(dir: String) -> String:
+    """The working-tree root that contains `dir`, or an empty string."""
+    if dir == "":
+        return ""
+    return run_git(dir, GIT_TOPLEVEL_ARGS)
 
-    Empty when the directory is not a repository, or when it has no
-    `origin` remote.
+
+def git_origin_url(dir: String) -> String:
+    """The `origin` remote's URL of the repository `dir` is in, or empty.
+
+    Empty when `dir` is not a repository, or when it has no `origin`
+    remote.
     """
-    return run_git(GIT_ORIGIN_CMD)
+    return run_git(dir, GIT_ORIGIN_ARGS)
 
 
 def strip_userinfo(url: String) -> String:
@@ -163,17 +202,23 @@ def repo_name(url: String) -> String:
 
 
 def detect_repo(top: String) -> String:
-    """The repository the run happened in.
+    """The repository the named worktree belongs to.
 
-    `top` is the working-tree root, as `detect_worktree` found it. The
-    origin remote's basename is the name; the toplevel directory's name
-    is the fallback when the repository has no origin remote. Empty
-    outside a git repository.
+    `top` is the worktree the row will carry: the `--worktree` flag, its
+    variable, or the detected toplevel. The origin remote's basename is
+    the name; the directory's own name is the fallback when the
+    repository has no origin remote.
+
+    Empty when `top` is not a git working tree. A path that is not a
+    checkout names no repository, and one is never invented from the
+    directory's name alone.
     """
     if top == "":
         return ""
+    if git_toplevel_of(top) == "":
+        return ""
 
-    var name = repo_name(strip_userinfo(git_origin_url()))
+    var name = repo_name(strip_userinfo(git_origin_url(top)))
     if name != "":
         return name
     return basename(top)
