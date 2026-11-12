@@ -103,6 +103,22 @@ print(problems[0] if problems else "")
 '
 }
 
+# json_array <json> <key>: one top-level array of strings, comma-joined.
+#
+# Read through a real parser, so an item carrying a quote or a comma is
+# still the item the writer emitted.
+json_array() {
+    printf '%s' "$1" | python3 -c '
+import json, sys
+key = sys.argv[1]
+try:
+    value = json.loads(sys.stdin.read()).get(key) or []
+except Exception:
+    value = []
+print(",".join(str(item) for item in value))
+' "$2"
+}
+
 # json_number <json> <key>: one top-level numeric field, as %g.
 #
 # Numbers are read through a real parser too, and printed in the same
