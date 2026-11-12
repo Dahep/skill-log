@@ -57,18 +57,25 @@ struct Outcome:
     stderr so stdout stays empty, and the block is the whole diagnostic —
     the caller asked for nothing in particular, so the answer is how to
     call the tool.
+
+    `notes` are additional stderr lines for a verb that has something to
+    say besides the answer — rows it skipped, a validator's findings.
+    They are already prefixed, one line each, and `main` prints them
+    before the failure line (or before nothing, on success).
     """
 
     var text: String
     var failure: Failure
     var failed: Bool
     var usage: String
+    var notes: String
 
     def __init__(out self, text: String):
         self.text = text
         self.failure = Failure("", EXIT_OK())
         self.failed = False
         self.usage = ""
+        self.notes = ""
 
     @staticmethod
     def ok(text: String) -> Outcome:
@@ -77,11 +84,36 @@ struct Outcome:
         return outcome^
 
     @staticmethod
+    def ok_notes(text: String, notes: String) -> Outcome:
+        """Succeed, with `text` on stdout and `notes` on stderr.
+
+        The notes are what a verb has to say that is not the answer:
+        rows it skipped, a validator's warnings. They are already
+        prefixed and one line each; `main` prints them without adding
+        anything.
+        """
+        var outcome = Outcome(text)
+        outcome.notes = notes
+        return outcome^
+
+    @staticmethod
     def fail(message: String, code: Int) -> Outcome:
         """Fail with `message` and exit `code`."""
         var outcome = Outcome("")
         outcome.failure = Failure(message, code)
         outcome.failed = True
+        return outcome^
+
+    @staticmethod
+    def fail_notes(message: String, code: Int, notes: String) -> Outcome:
+        """Fail with one summary line plus `notes` on stderr.
+
+        A validator reports every finding it can see; the summary is the
+        one line the failure still gets, and the notes are the detail the
+        caller asked for by running `--check`.
+        """
+        var outcome = Outcome.fail(message, code)
+        outcome.notes = notes
         return outcome^
 
     @staticmethod

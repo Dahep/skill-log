@@ -113,6 +113,13 @@ def main():
         var outcome = run(args)
 
         if outcome.failed:
+            # A validator that was asked for JSON prints its findings on
+            # stdout even when it exits 1: the object is the answer, and
+            # the exit code says the answer is "not valid".
+            if outcome.text != "":
+                print(outcome.text, file=stdout)
+            if outcome.notes != "":
+                print(outcome.notes, file=stderr)
             if outcome.usage != "":
                 # A usage error prints the usage and the examples on
                 # stderr, so stdout stays empty. The block is the whole
@@ -120,6 +127,9 @@ def main():
                 print(outcome.usage, file=stderr)
                 exit(outcome.failure.code)
             fail(outcome.failure)
+
+        if outcome.notes != "":
+            print(outcome.notes, file=stderr)
 
         # An empty text is an empty output, not a blank line: a JSON
         # stream with no rows must stay parseable, and a stray newline
