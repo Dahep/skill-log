@@ -61,10 +61,9 @@ from skill_log.store import (
     Filters,
     Invocation,
     StoreOpen,
-    damaged_failure,
-    is_corruption,
     is_skill_log_store,
     open_read,
+    read_failure,
     read_invocations,
     resolve_db,
 )
@@ -496,12 +495,11 @@ def handle_show(args: List[String]) raises -> Outcome:
             if is_skill_log_store(db):
                 rows = read_invocations(db, filters)
         except e:
-            # Damage the schema probe did not reach is still named as
-            # damage, never degraded into "no invocations logged yet".
-            if is_corruption(String(e)):
-                var failure = damaged_failure(path)
-                return Outcome.fail(failure.message, failure.code)
-            raise
+            # The store classifies the failure and this handler renders
+            # it: damage is damage, a lock is a lock, and nothing here
+            # inspects a SQLite message (SPEC §3).
+            var failure = read_failure(path, String(e))
+            return Outcome.fail(failure.message, failure.code)
 
     if len(rows) == 0:
         if options.json:

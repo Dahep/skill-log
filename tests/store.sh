@@ -360,6 +360,29 @@ check_one_line "a usage error is one line" "$ERR"
 run add --skill x --nope
 check "an unknown flag is a usage error" "$STATUS" "2"
 
+# ---------------------------------------------------------- a locked store
+#
+# A write that cannot get the store's lock within the budget is a named
+# refusal, not a SQLite message: the store classifies the failure and
+# the CLI renders it (SPEC §3 — no handler inspects a SQLite error).
+LOCKDIR="$SCRATCH/locked"
+mkdir -p "$LOCKDIR"
+LOCK_DB="$LOCKDIR/skills.db"
+run add --skill lock-holder --db "$LOCK_DB"
+check "the locked fixture is written" "$STATUS" "0"
+
+# A second process holds the write lock for longer than the budget.
+hold_lock "$LOCK_DB" "$SCRATCH/lock-ready" 12 &
+HOLDER=$!
+wait_for "$SCRATCH/lock-ready"
+run add --skill never-landed --db "$LOCK_DB"
+check "a write behind a lock exits 1" "$STATUS" "1"
+check_contains "a write behind a lock is named as a locked store" \
+    "$ERR" "locked store"
+check_one_line "the locked store's refusal is one line" "$ERR"
+kill "$HOLDER" 2>/dev/null
+wait "$HOLDER" 2>/dev/null
+
 # ------------------------------------------------------- reads create nothing
 #
 # SPEC §2: reads never create the state directory, an empty database, or a

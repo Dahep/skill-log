@@ -66,13 +66,12 @@ from skill_log.flags import parse_positive, take_value
 from skill_log.json import json_bool, json_string, json_string_array
 from skill_log.markers import marker_text, parse_marker
 from skill_log.store import (
-    damaged_failure,
     Filters,
     Invocation,
     StoreOpen,
-    is_corruption,
     is_skill_log_store,
     open_read,
+    read_failure,
     read_invocation,
     read_invocations,
     resolve_db,
@@ -700,13 +699,11 @@ def check_outcome(
         var text = read_text(path)
         result = validate_report(text, relative, opened, have_store)
     except e:
-        if is_corruption(String(e)):
-            return Outcome.fail(
-                damaged_failure(store_path).message, EXIT_FAILURE()
-            )
-        return Outcome.fail(
-            "cannot read the report: " + path + ": " + String(e), EXIT_FAILURE()
-        )
+        # The store classifies the failure and this handler renders it:
+        # damage is damage, a lock is a lock, and nothing here inspects
+        # a SQLite message (SPEC §3).
+        var failure = read_failure(store_path, String(e))
+        return Outcome.fail(failure.message, failure.code)
 
     var warnings = List[String]()
     for i in range(len(store_warning)):
@@ -822,10 +819,11 @@ def handle_report(args: List[String]) raises -> Outcome:
         else:
             tableless = True
     except e:
-        if is_corruption(String(e)):
-            var failure = damaged_failure(store_path)
-            return Outcome.fail(failure.message, failure.code)
-        raise
+        # The store classifies the failure and this handler renders it:
+        # damage is damage, a lock is a lock, and nothing here inspects
+        # a SQLite message (SPEC §3).
+        var failure = read_failure(store_path, String(e))
+        return Outcome.fail(failure.message, failure.code)
 
     if tableless and len(options.ids) > 0:
         var wanted = List[Int]()

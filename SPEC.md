@@ -134,8 +134,9 @@ They existed to make multi-machine merging idempotent, and merging left scope
 - An existing file that is not this schema is refused by name: "not a
   skill-log store", "an older skill-log store", or "a newer skill-log store".
   There is no half-migration and no column convergence.
-- A corrupt file is named as damaged. A read never reports "no invocations
-  logged yet" over a file it could not read.
+- A corrupt file is named as damaged. A store another writer is holding is
+  named as locked. A read never reports "no invocations logged yet" over a file
+  it could not read.
 - Reads create nothing. An absent store is not an error on every verb; see the
   policies below.
 
@@ -161,7 +162,9 @@ marker this store does not own is a warning, not a failure.
 
 The store classifies and returns a typed refusal. The CLI boundary renders the
 one-line message and maps the exit code; no handler inspects a SQLite error or
-a store's absence on its own.
+a store's absence on its own. The store classifies a SQLite failure the same
+way: damage is damage, a lock is a lock, and anything else is the generic
+operational failure.
 
 ### Location and overrides
 

@@ -49,12 +49,11 @@ from skill_log.json import json_string
 from skill_log.store import (
     GroupCount,
     StoreOpen,
-    damaged_failure,
     group_columns,
-    is_corruption,
     is_group_column,
     is_skill_log_store,
     open_read,
+    read_failure,
     read_group_counts,
     resolve_db,
 )
@@ -333,12 +332,11 @@ def handle_stats(args: List[String]) raises -> Outcome:
             if is_skill_log_store(db):
                 groups = read_group_counts(db, options.by, options.skill)
         except e:
-            # Damage the schema probe did not reach is named as damage,
-            # never degraded into "no invocations logged yet".
-            if is_corruption(String(e)):
-                var failure = damaged_failure(path)
-                return Outcome.fail(failure.message, failure.code)
-            raise
+            # The store classifies the failure and this handler renders
+            # it: damage is damage, a lock is a lock, and nothing here
+            # inspects a SQLite message (SPEC §3).
+            var failure = read_failure(path, String(e))
+            return Outcome.fail(failure.message, failure.code)
 
     if len(groups) == 0:
         if options.json:

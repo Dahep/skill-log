@@ -18,11 +18,17 @@ again:
 
 The refusal vocabulary is ADR-0002's: a damaged file is *damaged*, a
 SQLite file that is not a skill-log store is *foreign*, a store written by
-the pre-ADR-0002 schema (the Python era) is *older*, and a store stamped
-newer than this binary is *newer*. Every one of them is one named line,
-and none of them is written to. The kind is a value (`Refusal`), never a
-word inside a message: a path the caller named can contain any word, so a
-refusal re-derived from message text would let the path choose the answer.
+the pre-ADR-0002 schema (the Python era) is *older*, a store stamped
+newer than this binary is *newer*, and a store another writer is holding
+is *locked*. Every one of them is one named line, and none of them is
+written to. The kind is a value (`Refusal`), never a word inside a
+message: a path the caller named can contain any word, so a refusal
+re-derived from message text would let the path choose the answer.
+
+The store classifies a SQLite failure too: damage is damage, a lock is a
+lock, and anything else is the generic operational failure. The handler
+renders that answer and never inspects a SQLite message itself
+(SPEC §3).
 
 The write path follows the reference: one transaction covers the
 invocation row and every problem row, and a BUSY/LOCKED failure is retried
@@ -209,6 +215,33 @@ def foreign_failure(path: String) -> Failure:
     )
 
 
+def locked_failure(path: String) -> Failure:
+    """The named failure for a store another writer is holding.
+
+    A read that arrives behind a write lock waits for it; a write that
+    cannot wait any longer gives up. Both are the same fact: the store
+    is locked, and the path names it.
+    """
+    return operational_failure(
+        "locked store: " + path + " is held by another writer"
+    )
+
+
+def read_failure(path: String, message: String) -> Failure:
+    """The named failure for a SQLite error on the read path.
+
+    The store classifies the error and the handler renders the answer:
+    a handler never inspects a SQLite message itself (SPEC §3). Damage
+    is damage, a lock is a lock, and anything else is the generic
+    operational failure.
+    """
+    if is_corruption(message):
+        return damaged_failure(path)
+    if is_busy(message):
+        return locked_failure(path)
+    return operational_failure("cannot read the store: " + path + ": " + message)
+
+
 def older_failure(path: String) -> Failure:
     """The named failure for a store written by the pre-ADR-0002 schema.
 
@@ -239,6 +272,7 @@ comptime REFUSAL_DAMAGED = 1
 comptime REFUSAL_FOREIGN = 2
 comptime REFUSAL_OLDER = 3
 comptime REFUSAL_NEWER = 4
+comptime REFUSAL_LOCKED = 5
 
 
 struct Refusal(Movable):
@@ -282,6 +316,8 @@ struct Refusal(Movable):
             return older_failure(self.path)
         if self.kind == REFUSAL_NEWER:
             return version_failure(self.path, self.found)
+        if self.kind == REFUSAL_LOCKED:
+            return locked_failure(self.path)
         return operational_failure("cannot use the store: " + self.path)
 
 
@@ -624,7 +660,17 @@ def open_write(path: String) raises -> StoreOpen:
 
     apply_write_pragmas(db, WRITE_BUSY_TIMEOUT)
 
-    stamp_version(db)
+    # Stamping the version is the first write to the file. Another
+    # writer holding the lock makes it fail, and a lock is a named
+    # refusal (SPEC §3: the store classifies, the CLI renders).
+    try:
+        stamp_version(db)
+    except e:
+        var message = String(e)
+        if is_busy(message):
+            opened.refusal = Refusal(REFUSAL_LOCKED, path, 0)
+            return opened^
+        raise
     opened.db = db^
     return opened^
 
