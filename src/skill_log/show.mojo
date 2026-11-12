@@ -497,7 +497,9 @@ def render_table(rows: List[Invocation]) -> String:
                 line += cell(rows[r], headers[c])
             else:
                 line += pad(cell(rows[r], headers[c]), widths[c])
-        lines.append(line)
+        # Empty columns in the middle of the row still pad, so the right
+        # edge is trimmed: trailing spaces are noise no reader needs.
+        lines.append(String(line.strip()))
         for p in range(len(rows[r].problems)):
             lines.append(
                 "    problem " + String(p + 1) + ": " + rows[r].problems[p]

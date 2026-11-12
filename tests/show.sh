@@ -177,6 +177,11 @@ check_contains "a worktree outside the home is untouched" "$OUT" "/elsewhere/bet
 check "a clean row has no problem lines" \
     "$(printf '%s\n' "$OUT" | grep -c '^    problem')" "2"
 
+# Empty columns in the middle still pad, so the table's right edge is
+# trimmed: no line ends in whitespace a diff would carry forever.
+check "the table leaves no trailing whitespace" \
+    "$(printf '%s\n' "$OUT" | grep -c ' $')" "0"
+
 # ------------------------------------------------------------------- json
 
 run show --json
