@@ -33,6 +33,8 @@ one.
 from std.os import getenv
 from std.subprocess import run
 
+from skill_log import text as text_module
+
 # The arguments of the two git commands the detection uses. They are
 # constants on purpose: the command string is passed to a shell, so only
 # the directory — quoted — may vary.
@@ -61,16 +63,12 @@ def shell_quote(text: String) -> String:
     A path the caller named reaches a shell command string, so it is
     quoted the one way a POSIX shell always reads back literally: single
     quotes, with an embedded single quote closed, escaped and re-opened.
+
+    The quoting itself lives in `text.mojo`, next to the other text
+    rules, so the one that renders a command line and the one that
+    builds a git command string are the same rule.
     """
-    var out = "'"
-    for c in text.codepoints():
-        var ch = String(c)
-        if ch == "'":
-            out += "'\\''"
-        else:
-            out += ch
-    out += "'"
-    return out
+    return text_module.shell_quote(text)
 
 
 def run_git(dir: String, args: String) -> String:
