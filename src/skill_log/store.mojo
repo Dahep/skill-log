@@ -814,6 +814,117 @@ def read_invocations(db: Database, filters: Filters) raises -> List[Invocation]:
     return rows^
 
 
+# -------------------------------------------------------------- counting
+
+
+def group_columns() -> List[String]:
+    """The columns a count may be grouped by, default first.
+
+    `skill` leads because friction is per skill before it is per anything
+    else, and it is what a bare `stats` reports. The rest are ADR-0002's
+    context columns — the cuts that separate an instruction defect from
+    environment noise.
+    """
+    var columns = List[String]()
+    columns.append("skill")
+    columns.append("harness")
+    columns.append("model")
+    columns.append("repo")
+    columns.append("worktree")
+    columns.append("machine")
+    columns.append("project")
+    return columns^
+
+
+def is_group_column(name: String) -> Bool:
+    """True when `name` is one of the columns `stats` may group by.
+
+    The one allow-list. `stats` validates its flag against it, and the
+    query below refuses anything else, so no caller can put a column
+    name into the SQL text without having been through this check.
+    """
+    var columns = group_columns()
+    for i in range(len(columns)):
+        if columns[i] == name:
+            return True
+    return False
+
+
+struct GroupCount(Movable):
+    """One line of the stats table: a group's key and its four counts.
+
+    `with_problems` counts invocations that have at least one problem,
+    and `problems` counts problem rows. They differ by design: the rate's
+    denominator is invocations, so a run with two findings is one run and
+    two problems, and a group's friction is not inflated by how many
+    findings one run happened to produce.
+    """
+
+    var key: String
+    var invocations: Int
+    var with_problems: Int
+    var problems: Int
+    var resolved: Int
+
+    def __init__(out self):
+        self.key = ""
+        self.invocations = 0
+        self.with_problems = 0
+        self.problems = 0
+        self.resolved = 0
+
+
+def read_group_counts(
+    db: Database, column: String, skill: String
+) raises -> List[GroupCount]:
+    """Count the invocations and problems per value of `column`.
+
+    `COUNT(DISTINCT i.id)` is the denominator and the only honest count:
+    the LEFT JOIN produces one line per problem, so `COUNT(*)` would
+    count problems and `COUNT(DISTINCT i.id)` counts runs. `p` is joined
+    rather than sub-queried so a run with no problems still appears, with
+    zeroes, which is what the rate's denominator requires.
+
+    `skill` narrows the whole cut to one skill; empty means every skill.
+    `column` must have passed `is_group_column`.
+    """
+    if not is_group_column(column):
+        raise Error("not a groupable column: " + column)
+
+    var where = ""
+    if skill != "":
+        where = " WHERE i.skill = ?"
+
+    var stmt = db.prepare(
+        "SELECT i." + column + " AS group_key,"
+        " COUNT(DISTINCT i.id),"
+        " COUNT(DISTINCT p.invocation_id),"
+        " COUNT(p.ordinal),"
+        " COUNT(DISTINCT CASE WHEN i.fix <> '' THEN i.id END)"
+        " FROM invocations i"
+        " LEFT JOIN problems p ON p.invocation_id = i.id"
+        + where
+        + " GROUP BY i." + column
+        + " ORDER BY i." + column
+    )
+    if skill != "":
+        stmt.bind_text(1, skill)
+
+    var groups = List[GroupCount]()
+    while True:
+        var row = stmt.step()
+        if row is None:
+            break
+        var group = GroupCount()
+        group.key = row.value().text_val(0)
+        group.invocations = row.value().int_val(1)
+        group.with_problems = row.value().int_val(2)
+        group.problems = row.value().int_val(3)
+        group.resolved = row.value().int_val(4)
+        groups.append(group^)
+    return groups^
+
+
 # --------------------------------------------------------------- writing
 
 
