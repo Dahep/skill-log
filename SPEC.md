@@ -608,9 +608,10 @@ session decides how the log gets read. Neither changes the other's contract.
 
   ```
   skill-log-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz
-  ├── skill-log            # one statically linked executable
-  ├── LICENSE
-  └── THIRD_PARTY_NOTICES.md
+  ├── skill-log              # one statically linked executable
+  ├── LICENSE                # this project's MIT licence
+  ├── THIRD-PARTY-NOTICES.md # notices of everything linked into the binary
+  └── NOTICE-LICENSES/       # the licence texts those notices point at
   ```
 
   The executable is built with `CGO_ENABLED=0`, so it carries no dynamic

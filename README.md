@@ -4,11 +4,12 @@ A local log of agent-skill invocations: one row per run, plus the problems
 that cost it, so friction can be counted, attributed to a skill, and closed by
 a specific change.
 
-**Status:** the Go port is in progress. The specification is [SPEC.md](SPEC.md); the
-decisions behind it are in [docs/adr/](docs/adr/), and the vocabulary in
-[CONTEXT.md](CONTEXT.md). Until the first release, the Python implementation
-it replaces is archived verbatim in [`reference/`](reference/README.md): that
-tree is the parity ground truth for the port, not the shipped tool.
+**Status:** the Go implementation is complete and every suite passes, including
+the parity gate. The specification is [SPEC.md](SPEC.md); the decisions behind
+it are in [docs/adr/](docs/adr/), and the vocabulary in [CONTEXT.md](CONTEXT.md).
+The Python implementation it replaces is archived verbatim in
+[`reference/`](reference/README.md): that tree is the parity ground truth for
+the port, not the shipped tool.
 
 ## What it is
 
@@ -48,9 +49,7 @@ the tag (`@1.0.0`); `@latest` takes the newest release.
 
 `setup` provisions the store, the post-merge hook, the repo report directory,
 and both bundled skills. `setup --check` verifies the result without writing.
-`setup --dry-run` shows what a real run would change. The verb is specified
-in [SPEC.md](SPEC.md) §5 but is not in the binary yet — see
-[Command surface](#command-surface).
+`setup --dry-run` shows what a real run would change.
 
 ## Build and test
 
@@ -81,10 +80,10 @@ tag back through mise's `github:` backend in a clean container afterwards.
 
 The archive shape is the one `SPEC.md` §8 fixes:
 `skill-log-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz`, holding the static
-`skill-log` executable plus the licence and notice files. The packaging half
-of the workflow — `scripts/package.sh` and `tests/packaging.sh` — is still
-the Mojo-era implementation and is being ported to the static layout; the
-Go port is not releasable until it is.
+`skill-log` executable, this project's `LICENSE`, the third-party notices and
+the licence texts they point at. `scripts/package.sh` builds it reproducibly,
+and `tests/packaging.sh` installs it into a clean container to prove it needs
+neither a toolchain nor a system SQLite.
 
 ## Command surface
 
@@ -98,12 +97,12 @@ Go port is not releasable until it is.
 | `skills audit` | Report each skill's usage-log state (`ok`, `missing`, `stale`, `edited`, `vendored`). |
 | `skills adopt` | Append a block where none is fenced and re-render a stale one; rewrite an `edited` block only with `--force`. |
 | `skills template` | Show, seed, reset, or override the user-owned templates; reports when the shipped default moved. |
+| `resolve-merged` | The hook's entry point: stamp the rows a landed pull's reports or trailers name. |
+| `setup` | Provision the store, the post-merge hook, the report directory and the bundled skills; `--check` verifies. |
 | `--version` | Print the release version. |
 
-Two verbs the specification defines are not in the binary yet: `setup`, which
-provisions the store, the post-merge hook, the report directory and the
-skills, and `resolve-merged`, which stamps the rows a landed pull resolved.
-The Go port is in progress; `SPEC.md` §5 is the contract they will meet.
+Every verb in the specification is in the binary; [SPEC.md](SPEC.md) §5 is the
+contract each one meets.
 
 Exit codes: `0` success or nothing to do, `1` operational failure, `2` usage.
 JSON goes to stdout; one-line diagnostics go to stderr; no tracebacks.

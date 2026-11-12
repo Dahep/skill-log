@@ -26,11 +26,6 @@ lives in `CONTEXT.md`; design decisions in `docs/adr/`.
   `--build` rebuilds first. Each suite also runs on its own.
   `tests/packaging.sh` is the one suite the default gate leaves out: it needs
   docker, so it runs on CI and on demand, not in the offline gate.
-- The port is in progress: `scripts/package.sh`, `tests/packaging.sh`,
-  `tests/smoke.sh` and `tests/sqlite.sh` are still the Mojo-era
-  implementations, and the `setup` and `resolve-merged` verbs are not in the
-  binary yet. A suite that fails on a missing `dist/lib/` or on an
-  un-registered verb is reporting an unfinished port, not a broken gate.
 - The suites are black-box: they run the binary as a process with a scratch
   HOME and a scratch store. `tests/lib.sh` holds the shared assertions —
   `check`, `check_contains`, `check_absent`, `check_one_line`, `tally`, and
