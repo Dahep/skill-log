@@ -19,9 +19,8 @@ invocation, so a clean run still counts as a denominator and
 problems-per-invocation stays measurable.
 
 The store is one SQLite file under the XDG state directory. There is no
-daemon and no network except `sync`, which pulls another machine's store over
-SSH and merges its rows into an aggregate. Each machine owns its rows; an
-aggregate reads them but never resolves them.
+daemon and no network: one store per machine, and rows carry the machine that
+wrote them so the marker grammar and any external consumer keep an origin.
 
 A change closes the rows it fixes by committing a report file (or, in repos
 that cannot carry one, a marker trailer) naming `machine#id` markers. A
@@ -51,11 +50,10 @@ and both bundled skills. `setup --check` verifies the result without writing.
 | `stats` | Per-skill (optionally per-model) invocation, problem, and resolved counts. |
 | `resolve` | Stamp one local row with the commit that fixed it. |
 | `resolve-merged` | Resolve rows from the commits a pull landed; reports in artifact mode, trailers otherwise. |
-| `fix` | Write or update the committed report listing the rows a change resolves. |
-| `sync` | Pull another machine's store over SSH and merge it. |
+| `report` | Write or update the committed report listing the rows a change resolves. |
 | `setup` | Provision or verify the store, hook, report directory, and skills. |
-| `skills audit` | Report each skill's usage-log state (`ok`, `missing`, `stale`, `edited`, `legacy`, `unowned`, `vendored`). |
-| `skills adopt` | Append missing blocks and re-render stale ones; leave `edited`, `legacy` and `unowned` untouched unless `--force`. |
+| `skills audit` | Report each skill's usage-log state (`ok`, `missing`, `stale`, `edited`, `vendored`). |
+| `skills adopt` | Append a block where none is fenced and re-render a stale one; rewrite an `edited` block only with `--force`. |
 | `skills template` | Show, seed, reset, or override the user-owned templates; reports when the shipped default moved. |
 | `--version` | Print the release version. |
 
@@ -69,9 +67,10 @@ JSON goes to stdout; one-line diagnostics go to stderr; no tracebacks.
 - A marker is `machine#id` — the machine is required because ids are per
   store. Bare ids and placeholders are refused, never guessed at.
 - Reports carry machine names and local ids only, never problem text.
-- Per-machine resolution is the core invariant: the owner's store is the only
-  writer of its rows, and an aggregate never claims a resolution its owner
-  would overwrite.
+- A marker naming another machine is reported as `foreign` and never stamped:
+  1.0 has no owner lookup and no cross-machine resolution.
+- A skill's generated text is owned only inside its fence. Text outside a fence
+  is never read, matched or rewritten — adoption appends a fenced block instead.
 
 ## Documentation
 
@@ -81,6 +80,9 @@ JSON goes to stdout; one-line diagnostics go to stderr; no tracebacks.
   provisioning.
 - [ADR-0001](docs/adr/0001-mojo-binary-and-sqlite.md) — why a Mojo binary and a
   vendored SQLite binding.
+- [ADR-0002](docs/adr/0002-explicit-harness-context.md) — explicit harness
+  context, adapters, `report`, one store per machine.
+- [ADR-0003](docs/adr/0003-module-map.md) — the module map behind the CLI.
 - [CONTEXT.md](CONTEXT.md) — domain vocabulary and invariants.
 
 ## License

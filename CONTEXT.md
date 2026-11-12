@@ -22,8 +22,20 @@ record local, and close friction by naming the change that fixed it.
   local state (`opencode` fills the session and model, `t3` fills the project).
   It never overrides an explicit flag, never runs by default, and fails to a
   blank field rather than an error.
-- **Marker** — `machine#id`. The only way a row is named from outside the
-  store. The machine is required because ids are per store.
+- **Marker** — `machine#id`, held as a value: parsed and formatted in one
+  module and never assembled by hand. The only way a row is named from outside
+  the store; the machine is required because ids are per store. A marker naming
+  another machine is reported as foreign and never stamped.
+- **Located marker** — a marker plus the commit and time it was read from. Only
+  the scan produces it, and only the resolution plan consumes it.
+- **Resolution plan** — the pure decision over located markers and stored rows:
+  stamp, unchanged, or skip with a reason. Applying the plan is the only write.
+- **Store policy** — how a verb treats the store: create, read, strict, write,
+  optional, or verify. The policy, not the verb, decides what an absent, empty,
+  damaged, foreign, older or newer store means.
+- **Document** — generated skill text as one module sees it: rendered from a
+  template, parsed around its fence, classified into one of five states, and
+  rewritten inside the fence only.
 - **Report** — the committed file listing the rows a change resolves. In a
   repo without a report directory, the commit-body trailer is the report.
 - **Resolution** — stamping a row with the commit that carries its fix.
@@ -44,7 +56,9 @@ record local, and close friction by naming the change that fixed it.
 - **Fence** — the `<!-- skill-log:usage-log ... -->` delimiters around an
   adopted block. The tool owns every byte inside it and nothing outside it.
   The fence carries the template hash and the content hash, which is what makes
-  "the template moved" distinguishable from "a human edited this".
+  "the template moved" distinguishable from "a human edited this". It is the
+  only provenance: text outside a fence is user-owned and is never detected,
+  matched or rewritten. States: `ok`, `missing`, `stale`, `edited`, `vendored`.
 - **Adoption** — rendering the usage-log template into a project's skills, and
   keeping them in step with it: `skills audit` reports, `skills adopt` writes.
 - **Review session** — the `skill-friction-review` skill reading logged
@@ -85,13 +99,18 @@ record local, and close friction by naming the change that fixed it.
 - The template decides what gets logged; the review session decides how the log
   is read. Neither changes the other's contract.
 - A skill's usage-log block is rendered from the user's template inside a
-  fence. The tool never edits a byte outside the fence, and never overwrites a
-  hand-edited block or converts an unfenced one without `--force`.
+  fence. The tool never reads, matches, rewrites or deletes a byte outside the
+  fence — not even with `--force`. A skill with no fenced block is `missing`,
+  and adoption appends one; reconciling any older unfenced text is a human task.
+- `--force` has one meaning: overwrite a fenced block whose content does not
+  match its own fence hash (`edited`). Nothing else needs it.
 - A moved default template is reported, never applied. The state directory
   records the hash of the default each user copy was seeded from; `audit` and
-  `setup --check` name it and print the two commands that adopt it. Every
-  release that changes the default carries the previous one in the binary's
-  known-templates list.
+  `setup --check` name it and print the two commands that adopt it. The binary
+  carries no list of historical defaults: an unfenced block is never compared
+  to anything.
+- The store classifies; only the CLI boundary renders a refusal's message and
+  exit code. A handler never inspects a SQLite error or a store's absence.
 - One CLI, one store, no daemon, and no network.
 
 ## Boundaries
