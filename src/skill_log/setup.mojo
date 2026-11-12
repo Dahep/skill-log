@@ -89,7 +89,13 @@ from skill_log.skills import (
     resolved_command,
     validate_effective,
 )
-from skill_log.store import expand_home, open_write, resolve_db, verify
+from skill_log.store import (
+    expand_home,
+    open_write,
+    resolve_db,
+    verify,
+    write_failure,
+)
 from skill_log.templates import REVIEW_NAME, USAGE_LOG_NAME
 from skill_log.version import version
 
@@ -321,6 +327,11 @@ def store_verdict(path: String, check: Bool, dry_run: Bool) raises -> Verdict:
     and `open_write` for the creation — and never from inspecting SQLite
     here. A refused store is drift with the refusal's own named message:
     setup creates a store and never migrates one.
+
+    A creation that *fails* is drift too, and it is classified by the
+    store rather than by this handler: the store's write taxonomy names
+    what went wrong, so a path that cannot be opened reads as a named
+    refusal and never as the engine's own return code (SPEC §3).
     """
     var found = verify(path)
     if found.ok():
@@ -333,12 +344,20 @@ def store_verdict(path: String, check: Bool, dry_run: Bool) raises -> Verdict:
         return Verdict(ARTIFACT_STORE, STATUS_DRIFT, "no store at " + path)
     if dry_run:
         return Verdict(ARTIFACT_STORE, STATUS_CREATED, path)
-    var opened = open_write(path)
-    if opened.refusal.refused():
-        # The file appeared between the verdict and the creation, and it
-        # is not a store we may use.
+    try:
+        var opened = open_write(path)
+        if opened.refusal.refused():
+            # The file appeared between the verdict and the creation, and
+            # it is not a store we may use.
+            return Verdict(
+                ARTIFACT_STORE, STATUS_DRIFT, opened.refusal.failure().message
+            )
+    except e:
+        # The creation failed. The store classifies the failure and names
+        # it, so the verdict carries the store's own message — the
+        # engine's return code never reaches the reader.
         return Verdict(
-            ARTIFACT_STORE, STATUS_DRIFT, opened.refusal.failure().message
+            ARTIFACT_STORE, STATUS_DRIFT, write_failure(path, String(e)).message
         )
     return Verdict(ARTIFACT_STORE, STATUS_CREATED, path)
 

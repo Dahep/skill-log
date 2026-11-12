@@ -26,10 +26,11 @@ refusal re-derived from message text would let the path choose the
 answer.
 
 The store classifies a SQLite failure too, on both paths: damage is
-damage, a lock is a lock, a file that cannot be written is read-only,
-and anything else is the generic operational failure. The read path's
-classifier is `read_failure`; the write path's is `write_failure`. The
-handler renders that answer and never inspects a SQLite message itself
+damage, a lock is a lock, a file that cannot be written is read-only, a
+store path that cannot be opened at all is unusable, and anything else
+is the generic operational failure. The read path's classifier is
+`read_failure`; the write path's is `write_failure`. The handler
+renders that answer and never inspects a SQLite message itself
 (SPEC §3).
 
 Both classifiers look at the engine's own wording only: the caller's
@@ -267,6 +268,33 @@ def is_read_only(message: String) -> Bool:
     )
 
 
+def unopenable_failure(path: String) -> Failure:
+    """The named failure for a store file that cannot be opened at all.
+
+    The store's path names something that cannot hold a database: a
+    directory, a path whose parent cannot be written, a path that does
+    not exist and cannot be created. The engine reports it as a bare
+    return code — "sqlite3_open('…') failed (sqlite3 rc=14)" — which
+    says nothing a reader can act on, so the store names the fact
+    instead: the path is there, and it is not a file this tool can open.
+    """
+    return operational_failure(
+        "unusable store path: " + path + " cannot be opened for writing"
+    )
+
+
+def is_unopenable(message: String) -> Bool:
+    """True when a SQLite error means the store file could not be opened.
+
+    The binding reports an open that failed as its own call with the
+    engine's return code, and `SQLITE_CANTOPEN` (14) is the code for
+    "the file could not be opened". The code is engine wording, not the
+    caller's path, so classifying on it is safe: a path cannot choose
+    the answer by carrying the number.
+    """
+    return message.find("sqlite3_open(") != -1 and message.find("rc=14") != -1
+
+
 def strip_path(message: String, path: String) -> String:
     """`message` with the store's own path removed.
 
@@ -312,6 +340,8 @@ def read_failure(path: String, message: String) -> Failure:
         return damaged_failure(path)
     if is_busy(detail):
         return locked_failure(path)
+    if is_unopenable(detail):
+        return unopenable_failure(path)
     return operational_failure("cannot read the store: " + path + ": " + message)
 
 
@@ -319,11 +349,12 @@ def write_failure(path: String, message: String) -> Failure:
     """The named failure for a SQLite error on the write path.
 
     The same taxonomy the read path has (SPEC §3), because a write
-    meets the same four facts: the file is damaged, another writer holds
-    it, the file cannot be written at all, or the write failed for some
-    other reason. The generic answer carries the engine's own words,
-    because nothing better is known — but the named ones do not, so a
-    caller never has to read SQLite's wording to learn what happened.
+    meets the same facts: the file is damaged, another writer holds it,
+    the file cannot be written at all, the store's path cannot be opened
+    at all, or the write failed for some other reason. The generic answer
+    carries the engine's own words, because nothing better is known —
+    but the named ones do not, so a caller never has to read SQLite's
+    wording to learn what happened.
 
     A path the caller named can carry any word in the vocabulary, so the
     classification is made on the message the binding appended *after*
@@ -336,6 +367,8 @@ def write_failure(path: String, message: String) -> Failure:
         return locked_failure(path)
     if is_read_only(detail):
         return read_only_failure(path)
+    if is_unopenable(detail):
+        return unopenable_failure(path)
     return operational_failure(
         "cannot write the store: " + path + ": " + message
     )

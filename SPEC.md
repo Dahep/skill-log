@@ -164,7 +164,8 @@ The store classifies and returns a typed refusal. The CLI boundary renders the
 one-line message and maps the exit code; no handler inspects a SQLite error or
 a store's absence on its own. The store classifies a SQLite failure the same
 way on both paths: damage is damage, a lock is a lock, a file that cannot be
-written is read-only, and anything else is the generic operational failure.
+written is read-only, a store path that cannot be opened at all is unusable,
+and anything else is the generic operational failure.
 
 The classification never reads the caller's path: the path is stripped from
 the message first, because a path can carry any word in the vocabulary and

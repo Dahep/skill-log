@@ -986,6 +986,37 @@ else
     fail "a damaged store is untouched"
 fi
 
+# ------------------------------------------- the store's write taxonomy
+#
+# `setup` creates the store through the store's own write path, so a
+# creation that fails is classified the way every other write failure is
+# classified: one named line, never the engine's raw wording.
+#
+# A directory where the store's file should be is the case: the store
+# cannot be created there, and SQLite's own answer ("sqlite3_open(...)
+# failed (sqlite3 rc=14)") says nothing a reader can act on. The same
+# path through `add` is classified, and setup must classify it the same
+# way.
+mkdir -p "$TMP/store-is-a-dir"
+run setup --repo "$TMP/rref" --db "$TMP/store-is-a-dir"
+check "a store that cannot be created exits 1" "$STATUS" "1"
+check_contains "a store that cannot be created is named by the taxonomy" \
+    "$ERR" "unusable store path: $TMP/store-is-a-dir"
+check_absent "a store that cannot be created leaks no engine wording" \
+    "$ERR" "sqlite3 rc="
+check_absent "a store that cannot be created leaks no sqlite3_open text" \
+    "$ERR" "sqlite3_open("
+check_one_line "a store that cannot be created is one stderr line" "$ERR"
+
+# The same path through `add` is classified the same way — the two paths
+# share one taxonomy, so the wording agrees.
+run add --skill demo --db "$TMP/store-is-a-dir"
+check "add on the same path exits 1" "$STATUS" "1"
+check_contains "add on the same path is named by the taxonomy" \
+    "$ERR" "unusable store path: $TMP/store-is-a-dir"
+check_absent "add on the same path leaks no engine wording" \
+    "$ERR" "sqlite3 rc="
+
 # ------------------------------------------------------------- usage
 #
 # Every help level ends with 2 to 4 real invocations, and a usage error

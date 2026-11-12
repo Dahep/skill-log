@@ -425,6 +425,26 @@ check_absent "the vocabulary path did not make it a damaged store" \
     "$ERR" "damaged store"
 chmod 0644 "$RO_WORD_DIR/store.db"
 
+# ------------------------------------------------- a path that cannot open
+#
+# A store path that names something which cannot hold a database — a
+# directory, here — is a named fact, not the engine's return code. The
+# taxonomy names it the same way on both paths, so a caller never has to
+# read SQLite's wording to learn what happened.
+UNOPENABLE="$SCRATCH/unopenable"
+rm -rf "$UNOPENABLE"
+mkdir -p "$UNOPENABLE/adir"
+
+run add --skill fixture --db "$UNOPENABLE/adir"
+check "a store path that cannot be opened exits 1" "$STATUS" "1"
+check_contains "a store path that cannot be opened is named" "$ERR" \
+    "unusable store path: $UNOPENABLE/adir"
+check_absent "a store path that cannot be opened leaks no SQL rc" "$ERR" \
+    "sqlite3 rc="
+check_absent "a store path that cannot be opened leaks no engine text" \
+    "$ERR" "sqlite3_open("
+check_one_line "the unopenable store's refusal is one line" "$ERR"
+
 # ------------------------------------------------------------ precedence
 
 env -u XDG_STATE_HOME SKILL_LOG_DB="$SCRATCH/env.db" HOME="$HOME_DIR" \
