@@ -1,6 +1,8 @@
 # ADR-0002: explicit harness context in the store
 
-**Status:** proposed, 2026-11-11.
+**Status:** accepted, 2026-11-11. Ratified with
+[#3](https://github.com/Dahep/skill-log/issues/3); the tickets cite it as the
+contract.
 **Amends:** the data model in
 [issue #1](https://github.com/Dahep/skill-log/issues/1), the storage section in
 [issue #3](https://github.com/Dahep/skill-log/issues/3), ADR-0001's "no store
