@@ -306,6 +306,38 @@ def load_template(name: String, template_dir: String) raises -> Template:
     return out^
 
 
+def moved_default_note(usage: Template, review: Template) -> String:
+    """The one line that names a moved shipped default, or "".
+
+    SPEC §7: a shipped default that moved since the user copy was
+    seeded is named, with the two commands that adopt it — seed the new
+    default over the old copy, then re-render every block. Only a human
+    runs those, and only to discard their own wording.
+
+    The line is one line, because the failure it belongs to gets
+    exactly one stderr line (SPEC §2).
+    """
+    if not usage.moved and not review.moved:
+        return ""
+    return (
+        "the shipped default moved; adopt it with"
+        " 'skill-log skills template seed --force',"
+        " then 'skill-log skills adopt --dir <dir>'"
+    )
+
+
+def moved_suffix(moved: String) -> String:
+    """The moved-default clause to append to another message, or "".
+
+    The failure gets exactly one stderr line (SPEC §2), so a moved
+    default that rides along with another failure is a clause of that
+    line, not a line of its own.
+    """
+    if moved == "":
+        return ""
+    return "; " + moved
+
+
 def validate_effective(name: String, template: Template) raises:
     """Refuse a template whose placeholders are wrong, by name.
 
@@ -957,11 +989,19 @@ def handle_audit(options: SkillsOptions) raises -> Outcome:
     # silently mark every skill stale.
     var template_dir = resolve_template_dir(options.template_dir)
     var template: Template
+    var review: Template
     try:
         template = load_template(USAGE_LOG_NAME, template_dir)
+        review = load_template(REVIEW_NAME, template_dir)
         validate_effective(USAGE_LOG_NAME, template)
     except e:
         return Outcome.fail(String(e), EXIT_FAILURE())
+
+    # A shipped default that moved since the user copy was seeded is
+    # named here too (SPEC §7): the blocks are rendered from the old
+    # default, so the whole directory is behind — and only a human can
+    # decide to discard their own wording.
+    var moved = moved_default_note(template, review)
 
     # The resolved binary path is the other half of the current render:
     # the block names it, so a binary that moved makes every block an
@@ -995,7 +1035,15 @@ def handle_audit(options: SkillsOptions) raises -> Outcome:
         # The findings are the answer and go to stdout even when the
         # exit code says "not clean"; the summary is the one stderr line
         # the failure is allowed.
-        var outcome = Outcome.fail("some skills need adoption", EXIT_FAILURE())
+        var outcome = Outcome.fail(
+            "some skills need adoption" + moved_suffix(moved), EXIT_FAILURE()
+        )
+        outcome.text = text
+        return outcome^
+    if moved != "":
+        # A moved default is its own failure: the directory may be
+        # clean, and it is still behind the shipped default.
+        var outcome = Outcome.fail(moved, EXIT_FAILURE())
         outcome.text = text
         return outcome^
     return Outcome.ok(text)

@@ -839,6 +839,44 @@ run skills audit --dir "$DIR2"
 check "template override: the install still audits clean" "$STATUS" "0"
 run setup --repo "$TMP/r1" --skills-dir "$DIR2" --check --db "$TMP/skills2-store.db"
 check "template override: --check is green" "$STATUS" "0"
+
+# ------------------------------------------- a moved shipped default
+#
+# SPEC §7: a shipped default that moved since the user copy was seeded
+# is named by `setup --check`, with the two commands that adopt it.
+# The user copy is what makes the question meaningful, so the copies
+# are seeded first; the seeded-from record is then pointed at a hash
+# that is not the current shipped default.
+run skills template seed --force
+check "the user copies are seeded" "$STATUS" "0"
+SEEDED_DIR="$HOME_DIR/.local/state/skill-log/seeded-from"
+mkdir -p "$SEEDED_DIR"
+printf '0000000000000000\n' >"$SEEDED_DIR/usage-log.md"
+
+DIR4="$TMP/skillsdir4"
+mkdir -p "$DIR4"
+run setup --repo "$TMP/r1" --skills-dir "$DIR4" --db "$TMP/skills4-store.db"
+check "a moved default: the install exits 0" "$STATUS" "0"
+
+run setup --repo "$TMP/r1" --skills-dir "$DIR4" --check --db "$TMP/skills4-store.db"
+check "a moved default: --check exits 1" "$STATUS" "1"
+check_contains "a moved default: --check names it" \
+    "$(detail_of "$OUT" skills)" "the shipped default moved"
+check_contains "a moved default: --check names seed --force" \
+    "$(detail_of "$OUT" skills)" "skills template seed --force"
+check_contains "a moved default: --check names adopt" \
+    "$(detail_of "$OUT" skills)" "skills adopt"
+# The same answer in JSON, where the detail carries the two commands.
+run setup --repo "$TMP/r1" --skills-dir "$DIR4" --check --json \
+    --db "$TMP/skills4-store.db"
+check_contains "a moved default: --json names it" \
+    "$(printf '%s\n' "$OUT" | python3 -c 'import json,sys; print(next(o["detail"] for o in [json.loads(l) for l in sys.stdin if l.strip()] if o["artifact"] == "skills"))')" \
+    "the shipped default moved"
+
+# The record is restored, so the check is green again.
+rm -f "$SEEDED_DIR/usage-log.md"
+run setup --repo "$TMP/r1" --skills-dir "$DIR4" --check --db "$TMP/skills4-store.db"
+check "without the record: --check is green again" "$STATUS" "0"
 rm -rf "$HOME_DIR/.config/skill-log"
 
 # --------------------------------------------------------- store refusals

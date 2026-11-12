@@ -78,6 +78,7 @@ from skill_log.report import (
 from skill_log.skills import (
     Template,
     load_template,
+    moved_default_note,
     resolve_template_dir,
     resolved_command,
     validate_effective,
@@ -550,6 +551,21 @@ def skills_verdict(skills_dir: String, options: Options) raises -> Verdict:
         if i > 0:
             detail += ", "
         detail += entries[i]
+
+    # A shipped default that moved since the user copy was seeded is
+    # named here too (SPEC §7): the installed skills were rendered from
+    # the old default, so the install is behind — and only a human can
+    # decide to discard their own wording. Under `--check` that is
+    # drift, so the check fails; a normal run only says so, because the
+    # install itself is not what is wrong — the default is.
+    var moved = moved_default_note(usage, review)
+    if moved != "":
+        if detail != "":
+            detail += "; "
+        detail += moved
+        if options.check:
+            return Verdict(ARTIFACT_SKILLS, STATUS_DRIFT, detail)
+
     if drift:
         return Verdict(ARTIFACT_SKILLS, STATUS_DRIFT, detail)
     if anything:

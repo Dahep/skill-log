@@ -247,6 +247,40 @@ run skills template show --json
 check "a moved default is reported in JSON" \
     "$(printf '%s' "$OUT" | python3 -c 'import json,sys; t=json.loads(sys.stdin.read())["templates"][0]; print(t["moved"])')" "True"
 
+# SPEC §7: `audit` names a moved shipped default too, with the two
+# commands that adopt it. The name is the failure's one stderr line
+# (SPEC §2: exactly one stderr line per failure), and the exit code
+# says the directory is not conformant.
+AUDITDIR="$SCRATCH/audit-moved"
+rm -rf "$AUDITDIR"
+mkdir -p "$AUDITDIR/alpha"
+printf 'name: alpha\n' > "$AUDITDIR/alpha/SKILL.md"
+# The skill is conformant, so the moved default is the only reason the
+# audit fails.
+run skills adopt --dir "$AUDITDIR"
+check "the audit fixture is conformant" "$STATUS" "0"
+run skills audit --dir "$AUDITDIR"
+check "audit exits 1 on a moved default" "$STATUS" "1"
+check_contains "audit names the moved default" "$ERR" "the shipped default moved"
+check_contains "audit names seed --force" "$ERR" "skills template seed --force"
+check_contains "audit names adopt" "$ERR" "skills adopt"
+check_one_line "the moved-default note is one line" "$ERR"
+
+# The same answer in JSON: the per-skill objects are unchanged, and the
+# name is still on stderr.
+run skills audit --dir "$AUDITDIR" --json
+check "audit --json exits 1 on a moved default" "$STATUS" "1"
+check_contains "audit --json names the moved default" "$ERR" \
+    "the shipped default moved"
+check "audit --json still emits one object per skill" \
+    "$(printf '%s\n' "$OUT" | grep -c '^{')" "1"
+
+# The record is removed, so the copy is no longer known to be behind
+# and the audit is clean again.
+rm -f "$SEEDED/usage-log.md"
+run skills audit --dir "$AUDITDIR"
+check "audit is clean again without the record" "$STATUS" "0"
+
 # --------------------------------------------------------------- reset
 
 run skills template reset
