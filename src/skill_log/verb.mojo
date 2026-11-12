@@ -26,6 +26,7 @@ struct Verb:
     var examples: List[String]
     var value_flags: List[String]
     var notes: String
+    var nested_help: Bool
 
     def __init__(
         out self,
@@ -35,6 +36,7 @@ struct Verb:
         examples: List[String],
         value_flags: List[String],
         notes: String = "",
+        nested_help: Bool = False,
     ):
         self.name = name
         self.summary = summary
@@ -42,6 +44,7 @@ struct Verb:
         self.examples = examples.copy()
         self.value_flags = value_flags.copy()
         self.notes = notes
+        self.nested_help = nested_help
 
     def takes_value(self, arg: String) -> Bool:
         """True when `arg` is one of this verb's value-taking flags."""

@@ -27,7 +27,7 @@ if [ ! -x "$ROOT/dist/skill-log" ]; then
 fi
 
 FAILED=0
-for suite in smoke store context show stats report resolve; do
+for suite in smoke store context show stats report resolve skills; do
     printf '\n== %s\n' "$suite"
     if bash "$ROOT/tests/$suite.sh"; then
         printf '== %s: ok\n' "$suite"
