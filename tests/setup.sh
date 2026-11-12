@@ -238,6 +238,35 @@ check_contains "a non-executable hook: the detail names the path" \
 run setup --repo "$TMP/r1" --check
 check "check: a repaired hook is green" "$STATUS" "0"
 
+# drift: the hook carries an execute bit, but not the owner's. Git runs
+# the hook as the user who pulled, which is the owner here — and the
+# owner cannot execute it, so git skips it silently. "any execute bit"
+# is not the question the install asks; the owner's bit is.
+rm -f "$HOOK"
+run setup --repo "$TMP/r1"
+chmod 0641 "$HOOK"
+run setup --repo "$TMP/r1" --check
+check "check: a hook the owner cannot execute exits 1" "$STATUS" "1"
+check "check: a hook the owner cannot execute is drift" \
+    "$(status_of "$OUT" hook)" "drift"
+check_contains "check: the drift names the executable bit" \
+    "$(detail_of "$OUT" hook)" "not executable"
+check "check: the hook the owner cannot execute is not rewritten" \
+    "$(stat -c %a "$HOOK")" "641"
+
+# A normal run repairs the mode, and says it did. The repair adds the
+# owner's execute bit and leaves the file's other bits alone: the
+# installer owns the file, and the owner's bit is the one the run
+# needs.
+run setup --repo "$TMP/r1"
+check "a hook the owner cannot execute: the run exits 0" "$STATUS" "0"
+check "a hook the owner cannot execute: the mode is repaired" \
+    "$(stat -c %a "$HOOK")" "741"
+check "a hook the owner cannot execute: the verdict is updated" \
+    "$(status_of "$OUT" hook)" "updated"
+run setup --repo "$TMP/r1" --check
+check "check: the repaired owner-executable hook is green" "$STATUS" "0"
+
 # drift: the report directory is missing.
 run setup --repo "$TMP/r1"
 rm -rf "$TMP/r1/.skill-log"

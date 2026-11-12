@@ -153,12 +153,18 @@ def write_text(path: String, text: String) raises:
 
 
 def is_executable(path: String) -> Bool:
-    """True when `path` carries an execute bit for somebody.
+    """True when the *owner* of `path` may execute it.
 
     A git hook is run only when it is executable, and git says nothing
     when it is not — the hook simply never fires. So the bit is part of
     the install, and a file that lost it is broken even though its
     bytes are right.
+
+    The owner's bit is the one that matters, not "somebody's": git runs
+    the hook as the user who pulled, and the installer wrote the file
+    as that user. A mode of 0641 carries the execute bit for *other*
+    and none for the owner, so the owner cannot run it and git skips it
+    — silently, which is the failure this check exists to catch.
 
     A file that cannot be stat'ed is not executable: the caller is
     asking about a hook it should have written, and "no" is the safe
@@ -166,21 +172,24 @@ def is_executable(path: String) -> Bool:
     """
     try:
         var info = stat(path)
-        return (info.st_mode & 0o111) != 0
+        return (info.st_mode & 0o100) != 0
     except:
         return False
 
 
 def set_executable(path: String) raises:
-    """Give `path` the execute bits, leaving its other permissions alone.
+    """Give `path` the owner's execute bit, leaving its other bits alone.
 
-    `chmod` with the execute bits added to the file's own mode: the
-    hook keeps the permissions it had and gains the bit git needs.
+    `chmod` with the owner's execute bit added to the file's own mode:
+    the hook keeps the permissions it had and gains the bit git needs.
+    The owner's bit is the one that is added — the others are left as
+    they are, because the installer owns the file and the owner's bit
+    is the one the run needs.
     """
     var lib = OwnedDLHandle("libc.so.6", RTLD.NOW)
     var chmod_fn = dl_sym[def(Int, Int) thin abi("C") -> Int](lib, "chmod")
     var info = stat(path)
-    var mode = info.st_mode | 0o111
+    var mode = info.st_mode | 0o100
     var buffer = c_string(path)
     var rc = chmod_fn(Int(buffer.unsafe_ptr()), mode)
     _ = buffer^
