@@ -62,13 +62,18 @@ from skill_log.store import (
 )
 from skill_log.text import prefixed, sanitize
 
-# A field separator for the git log records. NUL cannot appear in a
-# commit message or an object name, so it cannot be confused with data.
+# A field separator for the git log records, and the record separator
+# too. NUL cannot appear in a commit message — git refuses to write one
+# that does — so it cannot be confused with data.
+#
+# The two were once different: the fields were NUL-separated and the
+# records were separated by 0x1e, the ASCII record separator. A commit
+# body may carry 0x1e, so a body holding one split the scan in the wrong
+# place and every marker after it was lost.
+#
+# Every record is therefore four NUL-separated fields: the commit, its
+# epoch, the trailer values, and the body.
 comptime FIELD = "\u0000"
-
-# A record separator. Git commit bodies cannot carry it usefully and no
-# marker does, so one `git log` call carries every commit's fields.
-comptime RECORD = "\u001e"
 
 
 def resolve_merged_usage() -> String:
@@ -328,28 +333,32 @@ def scan_trailers(root: String, since: String) -> Scan:
     var format = (
         "--format=%H%x00%ct%x00%(trailers:key="
         + TRAILER_KEY
-        + ",valueonly)%x00%B%x1e"
+        + ",valueonly)%x00%B%x00"
     )
     var args = "log " + shell_quote(format) + " " + shell_quote(span)
     var out = git_output(root, args)
 
-    for raw in out.split(RECORD):
-        var record = String(raw.strip())
-        if record == "":
-            continue
-        var fields = record.split(FIELD)
-        if len(fields) < 4:
-            continue
-        var commit = String(fields[0].strip())
+    # Every record is four NUL-separated fields — the commit, its epoch,
+    # the trailer values, and the body — and the records follow one
+    # another. The body is the last field, so it carries the newlines
+    # the commit message has, and the next record's commit hash follows
+    # the next NUL.
+    var fields = out.split(FIELD)
+    var at = 0
+    while at + 4 <= len(fields):
+        var commit = String(fields[at].strip())
         if commit == "":
+            at += 4
             continue
         var epoch: Int
         try:
-            epoch = Int(String(fields[1].strip()))
+            epoch = Int(String(fields[at + 1].strip()))
         except:
+            at += 4
             continue
-        var values = String(fields[2])
-        var body = String(fields[3])
+        var values = String(fields[at + 2])
+        var body = String(fields[at + 3])
+        at += 4
 
         # Every value the body carries that the trailer parser did not
         # return is buried — a later trailer block hid it. The scan

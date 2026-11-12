@@ -304,6 +304,40 @@ check "the last block's marker still resolves" \
 check "the buried marker stamped nothing" \
     "$(sqlite3 "$DB_PB" 'select fix from invocations where id = 1')" ""
 
+# ------------------------------------------------- a record separator byte
+#
+# The scan reads every commit in one `git log` call, so the records are
+# separated by a byte the format writes. That byte must be one a commit
+# message cannot carry: 0x1e is the ASCII record separator, and a body
+# that holds one splits the scan in the wrong place, so every marker
+# after it was lost — not even reported.
+#
+# The case: a commit body that carries a literal 0x1e and then a marker.
+# The marker must still be found.
+REPO_RS="$(new_repo record-separator)"
+DB_RS="$SCRATCH/record-separator.db"
+"$BIN" add --skill after-the-separator --machine "$H" --db "$DB_RS" >/dev/null
+printf x >"$REPO_RS/file"
+git -C "$REPO_RS" add file
+# The body holds a literal 0x1e before the marker.
+printf 'skills: name a row after a record separator\n\036Skill-log-Fix: %s#1\n' \
+    "$H" > "$SCRATCH/rs-body.txt"
+git -C "$REPO_RS" commit -q -F "$SCRATCH/rs-body.txt"
+(
+    cd "$REPO_RS" || exit 1
+    "$BIN" resolve-merged --db "$DB_RS" --json \
+        >"$SCRATCH/record-sep.json" 2>"$SCRATCH/record-sep.err"
+)
+# The marker is found and named. Git's own trailer parser cannot read a
+# block that follows a stray 0x1e, so the marker is reported the way any
+# marker the last-trailer-block rule hid is: named, never dropped.
+check "a marker after a 0x1e in the body is found" \
+    "$(json_array "$(cat "$SCRATCH/record-sep.json")" ignored | grep -c "$H#1")" "1"
+check_contains "the marker after a 0x1e is reported" \
+    "$(cat "$SCRATCH/record-sep.err")" "$H#1"
+check_absent "the marker after a 0x1e is not dropped silently" \
+    "$(cat "$SCRATCH/record-sep.err")" "Traceback"
+
 # ----------------------------------------------------------- newest wins
 
 REPO2="$(new_repo newest)"
