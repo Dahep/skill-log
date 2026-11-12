@@ -20,6 +20,13 @@ stub: a later ticket appends its verb here when it lands.
 from skill_log.add import handle_add
 from skill_log.errors import Outcome
 from skill_log.help import top_level_help
+from skill_log.show import (
+    handle_show,
+    show_examples,
+    show_notes,
+    show_usage,
+    show_value_flags,
+)
 from skill_log.verb import Verb
 from skill_log.version import version
 
@@ -109,6 +116,18 @@ def build_verbs() raises -> List[Verb]:
         )
     )
 
+    # The verb's own text lives with its handler, so the usage a usage
+    # error prints and the usage `--help` prints cannot drift apart.
+    verbs.append(
+        Verb(
+            "show",
+            "read the log back: recent invocations and their problems",
+            show_usage(),
+            show_examples(),
+            show_value_flags(),
+            show_notes(),
+        )
+    )
     var version_examples = List[String]()
     version_examples.append("skill-log --version")
     version_examples.append("skill-log --help")
@@ -143,6 +162,7 @@ def build_handlers() raises -> List[type_of(handle_version)]:
     """The handler table, indexed in step with `build_verbs`."""
     var handlers = List[type_of(handle_version)]()
     handlers.append(handle_add)
+    handlers.append(handle_show)
     handlers.append(handle_version)
     handlers.append(handle_help)
     return handlers^

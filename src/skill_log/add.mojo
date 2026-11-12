@@ -37,7 +37,7 @@ from skill_log.adapters import apply_adapters, enabled_adapters
 from skill_log.context import hostname, preview_timestamp
 from skill_log.detect import detect_repo, detect_worktree, env_or_empty
 from skill_log.errors import EXIT_FAILURE, EXIT_USAGE, Outcome
-from skill_log.json import json_string, json_string_array
+from skill_log.render import render_row_json
 from skill_log.stdin import read_stdin_line, stdin_is_tty
 from skill_log.store import Invocation, WriteResult, resolve_db, write_invocation
 from skill_log.text import sanitize
@@ -191,36 +191,6 @@ def resolve_field(
     return String(detected.strip())
 
 
-def render_json(row: Invocation) -> String:
-    """The whole row as one flat JSON object.
-
-    The key order is fixed, so a caller can read the output without
-    parsing it into a guess about order.
-    """
-    var out = "{"
-    if row.id > 0:
-        out += "\"id\":" + String(row.id)
-    else:
-        out += "\"id\":null"
-    out += ",\"ts\":" + json_string(row.ts)
-    out += ",\"skill\":" + json_string(row.skill)
-    out += ",\"harness\":" + json_string(row.harness)
-    out += ",\"session\":" + json_string(row.session)
-    out += ",\"parent\":" + json_string(row.parent)
-    out += ",\"model\":" + json_string(row.model)
-    out += ",\"repo\":" + json_string(row.repo)
-    out += ",\"worktree\":" + json_string(row.worktree)
-    out += ",\"project\":" + json_string(row.project)
-    out += ",\"t3_thread\":" + json_string(row.t3_thread)
-    out += ",\"machine\":" + json_string(row.machine)
-    out += ",\"fix\":" + json_string(row.fix)
-    out += ",\"resolved_at\":" + json_string(row.resolved_at)
-    out += ",\"marker\":" + json_string(row.marker())
-    out += ",\"problems\":" + json_string_array(row.problems)
-    out += "}"
-    return out
-
-
 def handle_add(args: List[String]) raises -> Outcome:
     """The `add` handler.
 
@@ -327,7 +297,7 @@ def handle_add(args: List[String]) raises -> Outcome:
         # the store.
         row.ts = preview_timestamp()
         row.problems = clean^
-        return Outcome.ok(render_json(row))
+        return Outcome.ok(render_row_json(row))
 
     var result: WriteResult
     try:
@@ -346,5 +316,5 @@ def handle_add(args: List[String]) raises -> Outcome:
     row.id = result.id
     row.problems = clean^
     if options.json:
-        return Outcome.ok(render_json(row))
+        return Outcome.ok(render_row_json(row))
     return Outcome.ok(row.marker())
