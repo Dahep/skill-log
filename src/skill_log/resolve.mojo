@@ -173,10 +173,9 @@ def handle_resolve(args: List[String]) raises -> Outcome:
     try:
         row = resolve_row(path, options.id, options.fix, options.dry_run)
     except e:
-        return Outcome.fail(
-            "cannot resolve the store: " + path + ": " + String(e),
-            EXIT_FAILURE(),
-        )
+        # The store classifies the failure and raises its named message
+        # (SPEC §3); this handler adds nothing to it.
+        return Outcome.fail(String(e), EXIT_FAILURE())
 
     if row.refusal.refused():
         var failure = row.refusal.failure()

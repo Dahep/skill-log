@@ -562,6 +562,28 @@ check "outside a checkout exits 1" "$STATUS" "1"
 check_contains "outside a checkout is named" "$(cat "$SCRATCH/norepo.err")" \
     "inside a git checkout"
 
+# A store the scan can read but cannot write: the write path has its own
+# taxonomy (SPEC §3), and a raw SQLite message is not a name. The fixture
+# is its own store and its own commit, so the scan really wants to
+# stamp something and the write really happens.
+RO_REPO="$(new_repo readonly-merged)"
+RO_DB="$SCRATCH/readonly-merged.db"
+"$BIN" add --skill never-stamped --machine "$H" --db "$RO_DB" >/dev/null
+commit_file "$RO_REPO" "Skill-log-Fix: $H#1"
+chmod 0444 "$RO_DB"
+(
+    cd "$RO_REPO" || exit 1
+    "$BIN" resolve-merged --db "$RO_DB" --quiet >/dev/null \
+        2>"$SCRATCH/readonly.err"
+)
+STATUS=$?
+chmod 0644 "$RO_DB"
+check "a write to a read-only store exits 1" "$STATUS" "1"
+check_contains "the read-only store is named" "$(cat "$SCRATCH/readonly.err")" \
+    "read-only store"
+check_absent "the read-only store leaks no SQL" \
+    "$(cat "$SCRATCH/readonly.err")" "sqlite3_exec"
+
 # ------------------------------------------------------------------ help
 
 run resolve-merged --help

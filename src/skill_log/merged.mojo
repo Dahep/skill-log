@@ -773,8 +773,10 @@ def handle_resolve_merged(args: List[String]) raises -> Outcome:
                     result,
                     options.quiet,
                 )
+                # The store classifies the failure and raises its named
+                # message (SPEC §3); this handler adds nothing to it.
                 return Outcome.fail_notes(
-                    "cannot resolve the log: " + String(e),
+                    String(e),
                     EXIT_FAILURE(),
                     notes,
                 )

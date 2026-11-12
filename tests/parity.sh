@@ -475,12 +475,19 @@ chmod 644 "$C9"
 # contention is exercised with a real second process (SPEC §9), so the
 # case holds the write lock for real and lets the bounded retry budget do
 # its work.
+#
+# The lock is held for three seconds — longer than the connection's
+# two-second busy timeout, so the wait inside SQLite cannot cover it.
+# The whole-attempt retry budget is five seconds, so the row lands: the
+# budget is what carries the write past the lock, and a two-second hold
+# would have ridden the busy timeout instead of proving it.
 say "parity: case 10 — a write survives a real second writer holding the lock"
 C10="$DBT/c10.db"
 "$BIN" add --skill lock-holder --db "$C10" >/dev/null
-# A second process holds the write lock for a moment. The lock is inside
-# the write budget, so the bounded retry lands the row.
-hold_lock "$C10" "$S/lock-ready" 2 &
+# A second process holds the write lock for longer than the connection's
+# busy timeout. The lock is inside the write budget, so the bounded
+# retry lands the row.
+hold_lock "$C10" "$S/lock-ready" 3 &
 LOCK_PID=$!
 wait_for "$S/lock-ready"
 run add --skill after-the-lock --db "$C10"

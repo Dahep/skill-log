@@ -301,10 +301,10 @@ def handle_add(args: List[String]) raises -> Outcome:
         result = write_invocation(path, row, clean)
     except e:
         # A refused store never reaches here: the refusal is a value, and
-        # only a genuine failure to write raises.
-        return Outcome.fail(
-            "cannot use the store: " + path + ": " + String(e), EXIT_FAILURE()
-        )
+        # only a genuine failure to write raises — with the store's own
+        # named message, already classified (SPEC §3). This handler
+        # adds nothing to it.
+        return Outcome.fail(String(e), EXIT_FAILURE())
 
     if result.refusal.refused():
         var failure = result.refusal.failure()

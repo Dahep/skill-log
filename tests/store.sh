@@ -313,6 +313,52 @@ check "a damaged store with a newline in its path is named" \
     "$(printf '%s' "$ERR" | grep -c 'damaged store')" "1"
 check_one_line "a newline in a path does not split the diagnostic" "$ERR"
 
+# --------------------------------------- the path cannot choose the kind
+#
+# ADR-0002 §8: the failure's kind is a value, never a word re-derived
+# from an error message — and the message a caller sees carries the
+# caller's path. So a path that contains "malformed" or "older" must not
+# turn an unrelated failure into that refusal.
+#
+# The case that proves it: the store file cannot be opened at all (it is
+# a directory), so SQLite reports `sqlite3_open('<path>') failed` — with
+# the path in the message. The kind is the generic operational failure,
+# whatever the path is called.
+for word in malformed older locked foreign newer; do
+    OPEN_DIR="$SCRATCH/openfail/$word/store.db"
+    mkdir -p "$OPEN_DIR/inside"
+    run add --skill x --db "$OPEN_DIR"
+    check "a path named $word cannot be opened: exits 1" "$STATUS" "1"
+    check_absent "a path named $word is not reported as damaged" \
+        "$ERR" "damaged store"
+    check_absent "a path named $word is not reported as older" \
+        "$ERR" "older store"
+    check_absent "a path named $word is not reported as foreign" \
+        "$ERR" "foreign store"
+    check_absent "a path named $word is not reported as locked" \
+        "$ERR" "locked store"
+    check_absent "a path named $word is not reported as newer" \
+        "$ERR" "newer store"
+    check_contains "a path named $word names the path" "$ERR" "$word"
+    check_one_line "a path named $word is one line" "$ERR"
+done
+
+# A file that cannot be opened is a store failure too, and the path it
+# carries does not decide which one.
+NOREAD_DIR="$SCRATCH/noread/malformed"
+mkdir -p "$NOREAD_DIR"
+printf 'not a database' >"$NOREAD_DIR/store.db"
+chmod 000 "$NOREAD_DIR/store.db"
+run show --db "$NOREAD_DIR/store.db"
+check "an unopenable store exits 1" "$STATUS" "1"
+check_absent "an unopenable store under a vocabulary path is not damage" \
+    "$ERR" "damaged store"
+check_absent "an unopenable store under a vocabulary path is not older" \
+    "$ERR" "older store"
+check_contains "an unopenable store names the path" "$ERR" "malformed"
+check_one_line "an unopenable store is one line" "$ERR"
+chmod 0644 "$NOREAD_DIR/store.db"
+
 # ----------------------------------------------------------- atomic write
 
 BEFORE="$(sqlite3 "$DB" 'select count(*) from invocations')"
@@ -324,6 +370,60 @@ check "a failed write exits 1" "$STATUS_LOCKED" "1"
 check "a failed write leaves no row behind" \
     "$(sqlite3 "$DB" 'select count(*) from invocations')" "$BEFORE"
 check_one_line "a failed write is one line" "$ERR"
+
+# ------------------------------------------------- the write path's names
+#
+# The read path has a taxonomy: damage is damage, a lock is a lock, and
+# anything else is the generic operational failure (SPEC §3). The write
+# path must have the same one — a raw SQLite message is not a name, and
+# `sqlite3_exec failed: PRAGMA user_version=1 -- attempt to write a
+# readonly database` leaks the engine's wording into the CLI's contract.
+#
+# The case is a store file with no write permission: the file is there,
+# the schema is right, and the write cannot happen. All three write
+# verbs must name it the same way, and none of them may print SQL.
+RODIR2="$SCRATCH/readonly-writes"
+rm -rf "$RODIR2"
+mkdir -p "$RODIR2"
+RO_DB2="$RODIR2/skills.db"
+run add --skill fixture --db "$RO_DB2"
+check "the read-only fixture is written" "$STATUS" "0"
+chmod 0444 "$RO_DB2"
+chmod 0555 "$RODIR2"
+
+run add --skill never-written --db "$RO_DB2"
+check "a write to a read-only store exits 1" "$STATUS" "1"
+check_contains "the read-only store is named" "$ERR" "read-only store"
+check_absent "the read-only store leaks no SQL" "$ERR" "sqlite3_exec"
+check_absent "the read-only store leaks no SQL rc" "$ERR" "sqlite3 rc="
+check_one_line "the read-only store's refusal is one line" "$ERR"
+
+run resolve --id 1 --fix abc1234 --db "$RO_DB2"
+check "a resolve against a read-only store exits 1" "$STATUS" "1"
+check_contains "the read-only store is named by resolve" "$ERR" \
+    "read-only store"
+check_absent "resolve leaks no SQL" "$ERR" "sqlite3_exec"
+
+chmod 0755 "$RODIR2"
+chmod 0644 "$RO_DB2"
+
+# A read-only store whose path carries the vocabulary is still a
+# read-only store: the write path's taxonomy does not read the path
+# either.
+RO_WORD_DIR="$SCRATCH/readonly-word/older"
+mkdir -p "$RO_WORD_DIR"
+run add --skill fixture --db "$RO_WORD_DIR/store.db"
+check "the vocabulary path fixture is written" "$STATUS" "0"
+chmod 0444 "$RO_WORD_DIR/store.db"
+run add --skill x --db "$RO_WORD_DIR/store.db"
+check "a read-only store under a vocabulary path exits 1" "$STATUS" "1"
+check_contains "the read-only store is still named as read-only" "$ERR" \
+    "read-only store"
+check_absent "the vocabulary path did not make it an older store" \
+    "$ERR" "older store"
+check_absent "the vocabulary path did not make it a damaged store" \
+    "$ERR" "damaged store"
+chmod 0644 "$RO_WORD_DIR/store.db"
 
 # ------------------------------------------------------------ precedence
 

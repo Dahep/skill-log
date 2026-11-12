@@ -18,22 +18,31 @@ again:
 
 The refusal vocabulary is ADR-0002's: a damaged file is *damaged*, a
 SQLite file that is not a skill-log store is *foreign*, a store written by
-the pre-ADR-0002 schema (the Python era) is *older*, a store stamped
-newer than this binary is *newer*, and a store another writer is holding
-is *locked*. Every one of them is one named line, and none of them is
-written to. The kind is a value (`Refusal`), never a word inside a
-message: a path the caller named can contain any word, so a refusal
-re-derived from message text would let the path choose the answer.
+the pre-ADR-0002 schema (the Python era) is *older*, and a store stamped
+newer than this binary is *newer*. Every one of them is one named line,
+and none of them is written to. The kind is a value (`Refusal`), never a
+word inside a message: a path the caller named can contain any word, so a
+refusal re-derived from message text would let the path choose the
+answer.
 
-The store classifies a SQLite failure too: damage is damage, a lock is a
-lock, and anything else is the generic operational failure. The handler
-renders that answer and never inspects a SQLite message itself
+The store classifies a SQLite failure too, on both paths: damage is
+damage, a lock is a lock, a file that cannot be written is read-only,
+and anything else is the generic operational failure. The read path's
+classifier is `read_failure`; the write path's is `write_failure`. The
+handler renders that answer and never inspects a SQLite message itself
 (SPEC §3).
+
+Both classifiers look at the engine's own wording only: the caller's
+path is stripped from the message first, because the binding puts the
+path it was given into that wording and a path can carry any word in the
+vocabulary.
 
 The write path follows the reference: one transaction covers the
 invocation row and every problem row, and a BUSY/LOCKED failure is retried
 as a whole attempt inside a small wall-clock budget, because the store is
-written by concurrent skill runs.
+written by concurrent skill runs. A lock is therefore *not* a refusal: a
+refusal is final, and a lock is retryable. The budget is spent only when
+the lock outlives it, and then the failure is named as the lock it was.
 """
 
 from std.ffi import OwnedDLHandle, RTLD
@@ -227,6 +236,65 @@ def locked_failure(path: String) -> Failure:
     )
 
 
+def read_only_failure(path: String) -> Failure:
+    """The named failure for a store file the writer may not write.
+
+    The file is there and the schema is right, but the bytes cannot
+    change: the file carries no write permission, or the directory it
+    lives in does. That is a fact about the store, so it is named as
+    one — and it is named apart from the generic operational failure,
+    because "your store file is read-only" says what to do and
+    "sqlite3_exec failed: … attempt to write a readonly database" does
+    not.
+    """
+    return operational_failure(
+        "read-only store: " + path + " cannot be written to"
+    )
+
+
+def is_read_only(message: String) -> Bool:
+    """True when a SQLite error means the file could not be written.
+
+    SQLite says the same thing in a few wordings — "attempt to write a
+    readonly database" and "attempt to write a read-only database" — and
+    only the wording that names the file's writability counts. A disk
+    error is not one of them.
+    """
+    var text = message.lower()
+    return (
+        text.find("readonly database") != -1
+        or text.find("read-only database") != -1
+        or text.find("attempt to write a readonly") != -1
+        or text.find("attempt to write a read-only") != -1
+    )
+
+
+def strip_path(message: String, path: String) -> String:
+    """`message` with the store's own path removed.
+
+    The binding puts the path it was given into its own wording, so a
+    message carries the caller's path — and a path can contain any word
+    the taxonomy uses. The classification is made on what the binding
+    appended *after* the path, never on the path itself.
+
+    The path is removed wherever it appears, and the remainder keeps its
+    order, so the classification sees only the engine's own wording.
+    """
+    if path == "":
+        return message
+    var at = message.find(path)
+    if at < 0:
+        return message
+    var out = String("")
+    var start = 0
+    while at >= 0:
+        out += String(message[byte=start:at])
+        start = at + path.byte_length()
+        at = message.find(path, start)
+    out += String(message[byte=start:])
+    return out
+
+
 def read_failure(path: String, message: String) -> Failure:
     """The named failure for a SQLite error on the read path.
 
@@ -234,12 +302,60 @@ def read_failure(path: String, message: String) -> Failure:
     a handler never inspects a SQLite message itself (SPEC §3). Damage
     is damage, a lock is a lock, and anything else is the generic
     operational failure.
+
+    The classification is made on the message *without* the caller's
+    path: the binding puts the path it was given into its own wording,
+    and a path can carry any word in the vocabulary. The generic answer
+    keeps the whole message, because there the engine's own words are
+    the only thing known.
     """
-    if is_corruption(message):
+    var detail = strip_path(message, path)
+    if is_corruption(detail):
         return damaged_failure(path)
-    if is_busy(message):
+    if is_busy(detail):
         return locked_failure(path)
     return operational_failure("cannot read the store: " + path + ": " + message)
+
+
+def write_failure(path: String, message: String) -> Failure:
+    """The named failure for a SQLite error on the write path.
+
+    The same taxonomy the read path has (SPEC §3), because a write
+    meets the same four facts: the file is damaged, another writer holds
+    it, the file cannot be written at all, or the write failed for some
+    other reason. The generic answer carries the engine's own words,
+    because nothing better is known — but the named ones do not, so a
+    caller never has to read SQLite's wording to learn what happened.
+
+    A path the caller named can carry any word in the vocabulary, so the
+    classification is made on the message the binding appended *after*
+    the path; the path itself is stripped first (see `strip_path`).
+    """
+    var detail = strip_path(message, path)
+    if is_corruption(detail):
+        return damaged_failure(path)
+    if is_busy(detail):
+        return locked_failure(path)
+    if is_read_only(detail):
+        return read_only_failure(path)
+    return operational_failure(
+        "cannot write the store: " + path + ": " + message
+    )
+
+
+def raise_write_failure(path: String, message: String) raises:
+    """Raise the named failure for a write error.
+
+    The store classifies and the handler renders (SPEC §3), but the
+    handler's only seam is the raised error's text. So the store
+    classifies here and raises the *named* message: the handler never
+    sees SQLite's wording, and the taxonomy lives in one place.
+
+    Nothing is raised when the failure is a busy one and the budget is
+    not over — the caller retries that before it gets here.
+    """
+    var failure = write_failure(path, message)
+    raise Error(failure.message)
 
 
 def older_failure(path: String) -> Failure:
@@ -267,12 +383,17 @@ def version_failure(path: String, found: Int) -> Failure:
 
 # The refusal kinds, one value per named refusal. A caller compares the
 # kind; it never reads the prose back to find out which one it got.
+#
+# A lock is deliberately *not* one of them: a refusal is final, and a
+# lock is retryable. The write path retries a busy failure inside its
+# budget and names it as a lock only when the budget is spent
+# (`write_failure`), so the refusal kinds stay the ones that end the
+# conversation.
 comptime REFUSAL_NONE = 0
 comptime REFUSAL_DAMAGED = 1
 comptime REFUSAL_FOREIGN = 2
 comptime REFUSAL_OLDER = 3
 comptime REFUSAL_NEWER = 4
-comptime REFUSAL_LOCKED = 5
 
 
 struct Refusal(Movable):
@@ -316,8 +437,6 @@ struct Refusal(Movable):
             return older_failure(self.path)
         if self.kind == REFUSAL_NEWER:
             return version_failure(self.path, self.found)
-        if self.kind == REFUSAL_LOCKED:
-            return locked_failure(self.path)
         return operational_failure("cannot use the store: " + self.path)
 
 
@@ -517,7 +636,7 @@ struct StoreOpen(Movable):
         self.refusal = Refusal()
 
 
-def schema_refusal(db: Database, existed: Bool) raises -> Refusal:
+def schema_refusal(db: Database, existed: Bool, path: String) raises -> Refusal:
     """What, if anything, is wrong with this file's schema.
 
     A refusal is an answer about the file, so it is returned rather than
@@ -527,7 +646,9 @@ def schema_refusal(db: Database, existed: Bool) raises -> Refusal:
     only an *existing* file that already holds something else is foreign.
 
     The path is filled in by the caller, which is the only place that
-    knows it.
+    knows it. It is also the path the damage check strips before it
+    classifies: the binding puts the path it was given into its own
+    wording, and a path can carry any word in the vocabulary.
     """
     try:
         if is_older_store(db):
@@ -551,7 +672,7 @@ def schema_refusal(db: Database, existed: Bool) raises -> Refusal:
                 return Refusal(REFUSAL_NEWER, "", found)
         return Refusal()
     except e:
-        if is_corruption(String(e)):
+        if is_corruption(strip_path(String(e), path)):
             return Refusal(REFUSAL_DAMAGED, "", 0)
         raise
 
@@ -596,7 +717,7 @@ def open_read(path: String) raises -> StoreOpen:
 
     # The schema check comes before the version check: a file that is
     # not a skill-log store is foreign whatever its stamp says.
-    var refusal = schema_refusal(db, True)
+    var refusal = schema_refusal(db, True, path)
     if refusal.refused():
         refusal.path = path
         opened.refusal = refusal^
@@ -638,7 +759,7 @@ def open_write(path: String) raises -> StoreOpen:
     # refusal is final, so it may only follow a read that waited.
     db.execute("PRAGMA busy_timeout=" + String(WRITE_BUSY_TIMEOUT))
 
-    var refusal = schema_refusal(db, existed)
+    var refusal = schema_refusal(db, existed, path)
     if refusal.refused():
         refusal.path = path
         opened.refusal = refusal^
@@ -661,16 +782,11 @@ def open_write(path: String) raises -> StoreOpen:
     apply_write_pragmas(db, WRITE_BUSY_TIMEOUT)
 
     # Stamping the version is the first write to the file. Another
-    # writer holding the lock makes it fail, and a lock is a named
-    # refusal (SPEC §3: the store classifies, the CLI renders).
-    try:
-        stamp_version(db)
-    except e:
-        var message = String(e)
-        if is_busy(message):
-            opened.refusal = Refusal(REFUSAL_LOCKED, path, 0)
-            return opened^
-        raise
+    # writer holding the lock makes it fail, and the failure must
+    # *raise*: a lock is retryable, and a refusal is terminal, so
+    # turning a busy error into a refusal here would end the write
+    # path's retry budget before it began (SPEC §3).
+    stamp_version(db)
     opened.db = db^
     return opened^
 
@@ -1147,11 +1263,16 @@ def write_invocation(
             return write_attempt(path, row, problems)
         except e:
             var message = String(e)
-            if not is_busy(message):
-                raise
+            var detail = strip_path(message, path)
+            if not is_busy(detail):
+                # Not a lock: the store classifies it and the named
+                # failure is what leaves this function.
+                raise_write_failure(path, message)
             var remaining = deadline - now_seconds()
             if remaining <= 0:
-                raise
+                # The budget is spent. The failure is a lock, and the
+                # store names it as one.
+                raise_write_failure(path, message)
             sleep(min(Float64(WRITE_RETRY_SLEEP), remaining))
 
 
@@ -1311,11 +1432,16 @@ def resolve_row(
             return stamp_attempt(path, id, fix)
         except e:
             var message = String(e)
-            if not is_busy(message):
-                raise
+            var detail = strip_path(message, path)
+            if not is_busy(detail):
+                # Not a lock: the store classifies it and the named
+                # failure is what leaves this function.
+                raise_write_failure(path, message)
             var remaining = deadline - now_seconds()
             if remaining <= 0:
-                raise
+                # The budget is spent. The failure is a lock, and the
+                # store names it as one.
+                raise_write_failure(path, message)
             sleep(min(Float64(WRITE_RETRY_SLEEP), remaining))
 
 
@@ -1664,11 +1790,16 @@ def resolve_merged_rows(
             return merged_write_attempt(path, located, local_host)
         except e:
             var message = String(e)
-            if not is_busy(message):
-                raise
+            var detail = strip_path(message, path)
+            if not is_busy(detail):
+                # Not a lock: the store classifies it and the named
+                # failure is what leaves this function.
+                raise_write_failure(path, message)
             var remaining = deadline - now_seconds()
             if remaining <= 0:
-                raise
+                # The budget is spent. The failure is a lock, and the
+                # store names it as one.
+                raise_write_failure(path, message)
             sleep(min(Float64(WRITE_RETRY_SLEEP), remaining))
 
 
