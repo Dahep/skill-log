@@ -1,5 +1,13 @@
 # Spike: bundled `libsqlite3.so.0` resolves through the binary's `$ORIGIN` rpath
 
+> **Historical record.** This spike answers the Mojo-era question — can a
+> bundled `libsqlite3.so.0` be resolved through an `$ORIGIN` rpath? — and its
+> answer was yes. The project moved to a Go binary with a pure-Go SQLite
+> driver ([ADR-0004](../adr/0004-go-binary-and-pure-go-sqlite.md)), so the
+> question no longer arises: there is no bundled library and no rpath. This
+> file is kept as the record of what was tried and why, not as a description
+> of the current build.
+
 **Ticket:** [#4](https://github.com/Dahep/skill-log/issues/4)
 **Feeds:** [#3](https://github.com/Dahep/skill-log/issues/3)
 **Date:** 2026-11-11

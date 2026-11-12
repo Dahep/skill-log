@@ -16,16 +16,21 @@ lives in `CONTEXT.md`; design decisions in `docs/adr/`.
 
 ## Build and test
 
-- `scripts/build.sh` — the release-shaped artifact: `dist/skill-log` plus
-  `dist/lib/`, rpath `$ORIGIN/lib`, the version baked in. Needs `mise` (the
-  Mojo pin in `mise.toml`), `patchelf`, and a system `libsqlite3.so.0` to
-  bundle.
+- `scripts/build.sh` — the release-shaped artifact: `dist/skill-log`, one
+  statically linked executable, the version baked in with `-ldflags -X`. The
+  build is `CGO_ENABLED=0 go build`, so it needs `mise` (the Go pin in
+  `mise.toml`) and nothing else: no C toolchain, no `patchelf`, and no
+  system SQLite, because the SQLite implementation is pure Go and lives
+  inside the executable.
 - `scripts/test.sh` — the suites under `tests/`, against `dist/`.
   `--build` rebuilds first. Each suite also runs on its own.
   `tests/packaging.sh` is the one suite the default gate leaves out: it needs
   docker, so it runs on CI and on demand, not in the offline gate.
-  `tests/sqlite.sh` builds the artifact against the pinned release SQLite and
-  skips when that library is not on the machine.
+- The port is in progress: `scripts/package.sh`, `tests/packaging.sh`,
+  `tests/smoke.sh` and `tests/sqlite.sh` are still the Mojo-era
+  implementations, and the `setup` and `resolve-merged` verbs are not in the
+  binary yet. A suite that fails on a missing `dist/lib/` or on an
+  un-registered verb is reporting an unfinished port, not a broken gate.
 - The suites are black-box: they run the binary as a process with a scratch
   HOME and a scratch store. `tests/lib.sh` holds the shared assertions —
   `check`, `check_contains`, `check_absent`, `check_one_line`, `tally`, and
@@ -34,6 +39,11 @@ lives in `CONTEXT.md`; design decisions in `docs/adr/`.
   value the writer escapes, so both prove less than they look like they do.
 - `bwrap` (sandbox checks) and `script` (the terminal case) are optional; a
   missing one prints a `skip` line rather than pretending it ran.
+- The source layout: `cmd/skill-log` is the entry point, `internal/cli` holds
+  the verbs, the dispatch and the help, and `internal/` holds `store`,
+  `settings`, `document`, `format`, `marker`, `process` and `assets`.
+  `reference/` is the verbatim report-era Python implementation, kept as the
+  parity ground truth: it is never built, never staged and never shipped.
 
 ## Agent skills
 

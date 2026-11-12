@@ -591,58 +591,60 @@ session decides how the log gets read. Neither changes the other's contract.
 
 ## 8. Distribution and build
 
-- **Language**: Mojo 1.2, toolchain pinned as a mise tool (`pypi:mojo@1.2.0`),
-  locked in `mise.toml`.
-- **Storage**: SQLite through `ehsanmok/sqlite` v0.2.2 (MIT), vendored as
-  `vendor/sqlite/ffi.mojo` + `db.mojo` with the upstream commit and license
-  recorded. No ORM layer, no `morph`, no live dependency. Upgrades are a
-  deliberate copy-forward.
-- **SQLite floor**: the bundled library is the pinned jammy
-  `libsqlite3-0_3.37.2-2ubuntu0.8_amd64.deb`, so the tool's SQL stays inside
-  what SQLite 3.37 has. In particular the epoch seconds come from
-  `strftime('%s', ...)`: `unixepoch()` was added in 3.38 and the release does
-  not bundle it. `tests/sqlite.sh` runs the artifact against the pinned
-  library, so a query the release cannot answer fails the gate.
+- **Language**: Go. The module is `github.com/Dahep/skill-log`; the
+  toolchain is pinned as a mise tool and locked in `mise.toml`. The module
+  targets the Go version named in `go.mod`.
+- **Storage**: SQLite through `modernc.org/sqlite`, a pure-Go driver. No cgo,
+  no C toolchain, no vendored copy and no live dependency: the module
+  versions are pinned in `go.mod` and `go.sum`, and an upgrade is a
+  deliberate `go get`.
+- **The SQLite implementation is compiled into the binary.** There is no
+  system SQLite to find, no library to bundle and no loader path to get
+  wrong. The tool's SQL stays inside the ordinary SQLite subset the driver
+  implements: where a row's stamp is turned into epoch seconds it is
+  `strftime('%s', ...)`, which SQLite 3.37 has, rather than `unixepoch()`,
+  which 3.38 added.
 - **Artifact**: one release archive, installable with mise's `github:` backend:
 
   ```
   skill-log-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz
-  ├── skill-log            # patchelf --set-rpath '$ORIGIN/lib'
-  └── lib/
-      ├── libKGENCompilerRTShared.so
-      ├── libMSupportGlobals.so
-      ├── libAsyncRTRuntimeGlobals.so
-      └── libsqlite3.so.0
+  ├── skill-log            # one statically linked executable
+  ├── LICENSE
+  └── THIRD_PARTY_NOTICES.md
   ```
 
+  The executable is built with `CGO_ENABLED=0`, so it carries no dynamic
+  dependency at all: no `lib/` directory, no rpath and no runtime libraries.
+  The archive holds the binary and the licence and notice files, and
+  nothing else — never `reference/`, `tests/` or the source tree.
+
 - **Versioning**: semantic versioning, release tag `vX.Y.Z`; `--version` is
-  baked in at build time from the tag.
-- **Platform**: `x86_64-unknown-linux-gnu` only for 1.0. glibc floor is the
-  release runner's; no musl or static build is possible through `mojo build`.
-- The bundled `libsqlite3.so.0` is built or fetched against the release
-  runner's glibc, never taken from a development machine. It must resolve
-  through the executable's `$ORIGIN` rpath with no toolchain, no
-  `$CONDA_PREFIX` and no system SQLite ([spike #4](https://github.com/Dahep/skill-log/issues/4)).
-  If it does not, the vendored binding carries an `$ORIGIN`-relative probe and
-  [ADR-0001](docs/adr/0001-mojo-binary-and-sqlite.md) is amended.
-- The binary must load the bundled copy, and must translate a load failure into
-  one named stderr line and exit 1 — never a Mojo traceback.
-- **Release workflow**: tag-triggered; install the pinned toolchain, `mojo
-  build -I vendor`, `patchelf`, `tar czf`, sha256, create the release, upload,
-  attach a provenance attestation.
+  baked in at build time from the tag with
+  `-ldflags "-X github.com/Dahep/skill-log/internal/cli.version=$VERSION"`.
+  The build takes the version from `SKILL_LOG_VERSION`, else
+  `git describe --tags`, else `0.0.0-dev`; it is never written into the
+  checkout.
+- **Platform**: `x86_64-unknown-linux-gnu` only for 1.0. The artifact is
+  static, so it carries no glibc floor from a bundled library; the Go
+  runtime's own requirements are the only floor.
+- The binary must run on a machine with no Go toolchain and no system
+  SQLite, and must translate any storage failure into one named stderr line
+  and exit 1 — never a Go panic or stack trace.
+- **Release workflow**: tag-triggered; install the pinned toolchain, build
+  with `CGO_ENABLED=0 go build`, `tar czf`, sha256, create the release,
+  upload, attach a provenance attestation.
 - **Deliverables**: the binary, the two bundled skills, and a short operator
   guide. Consumer integration instructions are documentation, not code.
 - **Hand-written infrastructure** (the ecosystem does not provide it):
-  subcommand dispatch; the writer's clock, read through SQLite's own `now` and
-  the hostname through libc `gethostname`; the JSON writer (the tool writes
-  JSON and never parses it); marker and report parsing; the read-only SQLite
-  reader for another tool's store. Process execution is not hand-written:
-  git is run through the standard library's `std.subprocess`.
-  [ADR-0001](docs/adr/0001-mojo-binary-and-sqlite.md) records why.
+  subcommand dispatch; the help renderer; the JSON writer (the tool writes
+  JSON and never parses it); marker and report parsing; the resolution plan.
+  The clock, the hostname, the process runner and the SQLite driver are
+  standard-library or module calls, not obligations.
+  [ADR-0004](docs/adr/0004-go-binary-and-pure-go-sqlite.md) records why.
 
 ### Migration
 
-- The Python implementation stays the reference until the Mojo binary passes
+- The Python implementation stays the reference until the Go binary passes
   the parity harness (§9).
 - The store is not inherited: 1.0 creates its own on first write. Moving a
   machine's existing rows is a machine-setup task
@@ -665,11 +667,11 @@ session decides how the log gets read. Neither changes the other's contract.
 - **Write contention** is exercised with a real second process holding a write
   lock, not another injection variable. The bounded retry budget is what the
   case asserts.
-- **The artifact runs against the SQLite it ships.** The default gate builds
-  against the machine's own SQLite, which is newer than the release's pinned
-  one, so `tests/sqlite.sh` builds the artifact against the pinned library and
-  runs the write, read and resolve paths against it. A query the release cannot
-  answer fails the gate.
+- **The artifact is self-contained.** The build is `CGO_ENABLED=0 go build`,
+  so the executable links no SQLite library and no other shared object: there
+  is no system SQLite to be found and no bundled copy to be the right one.
+  The write, read and resolve paths all run against the driver compiled into
+  the binary, so a query the release cannot answer fails the gate.
 - **Coverage that the contract names**: the store matrix (absent, empty,
   damaged, foreign, older, newer) per verb; an adapter off by default;
   flag-over-adapter precedence; repo and worktree inside, outside and across
@@ -680,7 +682,9 @@ session decides how the log gets read. Neither changes the other's contract.
   in the hook; a time guard across differing writer offsets.
 - **Packaging test**: install the release archive into a clean container with
   no toolchain and no system SQLite, run `--version` and `setup --dry-run`,
-  and assert the bundled SQLite is the one loaded.
+  and assert the artifact is statically linked — the loader has no dynamic
+  dependency to resolve, so there is no bundled copy that could be the wrong
+  one.
 - **Parity gate**: the reference implementation's harness cases run against
   the installed binary, with the intentionally changed commands adapted and
   case names kept comparable, plus the cases the new contract needs.
