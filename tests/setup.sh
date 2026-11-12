@@ -208,6 +208,36 @@ else
     fail "check: the unmarked hook is left byte-for-byte alone"
 fi
 
+# drift: the hook is not executable. Git skips a hook it cannot run, so
+# the merged reports stop resolving — silently. The executable bit is
+# part of the hook's install, and --check sees it.
+#
+# The hook is installed first: the case before this one stripped the
+# ownership marker, and an unmarked hook is refused by name.
+rm -f "$HOOK"
+run setup --repo "$TMP/r1"
+chmod 0644 "$HOOK"
+run setup --repo "$TMP/r1" --check
+check "check: a non-executable hook exits 1" "$STATUS" "1"
+check "check: a non-executable hook is drift" \
+    "$(status_of "$OUT" hook)" "drift"
+check_contains "check: the drift names the executable bit" \
+    "$(detail_of "$OUT" hook)" "not executable"
+check "check: the non-executable hook is not rewritten" \
+    "$([ -x "$HOOK" ] && echo yes || echo no)" "no"
+
+# A normal run repairs the mode, and says it did.
+run setup --repo "$TMP/r1"
+check "a non-executable hook: the run exits 0" "$STATUS" "0"
+check "a non-executable hook: the mode is repaired" \
+    "$([ -x "$HOOK" ] && echo yes || echo no)" "yes"
+check "a non-executable hook: the verdict is updated" \
+    "$(status_of "$OUT" hook)" "updated"
+check_contains "a non-executable hook: the detail names the path" \
+    "$(detail_of "$OUT" hook)" "$HOOK"
+run setup --repo "$TMP/r1" --check
+check "check: a repaired hook is green" "$STATUS" "0"
+
 # drift: the report directory is missing.
 run setup --repo "$TMP/r1"
 rm -rf "$TMP/r1/.skill-log"

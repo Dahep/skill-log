@@ -66,7 +66,13 @@ from skill_log.context import hostname
 from skill_log.detect import git_common_dir, git_toplevel, git_toplevel_of
 from skill_log.document import is_vendored
 from skill_log.errors import EXIT_FAILURE, EXIT_USAGE, Outcome
-from skill_log.files import read_text, write_text, write_text_mode
+from skill_log.files import (
+    is_executable,
+    read_text,
+    set_executable,
+    write_text,
+    write_text_mode,
+)
 from skill_log.flags import take_value
 from skill_log.json import json_string
 from skill_log.report import (
@@ -369,6 +375,30 @@ def hook_verdict(common: String, options: Options) raises -> Verdict:
                 + " carries no ownership marker",
             )
         if text == wanted:
+            # The bytes are right, but git runs a hook only when it is
+            # executable — and it says nothing when it is not, so the
+            # merged reports would stop resolving silently. The
+            # executable bit is part of the install.
+            if not is_executable(path):
+                if options.check:
+                    return Verdict(
+                        ARTIFACT_HOOK,
+                        STATUS_DRIFT,
+                        "the post-merge hook at "
+                        + path
+                        + " is not executable (git skips a hook it"
+                        + " cannot run)",
+                    )
+                if options.dry_run:
+                    return Verdict(
+                        ARTIFACT_HOOK,
+                        STATUS_UPDATED,
+                        "would make " + path + " executable",
+                    )
+                set_executable(path)
+                return Verdict(
+                    ARTIFACT_HOOK, STATUS_UPDATED, "made " + path + " executable"
+                )
             return Verdict(ARTIFACT_HOOK, STATUS_UNCHANGED, path)
         if options.check:
             return Verdict(

@@ -29,6 +29,7 @@ must come out executable.
 
 from std.ffi import CStringSpan, OwnedDLHandle, RTLD, c_char
 from std.memory import Pointer
+from std.os import stat
 from std.pathlib import Path
 from std.time import monotonic
 
@@ -149,6 +150,42 @@ def resolve_path(path: String) -> String:
 def write_text(path: String, text: String) raises:
     """Replace `path` with `text`, atomically, at the report mode 0600."""
     write_text_mode(path, text, FILE_MODE)
+
+
+def is_executable(path: String) -> Bool:
+    """True when `path` carries an execute bit for somebody.
+
+    A git hook is run only when it is executable, and git says nothing
+    when it is not — the hook simply never fires. So the bit is part of
+    the install, and a file that lost it is broken even though its
+    bytes are right.
+
+    A file that cannot be stat'ed is not executable: the caller is
+    asking about a hook it should have written, and "no" is the safe
+    answer.
+    """
+    try:
+        var info = stat(path)
+        return (info.st_mode & 0o111) != 0
+    except:
+        return False
+
+
+def set_executable(path: String) raises:
+    """Give `path` the execute bits, leaving its other permissions alone.
+
+    `chmod` with the execute bits added to the file's own mode: the
+    hook keeps the permissions it had and gains the bit git needs.
+    """
+    var lib = OwnedDLHandle("libc.so.6", RTLD.NOW)
+    var chmod_fn = dl_sym[def(Int, Int) thin abi("C") -> Int](lib, "chmod")
+    var info = stat(path)
+    var mode = info.st_mode | 0o111
+    var buffer = c_string(path)
+    var rc = chmod_fn(Int(buffer.unsafe_ptr()), mode)
+    _ = buffer^
+    if rc != 0:
+        raise Error("cannot make " + path + " executable")
 
 
 def write_text_mode(path: String, text: String, mode: Int) raises:
