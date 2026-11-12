@@ -53,9 +53,8 @@ exits 1. A read never creates the store, the state directory or an empty
 database.
 """
 
-from std.os import getenv
-
 from skill_log.errors import EXIT_FAILURE, EXIT_USAGE, Outcome
+from skill_log.flags import take_value
 from skill_log.render import render_row_json
 from skill_log.store import (
     DEFAULT_LIMIT,
@@ -69,6 +68,7 @@ from skill_log.store import (
     read_invocations,
     resolve_db,
 )
+from skill_log.table import join_lines, pad, shorten_home
 from skill_log.text import sanitize
 
 # The ends of the `--last` range. The upper bound keeps one call from
@@ -236,45 +236,31 @@ def parse_options(args: List[String]) raises -> Options:
     while i < len(args):
         var arg = args[i]
         if arg == "--skill":
-            i += 1
-            if i >= len(args):
-                raise Error("usage: --skill needs a name")
-            options.skill = String(args[i])
+            options.skill = take_value(args, i, "--skill", "a name")
             options.given_skill = True
+            i += 1
         elif arg == "--machine":
-            i += 1
-            if i >= len(args):
-                raise Error("usage: --machine needs a name")
-            options.machine = String(args[i])
+            options.machine = take_value(args, i, "--machine", "a name")
             options.given_machine = True
+            i += 1
         elif arg == "--harness":
-            i += 1
-            if i >= len(args):
-                raise Error("usage: --harness needs a name")
-            options.harness = String(args[i])
+            options.harness = take_value(args, i, "--harness", "a name")
             options.given_harness = True
+            i += 1
         elif arg == "--repo":
-            i += 1
-            if i >= len(args):
-                raise Error("usage: --repo needs a name")
-            options.repo = String(args[i])
+            options.repo = take_value(args, i, "--repo", "a name")
             options.given_repo = True
+            i += 1
         elif arg == "--run":
-            i += 1
-            if i >= len(args):
-                raise Error("usage: --run needs an id")
-            options.run = String(args[i])
+            options.run = take_value(args, i, "--run", "an id")
             options.given_run = True
+            i += 1
         elif arg == "--db":
+            options.db = take_value(args, i, "--db", "a path")
             i += 1
-            if i >= len(args):
-                raise Error("usage: --db needs a path")
-            options.db = String(args[i])
         elif arg == "--last":
+            options.last = parse_last(take_value(args, i, "--last", "a number"))
             i += 1
-            if i >= len(args):
-                raise Error("usage: --last needs a number")
-            options.last = parse_last(String(args[i]))
         elif arg == "--unresolved":
             options.unresolved = True
         elif arg == "--json":
@@ -332,45 +318,6 @@ def empty_message(filters: Filters) -> String:
     return out
 
 
-def home_prefix() -> String:
-    """The home directory with a trailing separator, or an empty string.
-
-    An empty home yields an empty prefix, so no path is ever shortened
-    against a home the machine does not have.
-    """
-    var home = getenv("HOME", "")
-    if home == "":
-        return ""
-    if home.endswith("/"):
-        return home
-    return home + "/"
-
-
-def shorten(path: String) -> String:
-    """The path with the home directory replaced by `~`.
-
-    A path outside the home is returned unchanged. The home is the one
-    the reader's own environment names, so the same row reads the same
-    way for every reader on the machine.
-    """
-    var home = home_prefix()
-    if home == "":
-        return path
-    if path.startswith(home):
-        return "~/" + String(path[byte=home.byte_length():])
-    return path
-
-
-def render_json(row: Invocation) -> String:
-    """One row as a flat JSON object.
-
-    The shape is the one `add --json` writes, so a consumer that reads
-    one of them reads the other: every ADR-0002 column is flat, plus the
-    marker and the problems array, in a fixed key order.
-    """
-    return render_row_json(row)
-
-
 # The table's columns, in the order they are printed. Each one is the
 # row's own field, rendered for a person.
 #
@@ -422,7 +369,7 @@ def cell(row: Invocation, column: String) -> String:
     if column == "repo":
         return sanitize(row.repo)
     if column == "worktree":
-        return shorten(sanitize(row.worktree))
+        return shorten_home(sanitize(row.worktree))
     if column == "project":
         return sanitize(row.project)
     if column == "t3_thread":
@@ -452,18 +399,6 @@ def table_widths(rows: List[Invocation]) -> List[Int]:
             if text.count_codepoints() > widths[c]:
                 widths[c] = text.count_codepoints()
     return widths^
-
-
-def pad(text: String, width: Int) -> String:
-    """The text, padded to the column's width.
-
-    The last column is not padded: trailing spaces are noise at the end
-    of a line.
-    """
-    var out = text
-    while out.count_codepoints() < width:
-        out += " "
-    return out
 
 
 def render_table(rows: List[Invocation]) -> String:
@@ -499,23 +434,13 @@ def render_table(rows: List[Invocation]) -> String:
                 line += pad(cell(rows[r], headers[c]), widths[c])
         # Empty columns in the middle of the row still pad, so the right
         # edge is trimmed: trailing spaces are noise no reader needs.
-        lines.append(String(line.strip()))
+        lines.append(String(line.rstrip()))
         for p in range(len(rows[r].problems)):
             lines.append(
                 "    problem " + String(p + 1) + ": " + rows[r].problems[p]
             )
 
     return join_lines(lines)
-
-
-def join_lines(lines: List[String]) -> String:
-    """The lines, separated by newlines, with no trailing newline."""
-    var out = ""
-    for i in range(len(lines)):
-        if i > 0:
-            out += "\n"
-        out += lines[i]
-    return out
 
 
 def handle_show(args: List[String]) raises -> Outcome:
@@ -588,7 +513,7 @@ def handle_show(args: List[String]) raises -> Outcome:
     if options.json:
         var lines = List[String]()
         for i in range(len(rows)):
-            lines.append(render_json(rows[i]))
+            lines.append(render_row_json(rows[i]))
         return Outcome.ok(join_lines(lines))
 
     return Outcome.ok(render_table(rows))

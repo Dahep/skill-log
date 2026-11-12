@@ -37,6 +37,7 @@ from skill_log.adapters import apply_adapters, enabled_adapters
 from skill_log.context import hostname, preview_timestamp
 from skill_log.detect import detect_repo, detect_worktree, env_or_empty
 from skill_log.errors import EXIT_FAILURE, EXIT_USAGE, Outcome
+from skill_log.flags import take_value
 from skill_log.render import render_row_json
 from skill_log.stdin import read_stdin_line, stdin_is_tty
 from skill_log.store import Invocation, WriteResult, resolve_db, write_invocation
@@ -78,21 +79,6 @@ struct Options(Movable):
         self.t3_thread = ""
         self.machine = ""
         self.adapters = List[String]()
-
-
-def take_value(
-    args: List[String], at: Int, flag: String, what: String
-) raises -> String:
-    """The value of `flag`, which sits at `at + 1`.
-
-    Every value-taking flag reads its value through this one function, so
-    a flag added later is two lines and cannot forget the missing-value
-    check or invent its own wording for it.
-    """
-    var next = at + 1
-    if next >= len(args):
-        raise Error("usage: " + flag + " needs " + what)
-    return String(args[next])
 
 
 def parse_options(args: List[String]) raises -> Options:

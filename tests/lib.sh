@@ -103,6 +103,22 @@ print(problems[0] if problems else "")
 '
 }
 
+# json_number <json> <key>: one top-level numeric field, as %g.
+#
+# Numbers are read through a real parser too, and printed in the same
+# compact form every case expects: 1.5, 0, 1.33.
+json_number() {
+    printf '%s' "$1" | python3 -c '
+import json, sys
+key = sys.argv[1]
+try:
+    value = json.loads(sys.stdin.read()).get(key)
+except Exception:
+    value = None
+print("" if value is None else "%g" % value)
+' "$2"
+}
+
 # json_keys <json>: the object's keys, sorted, space-separated.
 json_keys() {
     printf '%s' "$1" | python3 -c '

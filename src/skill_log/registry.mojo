@@ -27,6 +27,13 @@ from skill_log.show import (
     show_usage,
     show_value_flags,
 )
+from skill_log.stats import (
+    handle_stats,
+    stats_examples,
+    stats_notes,
+    stats_usage,
+    stats_value_flags,
+)
 from skill_log.verb import Verb
 from skill_log.version import version
 
@@ -128,6 +135,18 @@ def build_verbs() raises -> List[Verb]:
             show_notes(),
         )
     )
+    # The verb's own text lives with its handler, as show's does.
+    verbs.append(
+        Verb(
+            "stats",
+            "count invocations, problems and the friction rate per cut",
+            stats_usage(),
+            stats_examples(),
+            stats_value_flags(),
+            stats_notes(),
+        )
+    )
+
     var version_examples = List[String]()
     version_examples.append("skill-log --version")
     version_examples.append("skill-log --help")
@@ -163,6 +182,7 @@ def build_handlers() raises -> List[type_of(handle_version)]:
     var handlers = List[type_of(handle_version)]()
     handlers.append(handle_add)
     handlers.append(handle_show)
+    handlers.append(handle_stats)
     handlers.append(handle_version)
     handlers.append(handle_help)
     return handlers^
