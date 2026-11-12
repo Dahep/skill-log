@@ -11,10 +11,10 @@ in the dotfiles repo (`bin/skill-log`) is the reference for behavior.
 
 ## What it is
 
-Agent skills end a run by writing one row: when, which skill, model, project,
-threads, worktree, and machine. Problems ride as separate rows attached to the
-invocation, so a clean run still counts as a denominator and
-problems-per-invocation stays measurable.
+Agent skills end a run by writing one row: when, which skill, harness, session,
+parent, model, repo, worktree, project, and machine. Problems ride as separate
+rows attached to the invocation, so a clean run still counts as a denominator
+and problems-per-invocation stays measurable.
 
 The store is one SQLite file under the XDG state directory. There is no
 daemon and no network: one store per machine, and rows carry the machine that
@@ -26,8 +26,8 @@ post-merge hook stamps the resolved rows, so the log records when and where
 the friction closed.
 
 A bundled `skill-friction-review` skill reads the log and decides what to fix;
-it never marks a row resolved itself. CONTEXT.md defines that session and the
-resolution rules.
+it never marks a row resolved itself. [SPEC.md](SPEC.md) defines that session
+and the resolution rules.
 
 ## Install (planned)
 
@@ -58,17 +58,17 @@ and both bundled skills. `setup --check` verifies the result without writing.
 Exit codes: `0` success or nothing to do, `1` operational failure, `2` usage.
 JSON goes to stdout; one-line diagnostics go to stderr; no tracebacks.
 
-## Contracts
+## Contract summary
+
+The normative text is [SPEC.md](SPEC.md) §2; this is a summary, not a second
+copy.
 
 - The CLI is the public surface. The store schema and the report format are
   contracts, not APIs.
-- A marker is `machine#id` — the machine is required because ids are per
-  store. Bare ids and placeholders are refused, never guessed at.
+- A marker is `machine#id`; a marker naming another machine is `foreign`:
+  reported, never stamped.
 - Reports carry machine names and local ids only, never problem text.
-- A marker naming another machine is reported as `foreign` and never stamped:
-  1.0 has no owner lookup and no cross-machine resolution.
-- A skill's generated text is owned only inside its fence. Text outside a fence
-  is never read, matched or rewritten — adoption appends a fenced block instead.
+- Generated skill text is owned only inside its fence.
 
 ## Documentation
 
@@ -79,7 +79,7 @@ JSON goes to stdout; one-line diagnostics go to stderr; no tracebacks.
 - [ADR-0002](docs/adr/0002-explicit-harness-context.md) — explicit harness
   context, adapters, `report`, one store per machine.
 - [ADR-0003](docs/adr/0003-module-map.md) — the module map behind the CLI.
-- [CONTEXT.md](CONTEXT.md) — domain vocabulary and invariants.
+- [CONTEXT.md](CONTEXT.md) — vocabulary: what the terms mean.
 - [Issue #1](https://github.com/Dahep/skill-log/issues/1) and
   [issue #3](https://github.com/Dahep/skill-log/issues/3) — the historical
   contracts this specification replaces.

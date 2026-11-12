@@ -5,7 +5,8 @@
 [issue #1](https://github.com/Dahep/skill-log/issues/1) — language,
 distribution, test suite, `--version` semantics, and consumer integration.
 The behavior contract there is unchanged.
-**Spec:** [issue #3](https://github.com/Dahep/skill-log/issues/3).
+**Spec:** [issue #3](https://github.com/Dahep/skill-log/issues/3), historical.
+**Current rules:** [SPEC.md](../../SPEC.md) §8.
 **Amended by:** [ADR-0002](0002-explicit-harness-context.md) (store schema and
 scope: created not inherited, one store per machine, `report`) and
 [ADR-0003](0003-module-map.md) (module map).

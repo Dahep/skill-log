@@ -10,6 +10,7 @@ migration" consequence, and 1.0's scope: multi-machine consolidation is out.
 **Reference implementation:** dotfiles branch `t3/e53b1745` (2,323 lines, the
 only copy carrying `fix` and report files). It is the port source and the
 parity target, not a store to inherit.
+**Current rules:** [SPEC.md](../../SPEC.md) §3–§5.
 
 ## Context
 
@@ -59,7 +60,7 @@ from. That is why they belong in typed columns rather than a free-form bag.
    | `project` | the T3 project grouping | the `t3` adapter is off, or the run is outside T3 |
    | `t3_thread` | the T3 thread id | the caller did not pass one |
    | `machine` | the hostname | never |
-   | `fix`, `resolved_at` | the resolution contract from #1, unchanged | never |
+   | `fix`, `resolved_at` | the resolution contract from #1, unchanged | unresolved |
 
    All text columns are `NOT NULL DEFAULT ''`: empty means "unknown or not
    applicable". The SQL layer stays free of NULL semantics, and #1's JSON
