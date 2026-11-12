@@ -177,6 +177,18 @@ check "dry-run reports id null" \
 check "dry-run carries no marker" \
     "$(printf '%s' "$OUT" | grep -c '"marker":""')" "1"
 
+# ------------------------------------------------------------ clock
+
+# The one clock injection (SPEC §9): SKILL_LOG_NOW fixes the writer's
+# stamp, so a case can pin time without writing the store or sleeping.
+OUT="$(env -u XDG_STATE_HOME -u SKILL_LOG_DB HOME="$HOME_DIR" \
+    SKILL_LOG_NOW=2020-01-02T03:04:05+00:00 \
+    "$BIN" add --skill pinned --json)"
+STATUS=$?
+check "SKILL_LOG_NOW exits 0" "$STATUS" "0"
+check "SKILL_LOG_NOW pins the row's timestamp" \
+    "$(json_field "$OUT" ts)" "2020-01-02T03:04:05+00:00"
+
 # ------------------------------------------------------------------- json
 
 run add --skill json --json --problem "one"

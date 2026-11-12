@@ -33,15 +33,12 @@
 # internal.
 #
 # The clock: the contract names `SKILL_LOG_NOW` as the one clock
-# injection (SPEC §9, ADR-0003). It is *not implemented* in this build —
-# the writer's stamp is read from SQLite's clock and `SKILL_LOG_NOW` is
-# ignored — so no case may depend on it. The one case that needs a fixed
-# clock (case 29, the time guard) fixes the *commit* side with a git
-# commit date instead: the guard compares the row's own stamp with the
-# commit's time, so pinning the commit's time pins the comparison. That
-# is deterministic and needs no sleep and no second injection. The gap is
-# listed at the end of this suite's run, as an explicit note rather than
-# a silent omission.
+# injection (SPEC §9, ADR-0003), and the binary honours it: the writer's
+# stamp is the variable's value when it is set, so a case can pin time
+# without touching the store or sleeping. The clock case at the end of
+# this suite proves it; the one case that needs a fixed comparison (case
+# 29, the time guard) also fixes the commit side with a git commit date,
+# because the guard compares the row's own stamp with the commit's time.
 #
 # Coverage the contract names, and where it lives. This map keeps the
 # ticket auditable without duplicating the suites that already prove a
@@ -74,6 +71,7 @@
 #   a missing CLI in the hook                  parity: case 23, tests/setup.sh
 #   an older CLI in the hook                   parity: case 23, tests/setup.sh
 #   a time guard across differing offsets      parity: case 29
+#   a fixed clock uses SKILL_LOG_NOW           parity: case 34, tests/store.sh
 #   the packaging assumptions                  tests/packaging.sh
 #
 # The rules the parity suite owns outright are the reference's own: the
@@ -1303,13 +1301,13 @@ printf '\n'
 if [ "$SKIPPED" -gt 0 ]; then
     printf 'parity.sh: %d reference case(s) skipped as out of scope\n' "$SKIPPED"
 fi
-# The clock injection the contract names is not implemented in this
-# build. It is named here so the gap is visible in the gate's own output
-# rather than only in a reviewer's head.
-if ! SKILL_LOG_NOW="2020-01-02T03:04:05+00:00" \
-    "$BIN" add --skill clock-probe --dry-run --json \
-    2>/dev/null | grep -q '2020-01-02T03:04:05'; then
-    printf 'parity.sh: note: SKILL_LOG_NOW is not implemented in this build; the\n'
-    printf 'parity.sh: time guard is pinned with a git commit date instead\n'
-fi
+# The clock injection the contract names: SKILL_LOG_NOW pins the
+# writer's stamp, proved through the CLI rather than by writing the store.
+OUT="$(SKILL_LOG_NOW="2020-01-02T03:04:05+00:00" \
+    "$BIN" add --skill clock-probe --dry-run --json 2>"$S/stderr")"
+STATUS=$?
+check "the clock case exits 0" "$STATUS" "0"
+check "case 34: SKILL_LOG_NOW pins the writer's stamp" \
+    "$(json_field "$OUT" ts)" "2020-01-02T03:04:05+00:00"
+check_absent "the clock case reports no error" "$(cat "$S/stderr")" "skill-log:"
 tally

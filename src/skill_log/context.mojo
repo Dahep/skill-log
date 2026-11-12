@@ -25,10 +25,16 @@ named from outside.
 
 from std.ffi import CStringSpan, OwnedDLHandle, RTLD, c_char
 from std.memory import alloc
+from std.os import getenv
 
 from sqlite.db import Database
 
 from skill_log.ffi import dl_sym
+
+# The one clock injection (SPEC §9): a test-only stamp that fixes the
+# writer's clock. It is read before SQLite's clock, so a case can prove
+# the time guard through the CLI instead of writing the store directly.
+comptime CLOCK_OVERRIDE = "SKILL_LOG_NOW"
 
 # The query that yields the writer's local wall clock and the offset in
 # seconds, in one row.
@@ -75,8 +81,14 @@ def two_digits(value: Int) -> String:
 def local_timestamp(db: Database) raises -> String:
     """The writer's local wall clock as ISO 8601 with its offset.
 
-    `2026-11-11T17:04:36-03:00` is one such stamp.
+    `2026-11-11T17:04:36-03:00` is one such stamp. `SKILL_LOG_NOW`, when
+    set, is the stamp: the test-only clock injection (SPEC §9) is consulted
+    first and returned as written, so a case can pin the time without
+    touching the store or sleeping.
     """
+    var pinned = getenv(CLOCK_OVERRIDE, "")
+    if pinned != "":
+        return pinned
     var stmt = db.prepare(CLOCK_SQL)
     var row = stmt.step()
     if row is None:
