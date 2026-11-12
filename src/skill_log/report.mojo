@@ -41,7 +41,10 @@ selection is unioned with what the file already holds, so a second call
 for the same change adds to the report instead of replacing it.
 
 Re-running over an unchanged report writes nothing and says it is
-already reported.
+already reported. Two `report` calls at the same instant are not
+serialized: each writes a complete file and the later rename wins, so a
+marker the earlier one added can be lost. Authoring one change is one
+person's step, so the file is replaced atomically but not locked.
 
 ## Checking
 
@@ -60,7 +63,7 @@ from skill_log.detect import git_branch, git_toplevel
 from skill_log.errors import EXIT_FAILURE, EXIT_USAGE, Outcome
 from skill_log.files import read_text, write_text
 from skill_log.flags import parse_positive, take_value
-from skill_log.json import json_string, json_string_array
+from skill_log.json import json_bool, json_string, json_string_array
 from skill_log.markers import Marker, marker_text, parse_marker
 from skill_log.store import (
     damaged_failure,
@@ -259,13 +262,6 @@ def prefixed(lines: List[String]) -> String:
     for i in range(len(lines)):
         out.append("skill-log: " + lines[i])
     return "\n".join(out)
-
-
-def truth(value: Bool) -> String:
-    """A JSON boolean."""
-    if value:
-        return "true"
-    return "false"
 
 
 def first_nine(text: String) -> String:
@@ -507,8 +503,8 @@ def write_json(
     var out = "{\"path\":" + json_string(path)
     out += ",\"markers\":" + json_string_array(markers)
     out += ",\"already_resolved\":" + json_string_array(resolved)
-    out += ",\"already_reported\":" + truth(already)
-    out += ",\"dry_run\":" + truth(dry_run)
+    out += ",\"already_reported\":" + json_bool(already)
+    out += ",\"dry_run\":" + json_bool(dry_run)
     out += ",\"trailer\":" + json_string(trailer)
     out += "}"
     return out
@@ -667,7 +663,13 @@ def check_outcome(
             "store unavailable: " + opened.refusal.failure().message
         )
     elif opened.db:
-        have_store = True
+        # A table-less (or unreadable) store still lets the syntax be
+        # checked: the marker lookup is what it cannot answer.
+        try:
+            if is_skill_log_store(opened.db.value()):
+                have_store = True
+        except e:
+            store_warning.append("store unavailable: " + String(e))
 
     var result = CheckResult()
     try:
@@ -786,16 +788,27 @@ def handle_report(args: List[String]) raises -> Outcome:
         )
 
     var selection = Selection()
+    var tableless = False
     try:
         var db = opened.db.take()
-        # A store with no tables yet is an empty log: nothing matches.
+        # A store with no tables yet is an empty log: nothing matches,
+        # and every named id is a missing id.
         if is_skill_log_store(db):
             selection = select_markers(db, options)
+        else:
+            tableless = True
     except e:
         if is_corruption(String(e)):
             var failure = damaged_failure(store_path)
             return Outcome.fail(failure.message, failure.code)
         raise
+
+    if tableless and len(options.ids) > 0:
+        var wanted = List[Int]()
+        for i in range(len(options.ids)):
+            if not contains_int(wanted, options.ids[i]):
+                wanted.append(options.ids[i])
+        selection.missing = wanted^
 
     if len(selection.missing) > 0:
         return Outcome.fail(
@@ -806,6 +819,20 @@ def handle_report(args: List[String]) raises -> Outcome:
     var pending = sorted_unique(selection.pending)
     var resolved = sorted_unique(selection.resolved)
     var notes = resolved_notes(resolved)
+
+    # A report only carries markers that parse back to the same row.
+    # `add` refuses a machine that cannot appear in one, but a row can
+    # predate that check or come from another store; writing it would put
+    # a line in the file no resolver can read.
+    for i in range(len(pending)):
+        var parsed = parse_marker(pending[i])
+        if not parsed or parsed.value().text() != pending[i]:
+            return Outcome.fail(
+                "cannot report "
+                + sanitize(pending[i])
+                + ": not a marker (machine#id)",
+                EXIT_FAILURE(),
+            )
 
     if not artifact:
         return trailer_outcome(pending, resolved, notes, options)

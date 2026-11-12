@@ -30,6 +30,7 @@ as a whole attempt inside a small wall-clock budget, because the store is
 written by concurrent skill runs.
 """
 
+from std.ffi import OwnedDLHandle, RTLD
 from std.os import getenv, makedirs
 from std.pathlib import Path
 from std.time import monotonic, sleep
@@ -37,6 +38,7 @@ from std.time import monotonic, sleep
 from sqlite.db import Database
 from skill_log.context import local_timestamp
 from skill_log.errors import Failure, operational_failure
+from skill_log.ffi import dl_sym
 from skill_log.text import sanitize
 
 # The schema version this binary writes and understands. A store stamped
@@ -393,11 +395,38 @@ def stamp_version(db: Database) raises:
     db.execute("PRAGMA user_version=" + String(SCHEMA_VERSION))
 
 
+# `SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE`: without it, closing the last
+# connection to a WAL store checkpoints its WAL frames into the database
+# file and removes the sidecars. That is a write, and a read must not
+# write. The option exists in SQLite 3.32+; the bundled library has it.
+comptime SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE = 1006
+
+
+def disable_close_checkpoint(db: Database):
+    """Ask SQLite not to checkpoint this store when the read closes.
+
+    Best-effort: an older SQLite without the option still reads — it may
+    checkpoint on close, which moves committed rows within the store
+    rather than changing them. The connection is the vendored binding's,
+    and its handle is the one field this needs.
+    """
+    try:
+        var lib = OwnedDLHandle(
+            "libsqlite3.so.0", RTLD.NOW | RTLD.GLOBAL | RTLD.NODELETE
+        )
+        var config = dl_sym[def(Int, Int, Int, Int) thin abi("C") -> Int32](
+            lib, "sqlite3_db_config"
+        )
+        _ = config(db._handle, SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, 1, 0)
+    except:
+        return
+
+
 def apply_read_pragmas(db: Database, busy_timeout: Int) raises:
     """The connection settings a read carries.
 
-    Foreign keys so a cascading delete is never silently ignored, and a
-    busy timeout so a read behind a writer waits. `journal_mode` is
+    Foreign keys so a cascading delete is never silently ignored, a busy
+    timeout so a read behind a writer waits. `journal_mode` is
     deliberately absent: switching a file to WAL rewrites its header, and
     a read must not change the machine.
     """
@@ -496,12 +525,29 @@ def open_read(path: String) raises -> StoreOpen:
     the state directory, the file, or an empty database. A file that
     exists but is not a usable store is refused by name; nothing is
     written to it, not even its journal mode.
+
+    Two settings make that true beyond the schema check: the connection
+    is put in `query_only` mode, so no statement on it can write, and the
+    close-time WAL checkpoint is disabled, so a read does not move the
+    store's bytes. SQLite may still leave its `-wal`/`-shm` sidecars
+    beside a WAL store, which is how the engine reads one.
+
+    The vendored binding opens read-write (it exposes no open flags), so
+    a file deleted between the `is_file` check and the open would be
+    recreated. That window is two syscalls wide and no normal writer
+    closes it; a genuinely read-only open needs an open-flag seam this
+    binding does not have.
     """
     var opened = StoreOpen()
     if not Path(path).is_file():
         return opened^
 
     var db = Database(path)
+
+    # Before the first read, and before any refusal can return: closing
+    # this connection must not checkpoint a WAL into the file, refused or
+    # not.
+    disable_close_checkpoint(db)
 
     # The schema check comes before the version check: a file that is
     # not a skill-log store is foreign whatever its stamp says. It comes
@@ -513,6 +559,11 @@ def open_read(path: String) raises -> StoreOpen:
         return opened^
 
     apply_read_pragmas(db, READ_BUSY_TIMEOUT)
+    # And no statement on this connection may write: a read path that
+    # grew a write would fail loudly instead of changing the store. This
+    # is set here, never in `apply_read_pragmas`, which the write path
+    # also runs.
+    db.execute("PRAGMA query_only=ON")
     opened.db = db^
     return opened^
 
@@ -760,6 +811,9 @@ def read_invocations(db: Database, filters: Filters) raises -> List[Invocation]:
 
     Every problem is read with its row, in ordinal order and sanitized on
     the way out, so one problem is one line whatever the writer stored.
+
+    `filters.limit` of zero means every matching row: `show` always asks
+    for 1..500, and `report` must not cap a selection it is stamping.
     """
     var clause = filter_clause(filters)
     var marks = filter_parameters(filters)
@@ -1124,6 +1178,10 @@ def resolve_row(
         return result^
 
     var db = opened.db.take()
+    # An existing file with no store tables yet is an empty log, not an
+    # error: the id it is asked for cannot exist.
+    if not is_skill_log_store(db):
+        return result^
     var row = read_invocation(db, id)
     if not row:
         return result^
@@ -1148,7 +1206,7 @@ def resolve_row(
     var deadline = now_seconds() + WRITE_BUDGET_SECONDS
     while True:
         try:
-            return stamp_attempt(path, id, fix, result.skill, result.machine)
+            return stamp_attempt(path, id, fix)
         except e:
             var message = String(e)
             if not is_busy(message):
@@ -1159,10 +1217,15 @@ def resolve_row(
             sleep(min(Float64(WRITE_RETRY_SLEEP), remaining))
 
 
-def stamp_attempt(
-    path: String, id: Int, fix: String, skill: String, machine: String
-) raises -> ResolvedRow:
-    """One write attempt: open, update the row, commit.
+def stamp_attempt(path: String, id: Int, fix: String) raises -> ResolvedRow:
+    """One write attempt: open, re-read inside the transaction, stamp.
+
+    The row is read again here, under the write transaction, because the
+    earlier read was only a fast path: two concurrent resolves of the
+    same fix would otherwise both see the old value and both write a new
+    timestamp. Inside the transaction the second one finds the fix it was
+    about to write and answers `changed = false` instead. A busy failure
+    on the snapshot re-runs the whole attempt, so it rechecks too.
 
     The transaction guard rolls back if the update fails, so a row is
     either fully stamped or untouched.
@@ -1177,8 +1240,30 @@ def stamp_attempt(
 
     var db = opened.db.take()
     var tx = db.transaction()
-    var stamp = local_timestamp(db)
 
+    var read = db.prepare(
+        "SELECT skill, machine, fix, resolved_at FROM invocations WHERE id = ?"
+    )
+    read.bind_int(1, id)
+    var row = read.step()
+    if row is None:
+        # Nothing to stamp; the transaction has written nothing.
+        _ = tx^
+        return result^
+
+    result.found = True
+    result.skill = row.value().text_val(0)
+    result.machine = row.value().text_val(1)
+    result.fix = fix
+
+    if row.value().text_val(2) == fix:
+        # Another writer (or our own earlier attempt) already installed
+        # this fix: keep its timestamp and change nothing.
+        result.resolved_at = row.value().text_val(3)
+        _ = tx^
+        return result^
+
+    var stamp = local_timestamp(db)
     var stmt = db.prepare(
         "UPDATE invocations SET fix = ?, resolved_at = ? WHERE id = ?"
     )
@@ -1187,10 +1272,6 @@ def stamp_attempt(
     stmt.bind_int(3, id)
     _ = stmt.step()
 
-    result.found = True
-    result.skill = skill
-    result.machine = machine
-    result.fix = fix
     result.resolved_at = stamp
     result.changed = True
     tx.commit()

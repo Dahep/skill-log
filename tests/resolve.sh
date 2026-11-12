@@ -118,8 +118,8 @@ check "a dry run does not change the store file" \
 
 # A dry run of a repeat previews the stored answer, not a new one.
 run resolve --id 1 --fix def5678 --dry-run
-check "a dry run of a repeat is already resolved" "$OUT" \
-    "boxA#1 would resolve: def5678"
+check "a dry run of a repeat says already resolved" "$OUT" \
+    "boxA#1 already resolved: def5678"
 
 # ------------------------------------------------------------------- json
 
@@ -194,6 +194,10 @@ run resolve --id 1 --fix "  "
 check "an empty --fix exits 2" "$STATUS" "2"
 check_one_line "an empty --fix is one line" "$ERR"
 
+run resolve --id 1 --fix "$(printf 'a\nb')"
+check "a multi-line --fix exits 2" "$STATUS" "2"
+check_one_line "a multi-line --fix is one line" "$ERR"
+
 run resolve --id 1 --fix abc --nope
 check "an unknown flag exits 2" "$STATUS" "2"
 check_one_line "an unknown flag is one line" "$ERR"
@@ -207,6 +211,38 @@ run resolve --id 1 -h
 check "a help flag after a value still asks for help" "$STATUS" "0"
 check "the help block is the verb's usage" \
     "$(printf '%s\n' "$OUT" | grep -c '^usage:$')" "1"
+
+# An existing but table-less store is an empty log: the id is unknown,
+# not a query against tables that do not exist.
+: >"$SCRATCH/tableless.db"
+run resolve --id 1 --fix abc --db "$SCRATCH/tableless.db"
+check "a table-less store names the unknown id" "$STATUS" "1"
+check "a table-less store does not fail on the missing tables" "$ERR" \
+    "skill-log: no invocation 1 in $SCRATCH/tableless.db"
+
+# ------------------------------------------------------------------ races
+#
+# Six identical resolves of one row run at once. The read that decides
+# "already resolved" happens inside the write transaction, so exactly one
+# of them stamps and the rest see that stamp: one `changed`, one
+# timestamp, six successes.
+run add --skill parallel --machine boxA
+check "the race fixture row is written" "$STATUS" "0"
+RACE_ID="$(sqlite3 "$DB" 'select max(id) from invocations')"
+rm -f "$SCRATCH"/race-*.json "$SCRATCH"/race-*.err
+for i in 1 2 3 4 5 6; do
+    "$BIN" resolve --id "$RACE_ID" --fix r4cec0de --json \
+        >"$SCRATCH/race-$i.json" 2>"$SCRATCH/race-$i.err" &
+done
+wait
+check "every concurrent resolve succeeds" \
+    "$(cat "$SCRATCH"/race-*.err | grep -c .)" "0"
+check "exactly one concurrent resolve changed the row" \
+    "$(cat "$SCRATCH"/race-*.json | grep -c '"changed":true')" "1"
+check "concurrent resolves agree on one timestamp" \
+    "$(cat "$SCRATCH"/race-*.json \
+        | python3 -c 'import json,sys; print(len({json.loads(l)["resolved_at"] for l in sys.stdin if l.strip()}))')" \
+    "1"
 
 # ------------------------------------------------------------------ help
 

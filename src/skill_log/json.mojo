@@ -101,3 +101,10 @@ def json_string_array(items: List[String]) -> String:
         out += escape_string(items[i])
     out += "]"
     return out
+
+
+def json_bool(value: Bool) -> String:
+    """A JSON boolean."""
+    if value:
+        return "true"
+    return "false"

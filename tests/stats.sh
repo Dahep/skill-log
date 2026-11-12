@@ -200,6 +200,8 @@ run stats --by worktree --json
 check "the worktree cut keeps the path whole in json" \
     "$(printf '%s\n' "$OUT" | grep -c "\"worktree\":\"$HOME_DIR/wt\"")" "1"
 run stats --by worktree
+# The tilde is the literal output, not a path to expand.
+# shellcheck disable=SC2088
 check "the worktree table shortens the path" \
     "$(printf '%s\n' "$OUT" | grep -c '~/wt')" "1"
 check "an empty grouping key keeps its column empty" \
@@ -275,7 +277,15 @@ check "stats names a newer store with both versions" \
 # ------------------------------------------------------- reads never write
 
 STATE_DIR="$HOME_DIR/.local/state/skill-log"
-BEFORE_FILES="$(find "$STATE_DIR" -maxdepth 1 -mindepth 1 -printf '%f\n' | sort | tr '\n' ' ')"
+# A reader may leave SQLite's own -wal/-shm sidecars behind (it needs
+# them to read a WAL store); the store file itself is the invariant, and
+# it is asserted byte-identical above.
+files_besides_sidecars() {
+    find "$STATE_DIR" -maxdepth 1 -mindepth 1 -printf '%f\n' \
+        | grep -vE '^skills[.]db-(wal|shm)$' | sort | tr '\n' ' ' || true
+}
+BEFORE_FILES="$(files_besides_sidecars)"
+
 BEFORE_SUM="$(md5sum <"$DB")"
 BEFORE_MTIME="$(stat -c %Y "$DB")"
 
@@ -288,9 +298,8 @@ check "the store is byte-identical after a read" \
     "$(md5sum <"$DB")" "$BEFORE_SUM"
 check "the store's mtime is unchanged after a read" \
     "$(stat -c %Y "$DB")" "$BEFORE_MTIME"
-check "a read creates no new file" \
-    "$(find "$STATE_DIR" -maxdepth 1 -mindepth 1 -printf '%f\n' | sort | tr '\n' ' ')" \
-    "$BEFORE_FILES"
+check "a read creates no new file of its own" \
+    "$(files_besides_sidecars)" "$BEFORE_FILES"
 
 # ----------------------------------------------------------- usage errors
 

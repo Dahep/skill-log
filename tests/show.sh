@@ -425,6 +425,35 @@ check "a newer store is named with both versions" \
     "$(printf '%s\n' "$ERR" | grep -c 'has schema version 99.*understands 1')" "1"
 check_one_line "a newer store is one line" "$ERR"
 
+# A writer that crashed after committing leaves frames in the WAL. A
+# read must see them and must not checkpoint them into the database
+# file: the main file stays byte-identical and the WAL stays in place.
+sqlite3 "$DB" 'pragma wal_checkpoint(TRUNCATE)'
+cp "$DB" "$SCRATCH/wal.db"
+python3 - "$SCRATCH/wal.db" <<'PY'
+import os
+import sqlite3
+import sys
+
+con = sqlite3.connect(sys.argv[1])
+con.execute("pragma journal_mode=wal")
+con.execute("update invocations set skill = 'wal-edit' where id = 1")
+con.commit()
+# Exit without closing: the committed frames stay in the WAL.
+os._exit(0)
+PY
+WAL_SUM="$(md5sum <"$SCRATCH/wal.db")"
+run show --db "$SCRATCH/wal.db" --skill wal-edit --json
+check "a read sees a crashed writer's committed row" \
+    "$(json_field "$OUT" skill)" "wal-edit"
+check "a read does not checkpoint the WAL into the store" \
+    "$(md5sum <"$SCRATCH/wal.db")" "$WAL_SUM"
+if [ -f "$SCRATCH/wal.db-wal" ]; then
+    pass "the WAL is still there after a read"
+else
+    fail "a read removed the WAL"
+fi
+
 # ------------------------------------------------------------ usage errors
 
 run show --nope
@@ -498,7 +527,15 @@ check "a usage error keeps stdout empty" "$OUT" ""
 # byte-identical afterwards, its mtime is untouched, and no new file
 # appears beside it.
 STATE_DIR="$HOME_DIR/.local/state/skill-log"
-BEFORE_FILES="$(find "$STATE_DIR" -maxdepth 1 -mindepth 1 -printf '%f\n' | sort | tr '\n' ' ')"
+# A reader may leave SQLite's own -wal/-shm sidecars behind (it needs
+# them to read a WAL store); the store file itself is the invariant, and
+# it is asserted byte-identical above.
+files_besides_sidecars() {
+    find "$STATE_DIR" -maxdepth 1 -mindepth 1 -printf '%f\n' \
+        | grep -vE '^skills[.]db-(wal|shm)$' | sort | tr '\n' ' ' || true
+}
+BEFORE_FILES="$(files_besides_sidecars)"
+
 BEFORE_SUM="$(md5sum <"$DB")"
 BEFORE_MTIME="$(stat -c %Y "$DB")"
 
@@ -510,9 +547,8 @@ run show --run ses-1 --last 2
 check "the store is byte-identical after a read" "$(md5sum <"$DB")" "$BEFORE_SUM"
 check "the store's mtime is unchanged after a read" "$(stat -c %Y "$DB")" \
     "$BEFORE_MTIME"
-check "a read creates no new file" \
-    "$(find "$STATE_DIR" -maxdepth 1 -mindepth 1 -printf '%f\n' | sort | tr '\n' ' ')" \
-    "$BEFORE_FILES"
+check "a read creates no new file of its own" \
+    "$(files_besides_sidecars)" "$BEFORE_FILES"
 
 # The journal mode is not switched either: a read must not rewrite the
 # store's header.

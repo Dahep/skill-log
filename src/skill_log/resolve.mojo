@@ -30,8 +30,9 @@ from std.pathlib import Path
 
 from skill_log.errors import EXIT_FAILURE, EXIT_USAGE, Outcome
 from skill_log.flags import parse_positive, take_value
-from skill_log.json import json_string
+from skill_log.json import json_bool, json_string
 from skill_log.store import ResolvedRow, resolve_db, resolve_row
+from skill_log.text import sanitize
 
 
 def resolve_usage() -> String:
@@ -127,6 +128,8 @@ def parse_options(args: List[String]) raises -> Options:
     var fix = String(options.fix.strip())
     if fix == "":
         raise Error("usage: --fix needs a commit")
+    if sanitize(fix) != fix:
+        raise Error("usage: --fix takes one line: a commit or a ref")
     options.fix = fix^
     return options^
 
@@ -138,17 +141,10 @@ def render_json(options: Options, row: ResolvedRow) -> String:
     out += ",\"skill\":" + json_string(row.skill)
     out += ",\"fix\":" + json_string(row.fix)
     out += ",\"resolved_at\":" + json_string(row.resolved_at)
-    out += ",\"changed\":" + truth(row.changed)
-    out += ",\"dry_run\":" + truth(options.dry_run)
+    out += ",\"changed\":" + json_bool(row.changed)
+    out += ",\"dry_run\":" + json_bool(options.dry_run)
     out += "}"
     return out
-
-
-def truth(value: Bool) -> String:
-    """A JSON boolean."""
-    if value:
-        return "true"
-    return "false"
 
 
 def handle_resolve(args: List[String]) raises -> Outcome:
@@ -193,8 +189,8 @@ def handle_resolve(args: List[String]) raises -> Outcome:
         return Outcome.ok(render_json(options, row))
 
     var marker = row.machine + "#" + String(options.id)
-    if options.dry_run:
-        return Outcome.ok(marker + " would resolve: " + options.fix)
     if not row.changed:
         return Outcome.ok(marker + " already resolved: " + options.fix)
+    if options.dry_run:
+        return Outcome.ok(marker + " would resolve: " + options.fix)
     return Outcome.ok(marker + " resolved: " + options.fix)

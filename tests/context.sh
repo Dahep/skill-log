@@ -276,6 +276,18 @@ check "SKILL_LOG_MACHINE does not fill the machine" \
 OUT="$("$BIN" add --skill adapters --dry-run --json --machine named)"
 check "--machine names the machine" "$(json_field "$OUT" machine)" "named"
 
+# The machine namespaces every marker (`machine#id`), so a value that
+# cannot appear in one is refused at the boundary.
+run add --skill machine --dry-run --machine 'box#extra'
+check "a machine with a marker separator is a usage error" "$STATUS" "2"
+check_one_line "a machine with a marker separator is one line" "$ERR"
+check_contains "a machine with a marker separator says why" "$ERR" \
+    "cannot contain '#'"
+
+run add --skill machine --dry-run --machine "$(printf 'box\nname')"
+check "a machine with a newline is a usage error" "$STATUS" "2"
+check_one_line "a machine with a newline is one line" "$ERR"
+
 # The flag beats the adapter's value.
 OUT="$(HOME="$OC_HOME" OPENCODE_SESSION_ID=ses_test \
     "$BIN" add --skill adapters --dry-run --json --adapter opencode \
@@ -324,7 +336,7 @@ check "the t3 adapter leaves the project empty outside T3" \
     "$(json_field "$OUT" project)" ""
 
 # An unknown adapter is ignored rather than fatal.
-OUT="$("$BIN" add --skill adapters --dry-run --json --adapter no-such-adapter)"
+run add --skill adapters --dry-run --json --adapter no-such-adapter
 check "an unknown adapter is ignored" "$STATUS" "0"
 
 # An unknown flag is a usage error, and it is one line.

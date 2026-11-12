@@ -270,6 +270,17 @@ def handle_add(args: List[String]) raises -> Outcome:
         except e:
             return Outcome.fail(String(e), EXIT_FAILURE())
 
+    # The machine namespaces every marker (`machine#id`). A `#` or a
+    # control character would make the row unnameable — and a newline
+    # would split a report line — so an explicit value that carries one
+    # is refused at the boundary.
+    if row.machine.find("#") != -1 or sanitize(row.machine) != row.machine:
+        return Outcome.fail(
+            "usage: --machine names a marker; it cannot contain '#'"
+            " or a control character",
+            EXIT_USAGE(),
+        )
+
     # The problems are sanitized on the way in as well as on the way
     # out: a control character in a problem must never reach the store
     # and come back as two lines.

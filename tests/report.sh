@@ -109,8 +109,7 @@ else
     fail "report did not write the branch's file"
 fi
 check "the file holds one marker per line" "$(cat "$REPORT")" "boxA#1"
-check "the file ends with a newline" \
-    "$(tail -c 1 "$REPORT" | xxd -p)" "0a"
+check "the file ends with a newline" "$(tail -c 1 "$REPORT")" ""
 check "the problem text never reaches the report" \
     "$(grep -c 'secret' "$REPORT")" "0"
 if [ -e "$REPORT.tmp" ]; then
@@ -118,6 +117,25 @@ if [ -e "$REPORT.tmp" ]; then
 else
     pass "report replaces the file atomically, with no temporary left"
 fi
+
+# A planted symlink at a predictable temporary name cannot redirect the
+# write: the temporary is created exclusively under an unpredictable name
+# and written through its own descriptor.
+printf 'valuable\n' >"$SCRATCH/victim"
+ln -s "$SCRATCH/victim" "$REPO/.skill-log/reports/atomic.md.tmp"
+run report --id 4 --slug atomic
+check "a planted temp symlink is not followed" \
+    "$(cat "$SCRATCH/victim")" "valuable"
+check "the report beside a planted symlink is written" \
+    "$(cat "$REPO/.skill-log/reports/atomic.md")" "boxA#4"
+if [ -L "$REPO/.skill-log/reports/atomic.md.tmp" ]; then
+    pass "the planted symlink is left alone"
+else
+    fail "the planted symlink was consumed"
+fi
+rm -f "$REPO/.skill-log/reports/atomic.md.tmp"
+check "no temporary file is left behind" \
+    "$(find "$REPO/.skill-log/reports" -name '*.tmp*' | wc -l | tr -d ' ')" "0"
 
 # A second selection unions into the file instead of replacing it.
 run report --id 2
@@ -294,6 +312,24 @@ check "a write over a malformed report exits 1" "$STATUS" "1"
 check "a write over a malformed report leaves it alone" \
     "$(md5sum <"$REPO/.skill-log/reports/bad-write.md")" "$BEFORE_SUM"
 
+# A marker this store cannot parse back is never written into a file.
+sqlite3 "$DB" "update invocations set machine = 'bad#machine' where id = 4"
+run report --id 4 --slug bad-machine
+check "an unnameable machine is refused" "$STATUS" "1"
+check "an unnameable machine is named" \
+    "$(printf '%s\n' "$ERR" | grep -c 'not a marker (machine#id)')" "1"
+if [ -e "$REPO/.skill-log/reports/bad-machine.md" ]; then
+    fail "an unnameable machine wrote a report"
+else
+    pass "an unnameable machine writes no report"
+fi
+printf 'bad#machine#4\n' >"$REPO/.skill-log/reports/bad-line.md"
+run report --check --slug bad-line
+check "a report with an unparseable marker is not valid" "$STATUS" "1"
+check_contains "the unparseable marker names its position" "$ERR" \
+    "not a marker (machine#id)"
+sqlite3 "$DB" "update invocations set machine = 'boxA' where id = 4"
+
 run report --check --slug no-such-report
 check "a missing report file exits 0" "$STATUS" "0"
 check "a missing report file says so" "$OUT" \
@@ -379,6 +415,22 @@ run report --id 1 --db "$SCRATCH/foreign.db"
 check "a foreign store exits 1" "$STATUS" "1"
 check "a foreign store is named" \
     "$(printf '%s\n' "$ERR" | grep -c 'foreign store')" "1"
+
+# An existing but table-less store is an empty log: a named id is a
+# missing id, not a silent "nothing to report".
+: >"$SCRATCH/tableless.db"
+run report --id 99 --db "$SCRATCH/tableless.db" --slug tableless
+check "a table-less store names the missing id" "$STATUS" "1"
+check "a table-less store names the id" "$ERR" \
+    "skill-log: no invocation 99 in $SCRATCH/tableless.db"
+run report --run nope --db "$SCRATCH/tableless.db" --slug tableless
+check "a table-less store has nothing to report for a run" "$OUT" \
+    "nothing to report: the selected rows are already resolved"
+printf 'boxA#1\n' >"$REPO/.skill-log/reports/tableless-check.md"
+run report --check --slug tableless-check --db "$SCRATCH/tableless.db"
+check "a table-less store still checks report syntax" "$STATUS" "0"
+check "a table-less store check is valid" "$OUT" \
+    ".skill-log/reports/tableless-check.md is valid (1 marker)"
 
 run report --id 1 --db "$SCRATCH/none.db"
 check "a missing store exits 1" "$STATUS" "1"
