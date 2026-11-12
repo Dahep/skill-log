@@ -1510,10 +1510,18 @@ struct ResolutionRow(Movable):
 
 
 def read_resolution_rows(db: Database) raises -> List[ResolutionRow]:
-    """Every row's id, machine, fix and timestamp, in one read."""
+    """Every row's id, machine, fix and timestamp, in one read.
+
+    The timestamp becomes epoch seconds through `strftime('%s', ts)`,
+    not through `unixepoch(ts)`: `unixepoch` was added in SQLite 3.38
+    and the release bundles the pinned 3.37, where it does not exist.
+    A timestamp SQLite cannot parse reads as NULL, and `COALESCE` turns
+    that into zero — the same answer the old query gave.
+    """
     var rows = List[ResolutionRow]()
     var stmt = db.prepare(
-        "SELECT id, machine, fix, COALESCE(unixepoch(ts), 0)"
+        "SELECT id, machine, fix,"
+        " COALESCE(CAST(strftime('%s', ts) AS INTEGER), 0)"
         " FROM invocations"
     )
     while True:

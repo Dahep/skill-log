@@ -39,14 +39,21 @@ comptime CLOCK_OVERRIDE = "SKILL_LOG_NOW"
 # The query that yields the writer's local wall clock and the offset in
 # seconds, in one row.
 #
-# `unixepoch('now','localtime')` is the current instant read in local
+# `strftime('%s','now','localtime')` is the current instant read in local
 # time and then read back as if it were UTC, so the difference between
-# it and `unixepoch('now')` is the offset: negative west of Greenwich,
-# positive east of it.
+# it and `strftime('%s','now')` is the offset: negative west of
+# Greenwich, positive east of it.
+#
+# The epoch seconds come from `strftime('%s', ...)`, not from SQLite's
+# `unixepoch()`: `unixepoch` was added in SQLite 3.38 and the release
+# bundles the pinned 3.37, where it does not exist. `strftime('%s')` is
+# in every SQLite that has `strftime` at all, and it answers the same
+# question.
 comptime CLOCK_SQL = """\
 SELECT
     strftime('%Y-%m-%dT%H:%M:%S','now','localtime'),
-    unixepoch('now','localtime') - unixepoch('now')"""
+    CAST(strftime('%s','now','localtime') AS INTEGER)
+        - CAST(strftime('%s','now') AS INTEGER)"""
 
 # The hostname buffer. A hostname longer than this is truncated, which
 # POSIX allows and no real machine reaches.
