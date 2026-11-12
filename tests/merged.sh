@@ -114,9 +114,20 @@ sleep 1
     "$BIN" resolve-merged --db "$DB" >/dev/null 2>"$SCRATCH/later.err"
 )
 check_contains "a later row is skipped with its reason" \
-    "$(cat "$SCRATCH/later.err")" "boxA#3 skipped: logged after that commit"
+    "$(cat "$SCRATCH/later.err")" "boxA#3 skipped: logged_after_commit"
 check "the guarded row stays unresolved" \
     "$(sqlite3 "$DB" 'select fix from invocations where id = 3')" ""
+
+# The contract's skip tokens, not prose, reach both answers.
+(
+    cd "$REPO" || exit 1
+    "$BIN" resolve-merged --db "$DB" --dry-run --json >"$SCRATCH/tokens.json" 2>/dev/null
+)
+check "the skip reason in JSON is the contract token" \
+    "$(printf '%s' "$(cat "$SCRATCH/tokens.json")" \
+        | python3 -c 'import json,sys; print(",".join(sorted(
+            s["reason"] for s in json.loads(sys.stdin.read())["skipped"])))')" \
+    "logged_after_commit"
 
 # ---------------------------------------------- unknown, malformed, hidden
 
@@ -126,7 +137,7 @@ commit_file "$REPO" "Skill-log-Fix: boxA#99, <id>, 7"
     "$BIN" resolve-merged --db "$DB" --json >"$SCRATCH/bad.json" 2>"$SCRATCH/bad.err"
 )
 check_contains "an unknown id is reported by name" \
-    "$(cat "$SCRATCH/bad.err")" "boxA#99 skipped: not in this db"
+    "$(cat "$SCRATCH/bad.err")" "boxA#99 skipped: unknown_id"
 check_contains "a placeholder is reported" \
     "$(cat "$SCRATCH/bad.err")" "not a Skill-log-Fix marker (machine#id): <id>"
 check_contains "a bare id is reported" \
@@ -135,6 +146,34 @@ check "a malformed marker stamps nothing" \
     "$(sqlite3 "$DB" "select count(*) from invocations where fix <> ''")" "2"
 check "the JSON names the unknown row" \
     "$(json_array "$(cat "$SCRATCH/bad.json")" skipped | grep -c 'boxA#99')" "1"
+check "the unknown id's reason is the contract token" \
+    "$(printf '%s' "$(cat "$SCRATCH/bad.json")" \
+        | python3 -c 'import json,sys; print(next(
+            s["reason"] for s in json.loads(sys.stdin.read())["skipped"]
+            if s["row"] == "boxA#99"))')" \
+    "unknown_id"
+
+# ----------------------------------------------------------- foreign markers
+
+# A marker naming another machine is foreign: reported, never stamped.
+commit_file "$REPO" "Skill-log-Fix: otherbox#7"
+(
+    cd "$REPO" || exit 1
+    "$BIN" resolve-merged --db "$DB" --json >"$SCRATCH/foreign.json" 2>"$SCRATCH/foreign.err"
+)
+check_contains "a foreign marker is reported by name" \
+    "$(cat "$SCRATCH/foreign.err")" "otherbox#7 skipped: foreign"
+check "the foreign marker stamps nothing" \
+    "$(sqlite3 "$DB" "select count(*) from invocations where fix <> ''")" "2"
+check "the foreign marker's reason is the contract token" \
+    "$(printf '%s' "$(cat "$SCRATCH/foreign.json")" \
+        | python3 -c 'import json,sys; print(next(
+            s["row"] + "=" + s["reason"]
+            for s in json.loads(sys.stdin.read())["skipped"]
+            if s["row"] == "otherbox#7"))')" \
+    "otherbox#7=foreign"
+check "a foreign marker is never stamped in the answer" \
+    "$(json_array "$(cat "$SCRATCH/foreign.json")" resolved)" ""
 
 "$BIN" add --skill hidden --machine boxA --db "$DB" >/dev/null
 n="$(date +%s%N)"
@@ -185,6 +224,52 @@ check "the older marker is not the stamp" \
     "$(sqlite3 "$DB2" "select fix <> '$OLDER' from invocations where id = 1")" "1"
 check "the row appears once in the answer" \
     "$(json_array "$(cat "$SCRATCH/newest.json")" resolved)" "boxA#1"
+
+# --------------------------------------------------- restamp on a new commit
+
+# An amended fix supersedes an earlier one: a row already stamped with a
+# different commit is restamped, and the stamp moves. Idempotency is a
+# second scan of the *same* commit, not a freeze on the first fix.
+REPO7="$(new_repo restamp)"
+DB7="$SCRATCH/restamp.db"
+"$BIN" add --skill amended --machine boxA --db "$DB7" >/dev/null
+commit_file "$REPO7" "Skill-log-Fix: boxA#1"
+OLDER_FIX="$(git -C "$REPO7" rev-parse HEAD)"
+(
+    cd "$REPO7" || exit 1
+    "$BIN" resolve-merged --db "$DB7" --json >"$SCRATCH/restamp1.json"
+)
+check "the first fix stamps the row" \
+    "$(sqlite3 "$DB7" 'select fix from invocations where id = 1')" "$OLDER_FIX"
+RESOLVED_ONE="$(sqlite3 "$DB7" 'select resolved_at from invocations where id = 1')"
+
+# A newer commit naming the same row: the amended fix supersedes.
+sleep 1
+commit_file "$REPO7" "Skill-log-Fix: boxA#1"
+NEWER_FIX="$(git -C "$REPO7" rev-parse HEAD)"
+(
+    cd "$REPO7" || exit 1
+    "$BIN" resolve-merged --db "$DB7" --json >"$SCRATCH/restamp2.json" 2>"$SCRATCH/restamp2.err"
+)
+check "a newer commit restamps the row" \
+    "$(sqlite3 "$DB7" 'select fix from invocations where id = 1')" "$NEWER_FIX"
+check "the restamped row is reported as resolved" \
+    "$(json_array "$(cat "$SCRATCH/restamp2.json")" resolved)" "boxA#1"
+check "resolved_at moves to the restamp" \
+    "$([ "$(sqlite3 "$DB7" 'select resolved_at from invocations where id = 1')" \
+        != "$RESOLVED_ONE" ] && echo moved || echo frozen)" "moved"
+
+# A same-commit row is unchanged; a re-scan of the newer range is idempotent.
+(
+    cd "$REPO7" || exit 1
+    "$BIN" resolve-merged --since "$OLDER_FIX" --db "$DB7" --json >"$SCRATCH/restamp3.json"
+)
+check "a same-commit row is unchanged, not restamped" \
+    "$(json_array "$(cat "$SCRATCH/restamp3.json")" unchanged)" "boxA#1"
+check "a re-scan of the newer range stamps nothing" \
+    "$(json_array "$(cat "$SCRATCH/restamp3.json")" resolved)" ""
+check "a re-scan leaves the stamp alone" \
+    "$(sqlite3 "$DB7" 'select fix from invocations where id = 1')" "$NEWER_FIX"
 
 # ------------------------------------------------------------ --since
 

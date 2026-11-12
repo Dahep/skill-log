@@ -56,7 +56,7 @@ from skill_log.store import (
     resolve_merged_rows,
     MergedResult,
     MergedSkip,
-    MergedTarget,
+    Located,
 )
 from skill_log.text import prefixed, sanitize
 
@@ -169,30 +169,33 @@ def parse_options(args: List[String]) raises -> Options:
 
 
 struct Scan(Movable):
-    """What one pass over history found: markers, bad values, hidden ones."""
+    """What one pass over history found: markers, bad values, hidden ones.
 
-    var markers: List[MergedTarget]
+    `located` is the scan's yield: one `Located` per row the scan named.
+    """
+
+    var located: List[Located]
     var malformed: List[String]
     var hidden: List[String]
 
     def __init__(out self):
-        self.markers = List[MergedTarget]()
+        self.located = List[Located]()
         self.malformed = List[String]()
         self.hidden = List[String]()
 
 
 def contains_pair(
-    markers: List[MergedTarget], machine: String, id: Int
+    located: List[Located], machine: String, id: Int
 ) -> Bool:
     """True when this row already has a marker in the scan."""
-    for i in range(len(markers)):
-        if markers[i].machine == machine and markers[i].id == id:
+    for i in range(len(located)):
+        if located[i].machine == machine and located[i].id == id:
             return True
     return False
 
 
 def add_marker(
-    mut markers: List[MergedTarget],
+    mut located: List[Located],
     machine: String,
     id: Int,
     commit: String,
@@ -203,10 +206,10 @@ def add_marker(
     The scan walks commits newest first, so the first marker it meets is
     the newest commit that names the row.
     """
-    if contains_pair(markers, machine, id):
+    if contains_pair(located, machine, id):
         return
-    var marker = MergedTarget(machine, id, commit, epoch)
-    markers.append(marker^)
+    var marker = Located(machine, id, commit, epoch)
+    located.append(marker^)
 
 
 def git_output(dir: String, args: String) -> String:
@@ -313,7 +316,7 @@ def scan_trailers(root: String, since: String) -> Scan:
                     continue
                 var marker = parsed.take()
                 add_marker(
-                    scan.markers, marker.machine, marker.id, commit, epoch
+                    scan.located, marker.machine, marker.id, commit, epoch
                 )
     return scan^
 
@@ -466,7 +469,7 @@ def scan_reports(root: String, since: String) raises -> Scan:
                 continue
             var marker = parsed.take()
             add_marker(
-                scan.markers,
+                scan.located,
                 marker.machine,
                 marker.id,
                 files[i].commit,
@@ -529,7 +532,7 @@ def unique_sorted(items: List[String]) -> List[String]:
 
 
 def summary(
-    result: MergedResult, targets: List[MergedTarget], dry_run: Bool
+    result: MergedResult, located: List[Located], dry_run: Bool
 ) -> String:
     """The one stdout line a non-JSON scan prints when it stamped a row.
 
@@ -540,9 +543,9 @@ def summary(
         return ""
     var commits = List[String]()
     for i in range(len(result.stamped)):
-        for j in range(len(targets)):
-            if targets[j].text() == result.stamped[i]:
-                commits.append(first_nine(targets[j].commit))
+        for j in range(len(located)):
+            if located[j].text() == result.stamped[i]:
+                commits.append(first_nine(located[j].commit))
                 break
     var shorts = unique_sorted(commits)
     var verb = "resolved"
@@ -653,17 +656,17 @@ def handle_resolve_merged(args: List[String]) raises -> Outcome:
         chosen = scan_reports(root, since)
         # A trailer in a repo that resolves from files is stale, not
         # malformed: say it once, and read only the files.
-        stale_trailer = len(trailer_scan.markers) > 0
+        stale_trailer = len(trailer_scan.located) > 0
     else:
         chosen = trailer_scan^
 
     var result = MergedResult()
-    if len(chosen.markers) > 0:
+    if len(chosen.located) > 0:
         var path = resolve_db(options.db)
         if Path(path).is_file():
             try:
                 result = resolve_merged_rows(
-                    path, chosen.markers, local_hostname(), options.dry_run
+                    path, chosen.located, local_hostname(), options.dry_run
                 )
             except e:
                 var notes = notes_for(
@@ -704,4 +707,4 @@ def handle_resolve_merged(args: List[String]) raises -> Outcome:
             render_json(result, hidden, options.dry_run),
             notes,
         )
-    return Outcome.ok_notes(summary(result, chosen.markers, options.dry_run), notes)
+    return Outcome.ok_notes(summary(result, chosen.located, options.dry_run), notes)

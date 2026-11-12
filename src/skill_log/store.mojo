@@ -1281,12 +1281,21 @@ def stamp_attempt(path: String, id: Int, fix: String) raises -> ResolvedRow:
 # ------------------------------------------------------------ merged scans
 
 
-struct MergedTarget(Movable):
-    """One row a scanned commit names, and the commit that names it.
+# The skip reasons `resolve-merged` reports. SPEC §5.10 fixes these
+# tokens: the `--json` `skipped[].reason` and the human note carry the
+# same value, so a caller never has to match prose.
+comptime SKIP_UNKNOWN_ID = "unknown_id"
+comptime SKIP_FOREIGN = "foreign"
+comptime SKIP_LOGGED_AFTER = "logged_after_commit"
+
+
+struct Located(Movable):
+    """One marker the scan found, and the commit and time it came from.
 
     A marker parses to `machine#id`; the commit and its epoch are the
     stamp and the guard. The epoch is the commit time in seconds, which
-    is what a row logged after the commit is compared against.
+    is what a row logged after the commit is compared against. This is
+    the scan's yield: only the resolution plan consumes it.
     """
 
     var machine: String
@@ -1307,12 +1316,17 @@ struct MergedTarget(Movable):
         self.epoch = epoch
 
     def text(self) -> String:
-        """The marker this target is named by."""
+        """The marker this located value is named by."""
         return self.machine + "#" + String(self.id)
 
 
 struct MergedSkip(Movable):
-    """One marker a scan could not stamp, and the reason it was skipped."""
+    """One marker a scan could not stamp, and the reason it was skipped.
+
+    The reason is a fixed token (SPEC §5.10): `unknown_id`, `foreign`
+    or `logged_after_commit`. The human note wraps it, but the value a
+    `--json` caller reads is the token.
+    """
 
     var row: String
     var reason: String
@@ -1400,50 +1414,88 @@ def merged_row_index(
     return -1
 
 
-def evaluate_targets(
-    targets: List[MergedTarget],
+def rows_carry_machine(
+    rows: List[ResolutionRow], machine: String, local_host: String
+) -> Bool:
+    """True when any row's marker names `machine`.
+
+    A marker whose machine is not this host's spelling is foreign: its
+    store is on another machine, and this scan never stamps it. A local
+    marker whose id is absent is `unknown_id` instead. The two are told
+    apart here so `plan` never has to reach for the hostname itself.
+    """
+    for i in range(len(rows)):
+        var stored = rows[i].machine
+        if stored == "":
+            stored = local_host
+        if stored == machine:
+            return True
+    return False
+
+
+def plan(
+    located: List[Located],
     rows: List[ResolutionRow],
     local_host: String,
 ) -> MergedResult:
-    """Sort every target into stamped, unchanged or skipped.
+    """Decide each located marker: stamp, unchanged, or skip with a reason.
 
-    A non-empty `stamped` list is the only change signal: every target
-    lands in exactly one of the three lists, so a second pass that finds
-    a row another writer resolved answers `unchanged` instead.
+    Pure: no git, no clock, no store. The caller owns the scan (which
+    yields `located`) and the writer (`apply`, via `resolve_merged_rows`);
+    this only decides. Every marker lands in exactly one of the three
+    lists, so a second scan that finds the row already carrying this
+    commit answers `unchanged` instead of stamping again.
+
+    Newest wins because the scan walks commits newest first and the plan
+    sees one marker per row. A row stamped with the *same* commit is
+    unchanged; a row stamped with a *different* commit is restamped, so
+    an amended fix supersedes the earlier one — idempotency is a second
+    scan seeing the same commit, not a freeze on the first fix.
     """
     var result = MergedResult()
-    for i in range(len(targets)):
-        var marker = targets[i].text()
+    for i in range(len(located)):
+        var marker = located[i].text()
+        if located[i].machine != local_host and not rows_carry_machine(
+            rows, located[i].machine, local_host
+        ):
+            # A marker naming another machine: its store is elsewhere.
+            # Reported, never stamped.
+            var foreign = MergedSkip(marker, SKIP_FOREIGN)
+            result.skipped.append(foreign^)
+            continue
         var index = merged_row_index(
-            rows, targets[i].machine, targets[i].id, local_host
+            rows, located[i].machine, located[i].id, local_host
         )
         if index == -1:
-            var missing = MergedSkip(marker, "not in this db")
+            # A local marker whose id this store does not hold.
+            var missing = MergedSkip(marker, SKIP_UNKNOWN_ID)
             result.skipped.append(missing^)
             continue
-        if rows[index].fix != "":
-            # Resolution is idempotent: the row already carries a fix, so
-            # a second hook run changes nothing, even when a newer commit
-            # in this range names it again.
+        if rows[index].fix != "" and rows[index].fix == located[i].commit:
+            # The same fix again: the row already carries this commit,
+            # so a second scan changes nothing.
             result.unchanged.append(marker)
             continue
-        if rows[index].logged > targets[i].epoch:
+        if rows[index].logged > located[i].epoch:
             # The row was written after that commit: an id reused by a
             # rebuilt log, not the row the commit fixed.
-            var later = MergedSkip(marker, "logged after that commit")
+            var later = MergedSkip(marker, SKIP_LOGGED_AFTER)
             result.skipped.append(later^)
             continue
+        # An empty fix, or a different one: the row is stamped with this
+        # commit. A differing commit is a restamp, so an amended fix
+        # supersedes the earlier one.
         result.stamped.append(marker)
     return result^
 
 
 def resolve_merged_rows(
     path: String,
-    targets: List[MergedTarget],
+    located: List[Located],
     local_host: String,
     dry_run: Bool,
 ) raises -> MergedResult:
-    """Stamp every row the scanned targets name.
+    """Apply: stamp every row the scanned markers name.
 
     The first pass reads through a read connection: when nothing would
     change (the hook's usual case) no write path is opened at all, and a
@@ -1452,7 +1504,7 @@ def resolve_merged_rows(
     a transaction, and stamps every changed row with one resolution time.
     """
     var result = MergedResult()
-    if len(targets) == 0:
+    if len(located) == 0:
         return result^
     if not Path(path).is_file():
         # The store vanished between the caller's check and here. A hook
@@ -1472,14 +1524,14 @@ def resolve_merged_rows(
     var rows = List[ResolutionRow]()
     if is_skill_log_store(db):
         rows = read_resolution_rows(db)
-    var preview = evaluate_targets(targets, rows, local_host)
+    var preview = plan(located, rows, local_host)
     if dry_run or len(preview.stamped) == 0:
         return preview^
 
     var deadline = now_seconds() + WRITE_BUDGET_SECONDS
     while True:
         try:
-            return merged_write_attempt(path, targets, local_host)
+            return merged_write_attempt(path, located, local_host)
         except e:
             var message = String(e)
             if not is_busy(message):
@@ -1491,12 +1543,13 @@ def resolve_merged_rows(
 
 
 def merged_write_attempt(
-    path: String, targets: List[MergedTarget], local_host: String
+    path: String, located: List[Located], local_host: String
 ) raises -> MergedResult:
-    """One write attempt: open, re-read, re-decide, stamp, commit.
+    """The writer `apply`: open, re-read, re-decide, stamp, commit.
 
-    One timestamp is read inside the transaction and written to every row
-    this attempt resolves, so a pull's rows share the moment they closed.
+    Applying the plan is the only write. One timestamp is read inside
+    the transaction and written to every row this attempt resolves, so a
+    pull's rows share the moment they closed.
     """
     var result = MergedResult()
     if not Path(path).is_file():
@@ -1514,7 +1567,7 @@ def merged_write_attempt(
     var tx = db.transaction()
     var stamp = local_timestamp(db)
     var rows = read_resolution_rows(db)
-    var resolved = evaluate_targets(targets, rows, local_host)
+    var resolved = plan(located, rows, local_host)
     if len(resolved.stamped) == 0:
         # A concurrent writer closed every row between the preview and
         # here. There is nothing to commit; the guard rolls back.
@@ -1528,22 +1581,22 @@ def merged_write_attempt(
     )
     for i in range(len(resolved.stamped)):
         var target_index = -1
-        for j in range(len(targets)):
-            if targets[j].text() == resolved.stamped[i]:
+        for j in range(len(located)):
+            if located[j].text() == resolved.stamped[i]:
                 target_index = j
                 break
         if target_index == -1:
             continue
         var row_index = merged_row_index(
             rows,
-            targets[target_index].machine,
-            targets[target_index].id,
+            located[target_index].machine,
+            located[target_index].id,
             local_host,
         )
         if row_index == -1:
             continue
         update.reset()
-        update.bind_text(1, targets[target_index].commit)
+        update.bind_text(1, located[target_index].commit)
         update.bind_text(2, stamp)
         update.bind_int(3, rows[row_index].id)
         _ = update.step()
