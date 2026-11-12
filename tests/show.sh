@@ -187,9 +187,11 @@ check "the table leaves no trailing whitespace" \
 run show --json
 check "json exits 0" "$STATUS" "0"
 check "json is one object per row" "$(printf '%s\n' "$OUT" | grep -c .)" "3"
-check "json carries every column flat" \
-    "$(printf '%s\n' "$OUT" | grep -o '"\(id\|ts\|skill\|harness\|session\|parent\|model\|repo\|worktree\|project\|t3_thread\|machine\|fix\|resolved_at\|marker\|problems\)":' | wc -l)" \
-    "48"
+# The key set is pinned, not counted: a count proves that many keys are
+# there, not which. The expected string is the one `tests/store.sh` pins
+# for the same object.
+check "json carries exactly the row's keys" "$(json_keys "$(printf '%s\n' "$OUT" | head -1)")" \
+    "fix harness id machine marker model parent problems project repo resolved_at session skill t3_thread ts worktree"
 check "json carries the problems array" \
     "$(printf '%s\n' "$OUT" | grep -c '"problems":\["first issue","second issue"\]')" "1"
 check "json carries the marker" \
@@ -589,13 +591,13 @@ fi
 # A read that arrives while another process holds the write lock waits
 # for it (the connection's busy timeout) instead of failing: a routine
 # concurrent `add` must not turn a `show` into "database is locked".
-(
-    printf 'BEGIN IMMEDIATE;\n'
-    sleep 0.5
-    printf 'ROLLBACK;\n'
-) | sqlite3 "$DB" >/dev/null &
+#
+# The lock is held by a real second process, and the case waits for that
+# process to say it holds the lock — a handshake, not a sleep that hopes
+# the other side got there first.
+hold_lock "$DB" "$SCRATCH/lock-ready" 2 &
 HOLDER=$!
-sleep 0.1
+wait_for "$SCRATCH/lock-ready"
 run show --last 1
 wait "$HOLDER"
 check "a read waits for a concurrent writer" "$STATUS" "0"

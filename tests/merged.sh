@@ -71,8 +71,8 @@ commit_file() {
 REPO="$(new_repo trailer)"
 DB="$SCRATCH/trailer.db"
 
-"$BIN" add --skill alpha --machine $H --db "$DB" >/dev/null
-"$BIN" add --skill beta --machine $H --db "$DB" >/dev/null
+"$BIN" add --skill alpha --machine "$H" --db "$DB" >/dev/null
+"$BIN" add --skill beta --machine "$H" --db "$DB" >/dev/null
 commit_file "$REPO" "Skill-log-Fix: $H#1, $H#2"
 FIRST="$(git -C "$REPO" rev-parse HEAD)"
 
@@ -112,7 +112,7 @@ check "--quiet prints nothing" "$(cat "$SCRATCH/quiet.out")$(cat "$SCRATCH/quiet
 # A row logged after the named commit is an id reused by a rebuilt log.
 commit_file "$REPO" "Skill-log-Fix: $H#3"
 sleep 1
-"$BIN" add --skill logged-later --machine $H --db "$DB" >/dev/null
+"$BIN" add --skill logged-later --machine "$H" --db "$DB" >/dev/null
 (
     cd "$REPO" || exit 1
     "$BIN" resolve-merged --db "$DB" >/dev/null 2>"$SCRATCH/later.err"
@@ -233,7 +233,7 @@ check "the foreign marker stamped nothing" \
 check "the foreign marker is not in the resolved answer" \
     "$(json_array "$(cat "$SCRATCH/foreignrow.json")" resolved)" ""
 
-"$BIN" add --skill hidden --machine $H --db "$DB" >/dev/null
+"$BIN" add --skill hidden --machine "$H" --db "$DB" >/dev/null
 n="$(date +%s%N)"
 printf '%s' "$n" >"$REPO/file"
 git -C "$REPO" add file
@@ -276,8 +276,8 @@ check "--quiet hides the ignored marker" \
 # block did return a value, which is the case the old scan missed.
 REPO_PB="$(new_repo partial-burial)"
 DB_PB="$SCRATCH/partial-burial.db"
-"$BIN" add --skill buried-row --machine $H --db "$DB_PB" >/dev/null
-"$BIN" add --skill last-block-row --machine $H --db "$DB_PB" >/dev/null
+"$BIN" add --skill buried-row --machine "$H" --db "$DB_PB" >/dev/null
+"$BIN" add --skill last-block-row --machine "$H" --db "$DB_PB" >/dev/null
 printf x >"$REPO_PB/file"
 git -C "$REPO_PB" add file
 git -C "$REPO_PB" commit -q \
@@ -308,7 +308,7 @@ check "the buried marker stamped nothing" \
 
 REPO2="$(new_repo newest)"
 DB2="$SCRATCH/newest.db"
-"$BIN" add --skill named-twice --machine $H --db "$DB2" >/dev/null
+"$BIN" add --skill named-twice --machine "$H" --db "$DB2" >/dev/null
 commit_file "$REPO2" "Skill-log-Fix: $H#1"
 OLDER="$(git -C "$REPO2" rev-parse HEAD)"
 commit_file "$REPO2" "Skill-log-Fix: $H#1"
@@ -331,7 +331,7 @@ check "the row appears once in the answer" \
 # second scan of the *same* commit, not a freeze on the first fix.
 REPO7="$(new_repo restamp)"
 DB7="$SCRATCH/restamp.db"
-"$BIN" add --skill amended --machine $H --db "$DB7" >/dev/null
+"$BIN" add --skill amended --machine "$H" --db "$DB7" >/dev/null
 commit_file "$REPO7" "Skill-log-Fix: $H#1"
 OLDER_FIX="$(git -C "$REPO7" rev-parse HEAD)"
 (
@@ -374,10 +374,10 @@ check "a re-scan leaves the stamp alone" \
 
 REPO3="$(new_repo since)"
 DB3="$SCRATCH/since.db"
-"$BIN" add --skill old --machine $H --db "$DB3" >/dev/null
+"$BIN" add --skill old --machine "$H" --db "$DB3" >/dev/null
 commit_file "$REPO3" "Skill-log-Fix: $H#1"
 BASE="$(git -C "$REPO3" rev-parse HEAD)"
-"$BIN" add --skill new --machine $H --db "$DB3" >/dev/null
+"$BIN" add --skill new --machine "$H" --db "$DB3" >/dev/null
 commit_file "$REPO3" "Skill-log-Fix: $H#2"
 (
     cd "$REPO3" || exit 1
@@ -414,7 +414,7 @@ check_contains "an option-shaped --since says what it needs" \
 
 REPO4="$(new_repo dry)"
 DB4="$SCRATCH/dry.db"
-"$BIN" add --skill dry-run --machine $H --db "$DB4" >/dev/null
+"$BIN" add --skill dry-run --machine "$H" --db "$DB4" >/dev/null
 commit_file "$REPO4" "Skill-log-Fix: $H#1"
 (
     cd "$REPO4" || exit 1
@@ -472,9 +472,9 @@ printf 'base\n' >"$REPO6/base"
 git -C "$REPO6" add -A
 git -C "$REPO6" commit -q -m base
 DB6="$SCRATCH/artifact.db"
-"$BIN" add --skill by-file --machine $H --db "$DB6" >/dev/null
-"$BIN" add --skill by-trailer --machine $H --db "$DB6" >/dev/null
-printf "$H#1\n" >"$REPO6/.skill-log/reports/fix.md"
+"$BIN" add --skill by-file --machine "$H" --db "$DB6" >/dev/null
+"$BIN" add --skill by-trailer --machine "$H" --db "$DB6" >/dev/null
+printf "%s#1\n" "$H" >"$REPO6/.skill-log/reports/fix.md"
 printf 'change\n' >"$REPO6/file"
 git -C "$REPO6" add -A
 git -C "$REPO6" commit -q -m "report the fix" -m "Skill-log-Fix: $H#2"
@@ -501,8 +501,8 @@ check "a bounded second scan prints nothing" \
 
 # A hand-written bad line is reported and never swallowed; the good line
 # still resolves.
-"$BIN" add --skill by-hand --machine $H --db "$DB6" >/dev/null
-printf "$H#3\nnot-a-marker\n" >"$REPO6/.skill-log/reports/bad.md"
+"$BIN" add --skill by-hand --machine "$H" --db "$DB6" >/dev/null
+printf "%s#3\nnot-a-marker\n" "$H" >"$REPO6/.skill-log/reports/bad.md"
 printf 'change\n' >"$REPO6/file"
 git -C "$REPO6" add -A
 git -C "$REPO6" commit -q -m "a hand-edited report"
@@ -517,8 +517,8 @@ check "the good line in the same report still resolves" \
     "$(sqlite3 "$DB6" "select fix <> '' from invocations where id = 3")" "1"
 
 # A full scan reads every report file in the tree.
-"$BIN" add --skill manual --machine $H --db "$DB6" >/dev/null
-printf "$H#4\n" >"$REPO6/.skill-log/reports/manual.md"
+"$BIN" add --skill manual --machine "$H" --db "$DB6" >/dev/null
+printf "%s#4\n" "$H" >"$REPO6/.skill-log/reports/manual.md"
 printf 'change\n' >"$REPO6/file"
 git -C "$REPO6" add -A
 git -C "$REPO6" commit -q -m "a manual report"

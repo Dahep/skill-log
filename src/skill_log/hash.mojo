@@ -14,9 +14,9 @@ The algorithm is FNV-1a, 64-bit, over the text's bytes:
 - prime `0x100000001b3`
 - each byte: `h = (h XOR byte) * prime` modulo 2^64
 
-FNV-1a 64-bit is self-contained, deterministic and documented here as
-such (the comment above is the record the contract asks for). It is a
-non-cryptographic hash: its job is drift detection on text the tool
+FNV-1a 64-bit is self-contained and deterministic, and it is spelled out
+above so the bytes that go into a fence are reproducible by anyone. It
+is a non-cryptographic hash: its job is drift detection on text the tool
 itself wrote, not tamper-proofing against an adversary. The output is
 16 lowercase hex digits, and it is the spelling that goes into the
 fence (`hash=...`) and into the seeded-from record.

@@ -42,10 +42,8 @@ never applied.
 ## The vendored stamp
 
 A skill whose frontmatter carries `metadata:` with a `source:` key is a
-copy of someone else's skill and is skipped entirely (see
-`document.is_vendored`). This is a ticket-level decision: the brief asks
-for this machine's vendored-skill convention, the dotfiles repo's
-vendored `tuicr` skill being the model.
+copy of someone else's skill and is skipped entirely (SPEC §7); see
+`document.is_vendored`.
 """
 
 from std.os import getenv, listdir, makedirs, remove, rmdir
@@ -56,7 +54,6 @@ from skill_log.document import (
     STATE_EDITED,
     STATE_MISSING,
     STATE_OK,
-    STATE_STALE,
     STATE_VENDORED,
     append,
     classify,
@@ -341,10 +338,9 @@ def moved_suffix(moved: String) -> String:
 def validate_effective(name: String, template: Template) raises:
     """Refuse a template whose placeholders are wrong, by name.
 
-    This is the boundary guard the brief asks for: a usage-log template
-    that lost its `<name>` or its `<command> add` invocation would
-    silently stop every skill from logging, so it is refused before it
-    renders.
+    This is the boundary guard SPEC §7 names: a usage-log template that
+    lost its `<name>` or its `<command> add` invocation would silently
+    stop every skill from logging, so it is refused before it renders.
     """
     try:
         validate_template(name, template.content)

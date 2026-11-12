@@ -14,7 +14,7 @@ reads, matches, rewrites or deletes a byte outside the fence — not even
 with `--force`. A skill that has usage-log text but no fence is
 `missing`; reconciling the old section is a human task.
 
-This module answers the four questions the fence makes distinguishable,
+This module answers the five questions the fence makes distinguishable,
 and keeps them distinct (ADR-0003):
 
 1. **Is there a block at all?** `parse` splits the text into
@@ -25,7 +25,11 @@ and keeps them distinct (ADR-0003):
 3. **Did the template move since the block was written?** The fence's
    `template` hash is the hash of the template source that rendered it.
    The current template's own hash is compared (`stale` vs `ok`).
-4. **Is the skill vendored?** A vendor stamp means skip entirely
+4. **Is the content the current render?** The current render is the
+   template rendered for *this* skill's name and the resolved binary
+   path, so its content hash is compared too. A block that names another
+   skill or another binary is an older render (`stale`).
+5. **Is the skill vendored?** A vendor stamp means skip entirely
    (`vendored`).
 
 The shipped-default-moved question is *not* one of these: it lives in
@@ -34,8 +38,7 @@ the state directory's seeded-from record, outside this module.
 `rewrite` and `append` (ticket #18) are the write half: both splice
 through `parse`'s `before · block · after` split, so no byte outside the
 fence is touched — `rewrite` replaces the block in place, `append` adds
-one at the end of a document that has none. Everything else here is
-unchanged.
+one at the end of a document that has none.
 """
 
 from skill_log.hash import fnv1a64_hex
@@ -52,15 +55,12 @@ comptime STATE_EDITED = "edited"
 comptime STATE_VENDORED = "vendored"
 
 # The vendor stamp: a skill whose frontmatter carries `metadata:` with a
-# `source:` key is a copy of someone else's skill (this machine's
-# vendored-skill convention — the dotfiles repo's vendored `tuicr` skill
-# is the model). Such a skill is skipped entirely: its usage-log wording
-# belongs to its upstream, not to this tool. The scan is line-based and
-# prefix-based on purpose — no YAML parser is needed to recognise the
-# two-line shape, and a key spelled `source:` at the start of a line
-# inside a frontmatter `metadata:` block is the stamp. This is a
-# ticket-level decision (the brief), documented here and in
-# `skills audit --help`.
+# `source:` key is a copy of someone else's skill (SPEC §7). Such a
+# skill is skipped entirely: its usage-log wording belongs to its
+# upstream, not to this tool. The scan is line-based and prefix-based on
+# purpose — no YAML parser is needed to recognise the two-line shape,
+# and a key spelled `source:` at the start of a line inside a
+# frontmatter `metadata:` block is the stamp.
 comptime FRONTMATTER = "---"
 comptime METADATA_KEY = "metadata:"
 comptime SOURCE_KEY = "source:"

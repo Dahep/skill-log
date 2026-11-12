@@ -28,7 +28,12 @@ def render_verb(verb: Verb) -> String:
 
 def top_level_help(verbs: List[Verb]) -> String:
     """The top-level usage: what the tool is, how to call it, and the
-    verbs it knows, each with real invocations."""
+    verbs it knows.
+
+    The verb list is one line per verb, not one example each: the
+    per-verb invocations live in the verb's own `--help`, which is
+    where a caller looks for them.
+    """
     var text = "skill-log — record agent-skill invocations and the friction they produced\n"
     text += "\nusage:\n"
     text += "  skill-log <verb> [options]\n"

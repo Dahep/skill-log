@@ -542,6 +542,11 @@ matches, rewrites or deletes it. A skill that has usage-log text but no fence
 is `missing`, and adoption appends a fenced block; reconciling the old section
 is a human task.
 
+The vendor stamp is a frontmatter `metadata:` block carrying a `source:` key.
+Such a skill is skipped entirely: its wording belongs to its upstream, not to
+this tool. The stamp is recognised by its shape, not by a YAML parser — a
+`source:` key at the start of a line inside a frontmatter `metadata:` block.
+
 ### Bundled skills
 
 `setup --skills-dir` installs two skills:

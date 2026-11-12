@@ -49,7 +49,9 @@ run_lines() {
 # The shell source that carries a GitHub expression. An expression
 # there is text the shell parses, so a value the workflow did not
 # write becomes shell source.
-interpolated="$(run_lines | grep -n '\${{' || true)"
+# The pattern is a literal: a GitHub expression, written as text.
+# shellcheck disable=SC2016  # the expression is the text being looked for
+interpolated="$(run_lines | grep -nF '${{' || true)"
 if [ -n "$interpolated" ]; then
     fail "the run: blocks interpolate a GitHub expression into shell source"
     printf '     %s\n' "$interpolated"

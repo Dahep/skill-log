@@ -231,39 +231,6 @@ INSERT OR REPLACE INTO session_v2 (id, model) VALUES ('$1', '$2');
 SQL
 }
 
-# hold_lock <db> <ready-file> <seconds>: a second process that holds the
-# store's write lock for a while, so the case can prove that a write
-# behind a real lock is retried (and that an exhausted budget fails
-# quietly). The transaction is never committed while the lock is held.
-hold_lock() {
-    python3 - "$1" "$2" "$3" <<'PY'
-import sqlite3
-import sys
-import time
-
-db = sqlite3.connect(sys.argv[1], timeout=30)
-db.execute("BEGIN IMMEDIATE")
-db.execute(
-    "INSERT INTO invocations (ts, skill, machine) VALUES (?, ?, ?)",
-    ("2026-01-01T00:00:00+00:00", "lock-holder", "boxA"),
-)
-with open(sys.argv[2], "w", encoding="utf-8") as handle:
-    handle.write("ready")
-time.sleep(float(sys.argv[3]))
-db.rollback()
-db.close()
-PY
-}
-
-# wait_for <file>: wait for a readiness file, up to ten seconds.
-wait_for() {
-    local n=0
-    while [ ! -f "$1" ] && [ "$n" -lt 100 ]; do
-        sleep 0.1
-        n=$((n + 1))
-    done
-}
-
 # mkolderdb <path>: a pre-1.0 skill-log store — the reference's v1 shape:
 # the two tables, the old columns. The 1.0 rule refuses it by name and
 # never converts it.

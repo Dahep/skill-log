@@ -22,6 +22,8 @@ lives in `CONTEXT.md`; design decisions in `docs/adr/`.
   bundle.
 - `scripts/test.sh` — the suites under `tests/`, against `dist/`.
   `--build` rebuilds first. Each suite also runs on its own.
+  `tests/packaging.sh` is the one suite the default gate leaves out: it needs
+  docker, so it runs on CI and on demand, not in the offline gate.
 - The suites are black-box: they run the binary as a process with a scratch
   HOME and a scratch store. `tests/lib.sh` holds the shared assertions —
   `check`, `check_contains`, `check_absent`, `check_one_line`, `tally`, and

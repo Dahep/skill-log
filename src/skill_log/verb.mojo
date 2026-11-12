@@ -16,8 +16,9 @@ struct Verb:
     `value_flags` lists the flags that consume the argument after them.
     The dispatcher needs that to tell a help request from a *value*
     spelled like one: `add --skill x -h` asks for help, while
-    `add --problem -h` records the problem `-h`. The list is written once
-    here, next to the usage line that documents the same flags.
+    `add --problem -h` records the problem `-h`. The list sits beside
+    the usage line that documents the same flags, so the two are read
+    together.
     """
 
     var name: String

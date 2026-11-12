@@ -143,6 +143,46 @@ print(" ".join(sorted(json.loads(sys.stdin.read()).keys())))
 '
 }
 
+# hold_lock <db> <ready-file> <seconds>: a second process that holds the
+# store's write lock for a while, so a case can prove that a write
+# behind a real lock is retried (and that an exhausted budget fails
+# quietly). The transaction is never committed while the lock is held.
+#
+# The lock is held for real: a reader that arrives behind it has to
+# wait, which is what the case asserts.
+hold_lock() {
+    python3 - "$1" "$2" "$3" <<'PY'
+import sqlite3
+import sys
+import time
+
+db = sqlite3.connect(sys.argv[1], timeout=30)
+db.execute("BEGIN IMMEDIATE")
+db.execute(
+    "INSERT INTO invocations (ts, skill, machine) VALUES (?, ?, ?)",
+    ("2026-01-01T00:00:00+00:00", "lock-holder", "boxA"),
+)
+with open(sys.argv[2], "w", encoding="utf-8") as handle:
+    handle.write("ready")
+time.sleep(float(sys.argv[3]))
+db.rollback()
+db.close()
+PY
+}
+
+# wait_for <file>: wait for a readiness file, up to ten seconds.
+#
+# The handshake a case needs when it depends on another process being
+# ready: the writer says it is, and the case waits for that, instead of
+# sleeping and hoping.
+wait_for() {
+    local n=0
+    while [ ! -f "$1" ] && [ "$n" -lt 100 ]; do
+        sleep 0.1
+        n=$((n + 1))
+    done
+}
+
 # tally: the report line and the suite's exit status.
 tally() {
     printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"

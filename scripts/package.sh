@@ -221,7 +221,10 @@ NAME="skill-log-$VERSION-$TARGET.tar.gz"
 
 [ -x "$STAGE/skill-log" ] || die "$STAGE/skill-log is missing after the build"
 
-staged="$(ls "$STAGE/lib" | sort)"
+# The staged libraries, by name and not by `ls`: a glob cannot pick up
+# a stray file the way a directory listing can, and the names are what
+# the archive must carry.
+staged="$(printf '%s\n' "$STAGE"/lib/* | sed "s|^$STAGE/lib/||" | sort)"
 expected="$(printf '%s\n' \
     libAsyncRTRuntimeGlobals.so \
     libKGENCompilerRTShared.so \

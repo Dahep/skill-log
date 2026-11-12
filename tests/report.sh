@@ -7,8 +7,8 @@
 # and repositories: artifact mode writes `.skill-log/reports/<slug>.md`,
 # one marker per line, atomically and only after validation; trailer mode
 # prints the `Skill-log-Fix:` line and writes nothing. The store is built
-# through `add`; `sqlite3` only resolves a row by hand (there is no
-# `resolve` verb yet) and inspects what the file holds.
+# through `add` and `resolve`; `sqlite3` only inspects what the file
+# holds.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -64,9 +64,10 @@ check "the third row is written" "$STATUS" "0"
 run add --skill gamma --machine boxA
 check "the fourth row is written" "$STATUS" "0"
 
-sqlite3 "$DB" "update invocations
-    set fix = 'abc123456789', resolved_at = '2026-01-01T00:00:00+00:00'
-    where id = 3"
+# The row a later change already resolved: the CLI resolves it, the way
+# a real change does.
+run resolve --id 3 --fix abc123456789 --db "$DB"
+check "the third row is resolved" "$STATUS" "0"
 
 # --------------------------------------------------------------- checkouts
 

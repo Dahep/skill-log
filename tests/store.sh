@@ -141,9 +141,15 @@ check "a full-buffer stdin pipe stores nothing beyond the pipe" \
     "$(sqlite3 "$DB" "select count(*) from problems where invocation_id = $STDIN_ID
         and problem glob '*[^a]*'")" "0"
 
-# One `read` may return a short count. A producer that writes the line in
-# two chunks is still one line, and both parts must survive.
-( printf 'first part'; sleep 0.2; printf ' second part\n' ) | \
+# A line written in two chunks is still one line, and both parts must
+# survive.
+#
+# What this proves: the reader returns the whole line, whatever the pipe
+# delivered. It does not claim to exercise the short-read path — a pipe
+# may hand both chunks over in one read, and nothing black-box can say
+# which happened. The reader repeats its read until it sees the newline
+# (src/skill_log/stdin.mojo), so both outcomes end at the same place.
+( printf 'first part'; printf ' second part\n' ) | \
     env -u XDG_STATE_HOME -u SKILL_LOG_DB HOME="$HOME_DIR" \
     "$BIN" add --skill stdin --problem - >/dev/null 2>"$SCRATCH/stderr"
 check "a pipe written in two chunks exits 0" "$?" "0"
@@ -394,8 +400,13 @@ check "the read left the store's bytes alone" \
     "$(md5sum <"$RO_DB")" "$RO_BEFORE"
 check "the read left the store's mtime alone" \
     "$(stat -c %Y "$RO_DB")" "$RO_MTIME"
-check "the read created no sidecar" \
-    "$(ls "$RODIR" | grep -c 'skills.db-')" "0"
+# The sidecars, counted with a glob rather than a listing: the glob
+# cannot pick up a name the way `ls | grep` can.
+SIDECARS=0
+for sidecar in "$RODIR"/skills.db-*; do
+    [ -e "$sidecar" ] && SIDECARS=$((SIDECARS + 1))
+done
+check "the read created no sidecar" "$SIDECARS" "0"
 # The directory is writable again, so the next run's cleanup can remove
 # it.
 chmod 0755 "$RODIR"

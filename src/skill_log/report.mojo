@@ -64,7 +64,7 @@ from skill_log.errors import EXIT_FAILURE, EXIT_USAGE, Outcome
 from skill_log.files import read_text, write_text
 from skill_log.flags import parse_positive, take_value
 from skill_log.json import json_bool, json_string, json_string_array
-from skill_log.markers import Marker, marker_text, parse_marker
+from skill_log.markers import marker_text, parse_marker
 from skill_log.store import (
     damaged_failure,
     Filters,

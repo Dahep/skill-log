@@ -6,8 +6,8 @@
 # It exercises the read that answers "which skills need attention": the
 # four distinct counts, the rate, every `--by` key, the `--skill` narrow,
 # the flat JSON line, the empty answer, and the refusals. The fixture is
-# built through `add` (the CLI is the only writer), with one row resolved
-# by hand because there is no `resolve` verb yet, and one worktree under
+# built through `add` and `resolve` (the CLI is the only writer), with one
+# row resolved by the CLI, and one worktree under
 # the sandbox home so the shortening has something to shorten.
 set -uo pipefail
 
@@ -105,11 +105,12 @@ run add --skill gamma --machine boxA --harness claude --model m2 \
     --repo r2 --worktree "$HOME_DIR/wt" --problem "four"
 check "the fourth row is written" "$STATUS" "0"
 
+# The row a change resolved: the CLI resolves it, the way a real change
+# does.
 ALPHA_TWO_ID="$(sqlite3 "$DB" \
     "select id from invocations where skill = 'alpha' and repo = 'r2'")"
-sqlite3 "$DB" "update invocations
-    set fix = 'abc1234', resolved_at = '2026-01-01T00:00:00+00:00'
-    where id = $ALPHA_TWO_ID"
+run resolve --id "$ALPHA_TWO_ID" --fix abc1234 --db "$DB"
+check "the alpha row is resolved" "$STATUS" "0"
 
 # ------------------------------------------------------------------ table
 
