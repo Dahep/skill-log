@@ -4,7 +4,7 @@ A local log of agent-skill invocations: one row per run, plus the problems
 that cost it, so friction can be counted, attributed to a skill, and closed by
 a specific change.
 
-**Status:** build starting. The specification is [SPEC.md](SPEC.md); the
+**Status:** build done, release plumbing in place. The specification is [SPEC.md](SPEC.md); the
 decisions behind it are in [docs/adr/](docs/adr/), and the vocabulary in
 [CONTEXT.md](CONTEXT.md). Until the first release, the Python implementation
 it replaces is archived verbatim in [`reference/`](reference/README.md): that
@@ -30,25 +30,49 @@ A bundled `skill-friction-review` skill reads the log and decides what to fix;
 it never marks a row resolved itself. [SPEC.md](SPEC.md) defines that session
 and the resolution rules.
 
-## Install (planned)
+## Install
 
 ```bash
 mise use -g github:Dahep/skill-log@1.0.0
 skill-log setup --repo ~/dotfiles --skills-dir ~/dotfiles/.agents/skills
 ```
 
+`mise use -g github:Dahep/skill-log@<tag>` installs the released archive
+through mise's `github:` backend: it downloads the
+`skill-log-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz` asset of that tag's
+release and verifies the digest the release records. Pin a version by
+the tag (`@1.0.0`); `@latest` takes the newest release.
+
 `setup` provisions the store, the post-merge hook, the repo report directory,
 and both bundled skills. `setup --check` verifies the result without writing.
+`setup --dry-run` shows what a real run would change.
 
 ## Build and test
 
 ```bash
-scripts/build.sh   # dist/skill-log plus dist/lib/, rpath $ORIGIN/lib
-scripts/test.sh    # the suites against dist/
+scripts/build.sh    # dist/skill-log plus dist/lib/, rpath $ORIGIN/lib
+scripts/test.sh     # the suites against dist/
+scripts/package.sh --version vX.Y.Z   # the release archive + its sha256
+tests/packaging.sh  # the archive in a clean container (needs docker)
 ```
 
 The suites are black-box: they run the built binary with a scratch HOME and a
-scratch store. `scripts/test.sh --build` rebuilds first.
+scratch store. `scripts/test.sh --build` rebuilds first. `tests/packaging.sh`
+installs the packed archive into a container with no toolchain and no system
+SQLite and asserts the bundled SQLite is the one that loads; it is a separate
+command, not part of `scripts/test.sh`, so the default gate stays offline.
+
+## Releasing
+
+Push a `vX.Y.Z` tag and the release workflow (`.github/workflows/release.yml`)
+does the rest: it installs the pinned toolchain, builds with the bundled
+SQLite fetched and verified against the runner's glibc floor (never a
+development machine's copy), packs the archive and its sha256, runs the
+packaging test in a clean container, creates the release for the tag,
+uploads the assets, and attaches a build-provenance attestation
+(`gh attestation verify` checks it). A `workflow_dispatch` run builds and
+tests without publishing; the workflow also installs the published tag back
+through mise's `github:` backend in a clean container afterwards.
 
 ## Command surface
 
