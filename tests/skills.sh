@@ -69,6 +69,80 @@ count_examples() {
     printf '%s\n' "$1" | sed -n '/^examples:$/,$p' | grep -c '^  ' || true
 }
 
+# ------------------------------------------- a hostile name is quoted
+#
+# The rendered block is shell source: the agent copies the command line
+# out of it and runs it. So a skill name or a binary path that carries
+# shell metacharacters must be quoted, or the block hands the reader a
+# command nobody meant to write.
+#
+# The name below is `alpha; touch <marker>`: run the rendered line and
+# the marker appears. With the name quoted, it does not — and the line
+# still runs the binary.
+HOSTILE="$SCRATCH/hostile"
+rm -rf "$HOSTILE"
+mkdir -p "$HOSTILE/skill"
+MARKER="$SCRATCH/hostile-marker"
+rm -f "$MARKER"
+printf -- '---\nname: alpha; touch %s\ndescription: a hostile fixture\n---\n\n# Fixture\n' \
+    "$MARKER" > "$HOSTILE/skill/SKILL.md"
+run skills adopt --dir "$HOSTILE"
+check "adopt renders a hostile skill name" "$STATUS" "0"
+HOSTILE_BLOCK="$(cat "$HOSTILE/skill/SKILL.md")"
+# The command line is quoted: the name stands inside single quotes, and
+# the embedded quote is closed, escaped and reopened.
+check_contains "the hostile name is quoted in the command line" \
+    "$HOSTILE_BLOCK" "'alpha; touch $MARKER'"
+check_absent "the hostile name is not interpolated bare" \
+    "$HOSTILE_BLOCK" "add --skill alpha; touch"
+# And the rendered line is safe to run.
+CMD_LINE="$(printf '%s\n' "$HOSTILE_BLOCK" \
+    | grep -m1 -- '--skill' \
+    | sed 's/^[[:space:]]*//')"
+printf '%s\n' "$CMD_LINE" > "$SCRATCH/hostile.cmd"
+if sh "$SCRATCH/hostile.cmd" --help >/dev/null 2>&1; then
+    pass "the quoted command line runs the binary"
+else
+    fail "the quoted command line does not run the binary: $CMD_LINE"
+fi
+if [ -e "$MARKER" ]; then
+    fail "the quoted command line ran the injected command"
+else
+    pass "the quoted command line did not run the injected command"
+fi
+
+# A binary path with a space in it is quoted the same way, and the
+# rendered line still runs the binary.
+SPACEY="$SCRATCH/spacey bin"
+rm -rf "$SPACEY"
+mkdir -p "$SPACEY/lib"
+cp "$BIN" "$SPACEY/skill-log"
+chmod +x "$SPACEY/skill-log"
+for lib in "$DIST"/lib/*.so*; do
+    [ -e "$lib" ] || continue
+    cp "$lib" "$SPACEY/lib/"
+done
+SPACEY_SKILLS="$SCRATCH/spacey-skills"
+rm -rf "$SPACEY_SKILLS"
+mkdir -p "$SPACEY_SKILLS/gamma"
+printf 'name: gamma\n' > "$SPACEY_SKILLS/gamma/SKILL.md"
+(
+    cd "$SPACEY_SKILLS" || exit 1
+    "$SPACEY/skill-log" skills adopt --dir "$SPACEY_SKILLS" >/dev/null 2>&1
+)
+SPACEY_BLOCK="$(cat "$SPACEY_SKILLS/gamma/SKILL.md")"
+check_contains "a path with a space is quoted" \
+    "$SPACEY_BLOCK" "'$SPACEY/skill-log'"
+SPACEY_CMD="$(printf '%s\n' "$SPACEY_BLOCK" \
+    | grep -m1 -- '--skill' \
+    | sed 's/^[[:space:]]*//')"
+printf '%s\n' "$SPACEY_CMD" > "$SCRATCH/spacey.cmd"
+if sh "$SCRATCH/spacey.cmd" --help >/dev/null 2>&1; then
+    pass "the quoted path with a space runs the binary"
+else
+    fail "the quoted path with a space does not run the binary: $SPACEY_CMD"
+fi
+
 # --------------------------------------------------------------- help
 
 run skills --help
@@ -388,12 +462,51 @@ render_block() {
     python3 - "$1" "$2" "$3" <<'PY'
 import sys
 name, command, template = sys.argv[1], sys.argv[2], sys.argv[3]
-content = template.replace("<name>", name).replace("<command>", command)
+
+
+def shell_quote(value):
+    # The one way a POSIX shell reads a word back literally: single
+    # quotes, with an embedded quote closed, escaped and reopened.
+    return "'" + value.replace("'", "'\\''") + "'"
+
+
+def is_command_line(line):
+    """The line starts a command: the placeholder is the first thing on
+    the line, or it follows a markdown list item's label and colon."""
+    text = line.strip()
+    if not text:
+        return False
+    if text.startswith("<name>") or text.startswith("<command>"):
+        return True
+    if not (text.startswith("- ") or text.startswith("* ") or text.startswith("+ ")):
+        return False
+    colon = text.find(":")
+    if colon < 0:
+        return False
+    rest = text[colon + 1:].strip()
+    return rest.startswith("<name>") or rest.startswith("<command>")
+
+
+def substitute(text, name, command):
+    out = []
+    for line in text.split("\n"):
+        quoted = is_command_line(line)
+        line = line.replace("<name>", shell_quote(name) if quoted else name)
+        line = line.replace("<command>", shell_quote(command) if quoted else command)
+        out.append(line)
+    return "\n".join(out)
+
+
+content = substitute(template, name, command)
+
+
 def fnv1a64(s):
     h = 0xcbf29ce484222325
     for b in s.encode():
         h = ((h ^ b) * 0x100000001b3) & 0xFFFFFFFFFFFFFFFF
     return "%016x" % h
+
+
 th = fnv1a64(template)
 ch = fnv1a64(content)
 print("<!-- skill-log:usage-log template=%s hash=%s -->" % (th, ch))
@@ -576,9 +689,9 @@ check_contains "adopt reports the unchanged skill" "$OUT" "unchanged  ok  ok  $S
 check "the missing skill got exactly one block appended" \
     "$(grep -c '^<!-- skill-log:usage-log' "$SKILLS/missing/SKILL.md")" "1"
 check_contains "the appended block names the skill" \
-    "$(cat "$SKILLS/missing/SKILL.md")" "add --skill missing"
+    "$(cat "$SKILLS/missing/SKILL.md")" "add --skill 'missing'"
 check_contains "the appended block names the resolved binary" \
-    "$(cat "$SKILLS/missing/SKILL.md")" "$EXPECTED_CMD add --skill missing"
+    "$(cat "$SKILLS/missing/SKILL.md")" "'$EXPECTED_CMD' add --skill 'missing'"
 {
     cat "$SCRATCH/skills.orig/missing/SKILL.md"
     render_block missing "$EXPECTED_CMD" "$USAGE_TEMPLATE"
@@ -604,7 +717,7 @@ printf -- '---\nname: frontname\ndescription: a fixture\n---\n\n# Fixture\n' \
 run skills adopt --dir "$FRONT"
 check "adopt renders a skill with frontmatter" "$STATUS" "0"
 check_contains "the block names the frontmatter name" \
-    "$(cat "$FRONT/dirname/SKILL.md")" "add --skill frontname"
+    "$(cat "$FRONT/dirname/SKILL.md")" "add --skill 'frontname'"
 check_absent "the block does not fall back to the directory name" \
     "$(cat "$FRONT/dirname/SKILL.md")" "add --skill dirname"
 
@@ -622,7 +735,7 @@ check "the rewrite changed no byte outside the fence" \
     "$(strip_block "$SKILLS/stale/SKILL.md" | md5sum)" \
     "$(strip_block "$SCRATCH/skills.orig/stale/SKILL.md" | md5sum)"
 check_contains "the rewritten block carries the current render" \
-    "$(cat "$SKILLS/stale/SKILL.md")" "add --skill stale"
+    "$(cat "$SKILLS/stale/SKILL.md")" "add --skill 'stale'"
 
 # edited: left untouched without --force, rewritten with it.
 check "the edited skill is untouched without --force" \
@@ -727,7 +840,7 @@ check "a renamed skill audits stale" \
 run skills adopt --dir "$RENAME" --json
 check "adopt rewrites the renamed skill's block" "$STATUS" "0"
 check_contains "the rewritten block names the new skill" \
-    "$(cat "$RENAME/after/SKILL.md")" "add --skill after"
+    "$(cat "$RENAME/after/SKILL.md")" "add --skill 'after'"
 
 
 # A file with no trailing newline still gets its block on its own line;

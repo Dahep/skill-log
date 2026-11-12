@@ -8,7 +8,31 @@ one module instead of being re-derived per caller.
 The set is the reference implementation's — C0 below 0x20 except tab, plus
 DEL. Tab stays: a person means to type it. Everything else becomes a space,
 which keeps the text readable and cannot start a new line.
+
+The module also owns the shell quoting, because it is the same kind of
+rule: a value that reaches a shell is not text, it is a word, and the one
+way a POSIX shell always reads a word back literally is single quotes.
 """
+
+
+def shell_quote(text: String) -> String:
+    """`text` as one single-quoted shell word.
+
+    A value that reaches a shell — a path, a skill name — is quoted the
+    one way a POSIX shell always reads back literally: single quotes,
+    with an embedded single quote closed, escaped and re-opened. The
+    result is one word whatever the value carries: a space, a semicolon,
+    a dollar sign, a newline.
+    """
+    var out = "'"
+    for c in text.codepoints():
+        var ch = String(c)
+        if ch == "'":
+            out += "'\\''"
+        else:
+            out += ch
+    out += "'"
+    return out
 
 
 def is_control(code: Int) -> Bool:

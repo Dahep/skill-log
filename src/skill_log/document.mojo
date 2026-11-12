@@ -42,6 +42,7 @@ one at the end of a document that has none.
 """
 
 from skill_log.hash import fnv1a64_hex
+from skill_log.text import shell_quote
 
 # The fence, spelled once.
 comptime FENCE_OPEN = "<!-- skill-log:usage-log"
@@ -172,10 +173,98 @@ def substitute(template: String, name: String, command: String) -> String:
     a skill name and a path, and the fence never carries them. Each
     placeholder is replaced everywhere it occurs, so a template that
     names the skill twice gets both names.
+
+    The one exception is a *command line*: a line of the rendered block
+    that carries a command. There the substituted value is shell-quoted,
+    because the reader copies that line out of the block and runs it —
+    a skill named `alpha; touch /tmp/pwned` would otherwise hand the
+    reader a command nobody meant to write. The prose lines keep the
+    plain substitution, so the text stays readable.
     """
-    var out = String(template).replace("<name>", name)
-    out = out.replace("<command>", command)
+    var out = String("")
+    for line in template.split("\n"):
+        var one = String(line)
+        out += substitute_line(one, name, command)
+        out += "\n"
+    # `split` gives one more element than the template has lines, and
+    # the join above added a newline for each of them; the template's
+    # own trailing newline is the one that must survive.
+    if template.endswith("\n"):
+        return String(out[byte=0 : out.byte_length() - 1])
+    return String(out[byte=0 : out.byte_length() - 1])
+
+
+def substitute_line(line: String, name: String, command: String) -> String:
+    """One line of the template, with the placeholders replaced.
+
+    A command line's placeholders are shell-quoted; a prose line's are
+    not. See `substitute` for the rule and `is_command_line` for how a
+    command line is told from a prose line.
+    """
+    var quoted = is_command_line(line)
+    var out = String("")
+    var at = 0
+    var n = line.byte_length()
+    while at < n:
+        var open = line.find("<", at)
+        if open < 0:
+            out += String(line[byte=at:])
+            break
+        var close = String(line[byte=open:]).find(">")
+        if close < 0:
+            out += String(line[byte=at:])
+            break
+        var tag = String(line[byte=open : open + close + 1])
+        var value = String("")
+        var known = True
+        if tag == "<name>":
+            value = name
+        elif tag == "<command>":
+            value = command
+        else:
+            known = False
+        out += String(line[byte=at:open])
+        if not known:
+            # An unknown placeholder is left alone: the template's own
+            # text is the user's, and the tool does not rewrite it.
+            out += "<"
+            at = open + 1
+            continue
+        if quoted:
+            out += shell_quote(value)
+        else:
+            out += value
+        at = open + close + 1
     return out
+
+
+def is_command_line(line: String) -> Bool:
+    """True when the line is a command line of the rendered block.
+
+    A command line is one that *starts* a command: the placeholder is
+    the first thing on the line, after the indentation, or it follows a
+    markdown list item's label — `- **Input**: <command> stats` — whose
+    colon introduces the command.
+
+    The distinction is what keeps the prose readable. "run <command>
+    once" is prose and stays plain; "    <command> add --skill <name>"
+    is a command, and every placeholder on it is quoted, because the
+    reader runs that line.
+    """
+    var text = String(line).strip()
+    if text == "":
+        return False
+    if text.startswith("<name>") or text.startswith("<command>"):
+        return True
+    # A markdown list item whose label ends in a colon introduces what
+    # follows it.
+    if not (text.startswith("- ") or text.startswith("* ") or text.startswith("+ ")):
+        return False
+    var colon = text.find(":")
+    if colon < 0:
+        return False
+    var rest = String(text[byte=colon + 1 :]).strip()
+    return rest.startswith("<name>") or rest.startswith("<command>")
 
 
 def has_placeholder(text: String, placeholder: String) -> Bool:

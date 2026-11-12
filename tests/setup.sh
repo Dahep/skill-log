@@ -691,9 +691,9 @@ check_contains "the version stamp matches --version" "$(cat "$LOG_DOC")" \
 check_contains "the review skill is the rendered template" \
     "$(cat "$REVIEW_DOC")" "# Skill friction review"
 check_contains "the review skill carries its own usage-log block" \
-    "$(cat "$REVIEW_DOC")" "add --skill skill-friction-review"
+    "$(cat "$REVIEW_DOC")" "add --skill 'skill-friction-review'"
 check_contains "the read-and-report skill carries its usage-log block" \
-    "$(cat "$LOG_DOC")" "add --skill skill-log"
+    "$(cat "$LOG_DOC")" "add --skill 'skill-log'"
 
 # A fresh install audits clean: install and audit agree.
 run skills audit --dir "$DIR"
