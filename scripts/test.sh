@@ -28,7 +28,7 @@ fi
 
 FAILED=0
 
-for suite in smoke store context show stats report resolve merged skills setup; do
+for suite in smoke store context show stats report resolve merged skills setup parity; do
 
     printf '\n== %s\n' "$suite"
     if bash "$ROOT/tests/$suite.sh"; then
