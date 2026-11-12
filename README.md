@@ -4,12 +4,10 @@ A local log of agent-skill invocations: one row per run, plus the problems
 that cost it, so friction can be counted, attributed to a skill, and closed by
 a specific change.
 
-**Status:** implementation spec settled ([issue #3](../../issues/3)); build
-starting. The behavior contract lives in [issue #1](../../issues/1), and the
-implementation decisions are recorded in
-[ADR-0001](docs/adr/0001-mojo-binary-and-sqlite.md). Until the first release,
-the Python implementation in the dotfiles repo (`bin/skill-log`) is the
-reference for behavior.
+**Status:** build starting. The specification is [SPEC.md](SPEC.md); the
+decisions behind it are in [docs/adr/](docs/adr/), and the vocabulary in
+[CONTEXT.md](CONTEXT.md). Until the first release, the Python implementation
+in the dotfiles repo (`bin/skill-log`) is the reference for behavior.
 
 ## What it is
 
@@ -46,7 +44,7 @@ and both bundled skills. `setup --check` verifies the result without writing.
 | Command | Purpose |
 | --- | --- |
 | `add` | Record one invocation and zero or more problems. |
-| `show` | Recent rows, filtered by skill, machine, or unresolved state. |
+| `show` | Recent rows, filtered by skill, machine, harness, repo, run, or unresolved state. |
 | `stats` | Per-skill (optionally per-model) invocation, problem, and resolved counts. |
 | `resolve` | Stamp one local row with the commit that fixed it. |
 | `resolve-merged` | Resolve rows from the commits a pull landed; reports in artifact mode, trailers otherwise. |
@@ -74,16 +72,17 @@ JSON goes to stdout; one-line diagnostics go to stderr; no tracebacks.
 
 ## Documentation
 
-- [Product spec](../../issues/1) — behavior contract: problem, solution,
-  command surface, testing decisions, out-of-scope.
-- [Implementation spec](../../issues/3) — Mojo, binary distribution, templates,
-  provisioning.
+- [SPEC.md](SPEC.md) — the specification: behavior, store, commands, reports,
+  resolution, skills, distribution, testing.
 - [ADR-0001](docs/adr/0001-mojo-binary-and-sqlite.md) — why a Mojo binary and a
   vendored SQLite binding.
 - [ADR-0002](docs/adr/0002-explicit-harness-context.md) — explicit harness
   context, adapters, `report`, one store per machine.
 - [ADR-0003](docs/adr/0003-module-map.md) — the module map behind the CLI.
 - [CONTEXT.md](CONTEXT.md) — domain vocabulary and invariants.
+- [Issue #1](https://github.com/Dahep/skill-log/issues/1) and
+  [issue #3](https://github.com/Dahep/skill-log/issues/3) — the historical
+  contracts this specification replaces.
 
 ## License
 
