@@ -317,13 +317,19 @@ check "a review template missing <command> is refused" "$STATUS" "1"
 check_contains "the refusal names the review's <command>" "$ERR" \
     "skill-log: skill-friction-review.md has no <command> placeholder"
 
+# The resolved binary the block names: the tool resolves its own path,
+# so the suite computes the same answer independently. The current
+# render embeds it, so the fixtures need it too.
+EXPECTED_CMD="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$BIN")"
+
 # ------------------------------------------------------- the fixtures
 
 # Build the five state fixtures. The current render is what `ok` matches:
-# a block rendered from the shipped usage-log template. The stale block is
-# an older render (different template bytes). The edited block is a
-# current render with its content changed after the fence hash was
-# written. The vendored skill carries the vendor stamp.
+# the shipped usage-log template rendered for that skill's own name and
+# the resolved binary path. The stale block is an older render of the
+# same template (older wording). The edited block is a current render
+# with its content changed after the fence hash was written. The
+# vendored skill carries the vendor stamp.
 SKILLS="$SCRATCH/skills"
 rm -rf "$SKILLS"
 for s in ok missing stale edited vendored; do
@@ -339,10 +345,10 @@ done
 TEMPLATE_JSON="$("$BIN" skills template show --json)"
 USAGE_TEMPLATE="$(printf '%s' "$TEMPLATE_JSON" | python3 -c 'import json,sys; print(json.loads(sys.stdin.read())["templates"][0]["content"])')"
 
-# Render the current block the way the audit does: substitute <name> ->
-# "skill" and <command> -> "skill-log", then compute the fence the CLI
-# writes. The suite replicates the render to build a fixture without
-# hardcoding a hash — the hash comes from the same bytes the CLI hashes.
+# Render a block the way the audit does: substitute <name> and
+# <command>, then compute the fence the CLI writes. The suite
+# replicates the render to build a fixture without hardcoding a hash —
+# the hash comes from the same bytes the CLI hashes.
 # The template is passed as argv[3] because the heredoc owns stdin.
 render_block() {
     python3 - "$1" "$2" "$3" <<'PY'
@@ -362,11 +368,11 @@ print("<!-- /skill-log:usage-log -->")
 PY
 }
 
-render_block skill skill-log "$USAGE_TEMPLATE" > "$SCRATCH/block.txt"
+render_block ok "$EXPECTED_CMD" "$USAGE_TEMPLATE" > "$SCRATCH/block.txt"
 cat "$SCRATCH/block.txt" >> "$SKILLS/ok/SKILL.md"
 
 # stale: an older render — a different template's block.
-render_block skill skill-log '## Usage log
+render_block ok "$EXPECTED_CMD" '## Usage log
 
 old wording
 ' > "$SCRATCH/block_stale.txt"
@@ -430,7 +436,8 @@ check "audit --json classifies all five states" \
 CLEAN="$SCRATCH/clean"
 rm -rf "$CLEAN"
 mkdir -p "$CLEAN/ok" "$CLEAN/vendored"
-cat "$SCRATCH/block.txt" >> "$CLEAN/ok/SKILL.md"
+render_block ok "$EXPECTED_CMD" "$USAGE_TEMPLATE" > "$SCRATCH/block_clean.txt"
+cat "$SCRATCH/block_clean.txt" >> "$CLEAN/ok/SKILL.md"
 {
     printf -- '---\nname: vendored\nmetadata:\n  source: https://example.com\n---\n'
 } > "$CLEAN/vendored/SKILL.md"
@@ -474,10 +481,6 @@ check "the audit still writes nothing with --dry-run" \
 # are still pristine (the audit is read-only); their originals are kept
 # so byte-exactness can be proved by removing the fence block again.
 cp -r "$SKILLS" "$SCRATCH/skills.orig"
-
-# The resolved binary the adopted block names: the tool resolves its own
-# path, so the suite computes the same answer independently.
-EXPECTED_CMD="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$BIN")"
 
 # strip_block <file>: the file with its fenced usage-log block removed —
 # every byte outside the fence, in order. Comparing it with the
@@ -626,6 +629,72 @@ check "a second adopt changes nothing" \
 check "a second adopt reports only unchanged and skipped" \
     "$(printf '%s\n' "$OUT" | python3 -c 'import json,sys; s={json.loads(l)["action"] for l in sys.stdin if l.strip()}; print(" ".join(sorted(s)))')" \
     "skipped unchanged"
+
+# ------------------------------------------------ a moved binary is stale
+#
+# The block names the resolved binary path. When the binary moves, the
+# current render names a different path, so the block is an older
+# render: `stale`, and `adopt` rewrites it (SPEC §7: `ok` requires the
+# content to match the current render).
+MOVEDBIN="$SCRATCH/moved-bin"
+rm -rf "$MOVEDBIN"
+mkdir -p "$MOVEDBIN"
+cp -r "$DIST/lib" "$MOVEDBIN/lib"
+cp "$BIN" "$MOVEDBIN/skill-log"
+chmod +x "$MOVEDBIN/skill-log"
+MOVED_CMD="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$MOVEDBIN/skill-log")"
+
+MOVE="$SCRATCH/moved-cmd"
+rm -rf "$MOVE"
+mkdir -p "$MOVE/beta"
+printf 'name: beta\n' > "$MOVE/beta/SKILL.md"
+
+# The block is written by the moved binary, so it names the moved path.
+"$MOVEDBIN/skill-log" skills adopt --dir "$MOVE" >/dev/null
+check "the moved binary writes the block" \
+    "$(grep -c '^<!-- skill-log:usage-log' "$MOVE/beta/SKILL.md")" "1"
+check_contains "the block names the moved binary" \
+    "$(cat "$MOVE/beta/SKILL.md")" "$MOVED_CMD"
+
+# The installed binary resolves to a different path, so the same block
+# is an older render: stale, not ok.
+run skills audit --dir "$MOVE" --json
+check "audit exits 1 when the block names a moved binary" "$STATUS" "1"
+check "the moved-binary block is stale" \
+    "$(printf '%s\n' "$OUT" | python3 -c 'import json,sys; print(json.loads(sys.stdin.read())["state"])')" \
+    "stale"
+
+run skills adopt --dir "$MOVE" --json
+check "adopt rewrites the moved-binary block" "$STATUS" "0"
+check "the rewrite reports the stale state" \
+    "$(printf '%s\n' "$OUT" | python3 -c 'import json,sys; o=json.loads(sys.stdin.read()); print(o["state"], o["action"])')" \
+    "stale rewritten"
+check_contains "the rewritten block names the installed binary" \
+    "$(cat "$MOVE/beta/SKILL.md")" "$EXPECTED_CMD"
+run skills audit --dir "$MOVE" --json
+check "the rewritten block audits ok" "$STATUS" "0"
+check "the rewritten block is ok" \
+    "$(printf '%s\n' "$OUT" | python3 -c 'import json,sys; print(json.loads(sys.stdin.read())["state"])')" \
+    "ok"
+
+# A renamed skill is stale too: the block names the skill it was
+# rendered for.
+RENAME="$SCRATCH/renamed"
+rm -rf "$RENAME"
+mkdir -p "$RENAME/before"
+printf 'name: before\n' > "$RENAME/before/SKILL.md"
+run skills adopt --dir "$RENAME"
+check "the first adopt writes the block" "$STATUS" "0"
+mv "$RENAME/before" "$RENAME/after"
+run skills audit --dir "$RENAME" --json
+check "a renamed skill audits stale" \
+    "$(printf '%s\n' "$OUT" | python3 -c 'import json,sys; print(json.loads(sys.stdin.read())["state"])')" \
+    "stale"
+run skills adopt --dir "$RENAME" --json
+check "adopt rewrites the renamed skill's block" "$STATUS" "0"
+check_contains "the rewritten block names the new skill" \
+    "$(cat "$RENAME/after/SKILL.md")" "add --skill after"
+
 
 # A file with no trailing newline still gets its block on its own line;
 # the original bytes survive as a prefix and the second run is a no-op.

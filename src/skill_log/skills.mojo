@@ -374,10 +374,20 @@ struct SkillState(Movable):
 def audit_skill(
     dir: String,
     name: String,
-    current_template_hash: String,
-    current_content_hash: String,
+    template: Template,
+    command: String,
 ) raises -> SkillState:
-    """One skill's state, from its `SKILL.md`."""
+    """One skill's state, from its `SKILL.md`.
+
+    The current render is the one this skill would get now: the
+    template rendered for *this* skill's name and the resolved binary
+    path. A block that names a different skill or a different binary
+    is an older render, and the skill is `stale` — not `ok`.
+
+    The name is the skill's frontmatter `name:`, else the directory
+    name it is called by everywhere else: the same name `adopt` renders
+    for.
+    """
     var result = SkillState()
     result.skill = name
     result.path = dir + "/" + name
@@ -389,13 +399,17 @@ def audit_skill(
         text = Path(doc_path).read_text()
     except e:
         raise Error("cannot read " + doc_path + ": " + String(e))
+    var skill_name = frontmatter_name(text)
+    if skill_name == "":
+        skill_name = name
+    var rendered = render(template.content, skill_name, command)
     # The document module owns the classification; the audit only names
     # the skill it came from. `is_vendored` short-circuits inside
     # `classify`, which is where the vendor stamp is decided.
     result.state = classify(
         text,
-        current_template_hash,
-        current_content_hash,
+        rendered.template_hash,
+        rendered.content_hash,
         is_vendored(text),
     )
     return result^
@@ -746,6 +760,11 @@ def subcommand_help(sub: String) -> String:
             "One line per skill, and exit 1 on any state but ok or\n"
             "vendored. Read-only: it writes nothing, not even a state\n"
             "directory. An empty directory is refused.\n"
+            "\n"
+            "ok means the block is the current render: the same template,\n"
+            "for that skill's name and the resolved binary path. A moved\n"
+            "binary or a renamed skill makes the block an older render,\n"
+            "and the skill is stale.\n"
             "\nexamples:\n"
             "  skill-log skills audit --dir .agents/skills\n"
             "  skill-log skills audit --dir .agents/skills --json\n"
@@ -944,7 +963,10 @@ def handle_audit(options: SkillsOptions) raises -> Outcome:
     except e:
         return Outcome.fail(String(e), EXIT_FAILURE())
 
-    var rendered = render(template.content, "skill", "skill-log")
+    # The resolved binary path is the other half of the current render:
+    # the block names it, so a binary that moved makes every block an
+    # older render.
+    var command = resolved_command()
     var names = skill_dirs(dir)
     if len(names) == 0:
         return Outcome.fail(
@@ -955,12 +977,7 @@ def handle_audit(options: SkillsOptions) raises -> Outcome:
     var lines = List[String]()
     var dirty = False
     for i in range(len(names)):
-        var item = audit_skill(
-            dir,
-            names[i],
-            rendered.template_hash,
-            rendered.content_hash,
-        )
+        var item = audit_skill(dir, names[i], template, command)
         if item.state != STATE_OK and item.state != STATE_VENDORED:
             dirty = True
         if options.json:

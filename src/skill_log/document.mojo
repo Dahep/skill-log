@@ -362,15 +362,19 @@ def classify(
       unfenced text is `missing`)
     - the fence's `hash` does not match the recomputed content hash →
       `edited` (a human changed bytes inside the fence)
-    - the fence's `template` hash matches the current template's hash →
-      `ok`; the content is therefore the current render
+    - the fence's `template` hash matches the current template's hash
+      *and* the fence's `hash` matches the current render's content
+      hash → `ok`
     - anything else → `stale` (the fence is intact — the content matches
       its own fence hash — but an older render wrote it)
 
-    The caller passes the *current* render's two hashes, so `classify`
-    itself never renders and stays a pure decision over the document.
+    The content hash is what makes `ok` mean "this is the current
+    render": the same template rendered for another skill, or with
+    another resolved binary path, is a different content and therefore
+    an older render. The caller passes the *current* render's two
+    hashes, so `classify` itself never renders and stays a pure
+    decision over the document.
     """
-    _ = current_content_hash
     if vendored:
         return STATE_VENDORED
     var parsed = parse(document)
@@ -379,7 +383,10 @@ def classify(
     var recomputed = fnv1a64_hex(parsed.block.value().content)
     if recomputed != parsed.block.value().content_hash:
         return STATE_EDITED
-    if parsed.block.value().template_hash == current_template_hash:
+    if (
+        parsed.block.value().template_hash == current_template_hash
+        and parsed.block.value().content_hash == current_content_hash
+    ):
         return STATE_OK
     return STATE_STALE
 
