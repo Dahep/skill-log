@@ -21,6 +21,8 @@ same `dlopen` seam as the rest of the tool (`ffi.mojo`); Mojo 1.2's
 
 The mode is `0600` (what `O_EXCL` creation gives): a report is the
 author's working file, and git records only the executable bit.
+`write_text_mode` sets an explicit mode instead — the generated hook
+must come out executable.
 """
 
 from std.ffi import OwnedDLHandle, RTLD
@@ -110,13 +112,23 @@ def rename_path(from_path: String, to_path: String) raises:
 
 
 def write_text(path: String, text: String) raises:
-    """Replace `path` with `text`, atomically.
+    """Replace `path` with `text`, atomically, at the report mode 0600."""
+    write_text_mode(path, text, FILE_MODE)
+
+
+def write_text_mode(path: String, text: String, mode: Int) raises:
+    """Replace `path` with `text`, atomically, at exactly `mode`.
 
     The temporary lives beside the target — a rename across filesystems
     is a copy, not an atomic swap — and is created with `O_EXCL`, so a
     file already at that name (a planted symlink included) is never
     followed. The bytes are written through the descriptor we opened, so
     nothing can swap the file out between creation and write.
+
+    The mode is set on the descriptor before the rename, so the
+    replacement is never visible at the wrong permissions and the
+    process's umask cannot narrow it: a generated git hook must come out
+    executable whatever the umask says.
     """
     var lib = OwnedDLHandle("libc.so.6", RTLD.NOW)
     var open_fn = dl_sym[def(Int, Int, Int) thin abi("C") -> Int](lib, "open")
@@ -124,6 +136,7 @@ def write_text(path: String, text: String) raises:
         lib, "write"
     )
     var close_fn = dl_sym[def(Int) thin abi("C") -> Int](lib, "close")
+    var fchmod_fn = dl_sym[def(Int, Int) thin abi("C") -> Int](lib, "fchmod")
 
     var temp = temp_name(path)^
     var temp_buffer = c_string(temp)
@@ -143,6 +156,8 @@ def write_text(path: String, text: String) raises:
             if written <= 0:
                 raise Error("cannot write " + path)
             offset += written
+        if fchmod_fn(fd, mode) != 0:
+            raise Error("cannot set the permissions on " + path)
     except e:
         _ = close_fn(fd)
         unlink_path(temp)

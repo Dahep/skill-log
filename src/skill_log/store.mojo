@@ -615,6 +615,48 @@ def open_write(path: String) raises -> StoreOpen:
     return opened^
 
 
+struct Verify(Movable):
+    """What `verify` found: a usable store, no file, or a named refusal.
+
+    Exactly the answer the `verify` policy needs (`setup --check`): it
+    says whether the machine's store is ready without creating anything
+    and without a caller re-deriving the taxonomy from a message or a
+    SQLite error.
+    """
+
+    var absent: Bool
+    var refusal: Refusal
+
+    def __init__(out self):
+        self.absent = False
+        self.refusal = Refusal()
+
+    def ok(self) -> Bool:
+        """True when the file is a usable 1.0 skill-log store."""
+        return not self.absent and not self.refusal.refused()
+
+
+def verify(path: String) raises -> Verify:
+    """The store's verdict under the `verify` policy.
+
+    A read that answers instead of failing: a missing file is `absent`,
+    a file this tool refuses is that named refusal, and only a store the
+    read accepts is `ok`. Nothing is created and nothing is written —
+    the same no-write promise `open_read` makes.
+    """
+    var result = Verify()
+    var opened = open_read(path)
+    if opened.refusal.refused():
+        result.refusal = Refusal(
+            opened.refusal.kind, opened.refusal.path, opened.refusal.found
+        )
+        return result^
+    if opened.db is None:
+        result.absent = True
+        return result^
+    return result^
+
+
 # --------------------------------------------------------------- reading
 
 
