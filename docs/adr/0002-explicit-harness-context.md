@@ -93,6 +93,10 @@ from. That is why they belong in typed columns rather than a free-form bag.
    - `opencode` (the 1.0 target) fills `harness=opencode`, `session` from
      `OPENCODE_SESSION_ID`, and `model` from `session_v2` in
      `~/.local/share/opencode/opencode.db`, read-only.
+     The `model` column holds a JSON value, and the adapter reads the one field
+     it needs out of it with a small targeted scanner rather than a JSON
+     parser: the tool writes JSON and never parses it, and a foreign schema is
+     not this tool's contract.
    - `t3` (optional) fills `project` from
      `$T3CODE_HOME/worktrees/<project>/…` when `worktree` is under it, and
      from `$HOME/.t3/worktrees/<project>/…` when `T3CODE_HOME` is unset —

@@ -112,7 +112,7 @@ whole-attempt retry budget for writes.
 
 All text columns are `NOT NULL DEFAULT ''`. Empty means "unknown or not
 applicable", so the SQL layer has no NULL semantics and every JSON field keeps
-one type.
+one type — except the preview's `id`, which is null.
 
 `problems` is keyed `(invocation_id, ordinal)`, carries one sentence of
 friction per row, and cascades with its invocation. Problems are separate rows
@@ -149,9 +149,15 @@ older or newer store means.
 | `add`, `setup` | create | create it |
 | `show`, `stats` | read | the empty message, exit 0 |
 | `report` | strict | refusal, exit 1, no file written |
+| `report --check` | syntax | the report is still checked, exit 0 when it is well formed |
 | `resolve` | write | refusal, exit 1 |
 | `resolve-merged` | optional | nothing to do, exit 0 |
 | `setup --check` | verify | drift, exit 1 |
+
+`report --check` is the one exception to the strict policy: it validates the
+branch's existing report and needs no store. A fresh clone or a CI job has no
+store and must still check the file, so the syntax check stands alone — a
+marker this store does not own is a warning, not a failure.
 
 The store classifies and returns a typed refusal. The CLI boundary renders the
 one-line message and maps the exit code; no handler inspects a SQLite error or
@@ -435,21 +441,24 @@ part of the contract; no verb adds or drops keys between runs.
 **The invocation object** is emitted by `add` and `show`, and by either with
 `--dry-run`. Its keys are `id`, `ts`, `skill`, `harness`, `session`, `parent`,
 `model`, `repo`, `worktree`, `project`, `t3_thread`, `machine`, `fix`,
-`resolved_at`, `marker`, `problems` (an array of strings).
+`resolved_at`, `marker`, `problems` (an array of strings). A `--dry-run`
+preview carries `id: null` and an empty `marker`: the row does not exist yet, so
+it has no id and no marker.
 
 | Verb | Shape |
 |---|---|
 | `add` | one invocation object |
 | `show` | one invocation object per row |
 | `stats` | `invocations`, `with_problems`, `problems`, `resolved`, `problems_per_invocation`, plus the grouping column named by `--by` |
-| `report` | `path`, `markers` |
-| `resolve` | `id`, `skill`, `fix`, `resolved_at` |
+| `report` | `path`, `markers`, `already_resolved` (markers), `already_reported`, `dry_run`, `trailer` |
+| `report --check` | `path`, `markers`, `problems`, `warnings` |
+| `resolve` | `id`, `marker`, `skill`, `fix`, `resolved_at`, `changed`, `dry_run` |
 | `resolve-merged` | `resolved` (markers), `unchanged` (markers), `skipped` (objects of `row` and `reason`), `ignored` (hidden and malformed marker text), `dry_run` |
 | `setup` | one object per artifact examined: `artifact` (`store`, `hook`, `report_dir`, `skills`), `status` (`created`, `updated`, `unchanged`, `drift`, `skipped`), `detail` |
 | `skills audit` | one object per skill: `skill`, `path`, `state` |
 | `skills adopt` | one object per skill: `skill`, `path`, `state`, `action` (`appended`, `rewritten`, `unchanged`, `refused`, `skipped`) |
 | `skills template show` | `templates`: one object per template — `name`, `source`, `content`, `template_hash`, `content_hash`, `moved` |
-| `skills template seed`, `reset` | `path`, `action` |
+| `skills template seed`, `reset` | `path`, `action` (`seeded`, `would_seed`, `refused`, `deleted`, `would_delete`, `absent`) |
 
 `resolve-merged` skip reasons are exactly `unknown_id`, `foreign` and
 `logged_after_commit`.
@@ -610,11 +619,12 @@ session decides how the log gets read. Neither changes the other's contract.
 - **Deliverables**: the binary, the two bundled skills, and a short operator
   guide. Consumer integration instructions are documentation, not code.
 - **Hand-written infrastructure** (the ecosystem does not provide it):
-  subcommand dispatch; local dates through libc `localtime_r`/`strftime`;
-  process execution with an exit status through `fork`/`exec`/`wait` via FFI;
-  the JSON writer (the tool writes JSON and never parses it); marker and
-  report parsing. [ADR-0001](docs/adr/0001-mojo-binary-and-sqlite.md) records
-  why.
+  subcommand dispatch; the writer's clock, read through SQLite's own `now` and
+  the hostname through libc `gethostname`; the JSON writer (the tool writes
+  JSON and never parses it); marker and report parsing; the read-only SQLite
+  reader for another tool's store. Process execution is not hand-written:
+  git is run through the standard library's `std.subprocess`.
+  [ADR-0001](docs/adr/0001-mojo-binary-and-sqlite.md) records why.
 
 ### Migration
 

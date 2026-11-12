@@ -82,9 +82,13 @@ command.
   platform is a new CI matrix entry, not a flag.
 - glibc floor: the binary runs where the runner's glibc runs.
 - Mojo 1.2 has no calendar/timezone, no regex, no argument parser and no JSON
-  parser, so local dates need libc `localtime_r`/`strftime`, and git calls need
-  `fork`/`exec`/`wait` because `std.subprocess.run` is `popen` without an exit
-  status.
+  parser, so the writer's clock and the hostname are read through the SQLite
+  binding and libc `gethostname`, and the tool needs its own JSON writer, its
+  own argument parsing and its own marker grammar. The dates were first
+  planned as libc `localtime_r`/`strftime` and the git calls as
+  `fork`/`exec`/`wait`; the implementation reads the clock through SQLite's own
+  `now` and runs git through the standard library's `std.subprocess`, which
+  does carry an exit status on this toolchain.
 - A vendored third-party package (one maintainer, 0.2.x) has to be
   copy-forwarded deliberately.
 - The binary's runtime is tied to the compiler release; a Mojo upgrade is a
