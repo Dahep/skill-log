@@ -61,7 +61,7 @@ scratch store. `scripts/test.sh --build` rebuilds first.
 | `add` | Record one invocation and zero or more problems. |
 | `show` | Recent rows, their problems, and the cuts: skill, machine, harness, repo, run, unresolved, last. |
 | `stats` | Invocation, problem and resolved counts, and problems per invocation, per cut (`--by`). |
-| `resolve` | Stamp one local row with the commit that fixed it. |
+| `resolve` | Stamp one local row with the commit that fixed it, by hand. |
 | `resolve-merged` | Resolve rows from the commits a pull landed; reports in artifact mode, trailers otherwise. |
 | `report` | Name the rows a change fixes: the committed report file, or the trailer in a repo without one. |
 | `setup` | Provision or verify the store, hook, report directory, and skills. |

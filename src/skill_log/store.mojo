@@ -1066,3 +1066,132 @@ def write_attempt(
     result.id = id
     tx.commit()
     return result^
+
+
+# -------------------------------------------------------------- resolution
+
+
+struct ResolvedRow(Movable):
+    """One row's resolution after `resolve` touched it (or looked at it).
+
+    `changed` is false when the row already carried the same fix: the
+    call is idempotent, and the stored `resolved_at` stays the one the
+    first stamp wrote rather than moving on every retry. `refusal` is the
+    store refusal when the file could not be used at all.
+    """
+
+    var found: Bool
+    var skill: String
+    var machine: String
+    var fix: String
+    var resolved_at: String
+    var changed: Bool
+    var refusal: Refusal
+
+    def __init__(out self):
+        self.found = False
+        self.skill = ""
+        self.machine = ""
+        self.fix = ""
+        self.resolved_at = ""
+        self.changed = False
+        self.refusal = Refusal()
+
+
+def resolve_row(
+    path: String, id: Int, fix: String, dry_run: Bool
+) raises -> ResolvedRow:
+    """Stamp one row with the commit that carries its fix.
+
+    The read comes first and through a read connection: a row already
+    carrying this fix is answered without a write at all, and a dry run
+    never opens the store for writing. Only a genuine change opens the
+    write path, inside the same whole-attempt busy retry `add` uses.
+
+    The commit and the timestamp are written together; the timestamp is
+    read from SQLite in the same transaction, so the stamp is the moment
+    the row was resolved. A refusal is a value, never an exception.
+    """
+    var result = ResolvedRow()
+
+    var opened = open_read(path)
+    if opened.refusal.refused():
+        result.refusal = Refusal(
+            opened.refusal.kind, opened.refusal.path, opened.refusal.found
+        )
+        return result^
+    if not opened.db:
+        return result^
+
+    var db = opened.db.take()
+    var row = read_invocation(db, id)
+    if not row:
+        return result^
+
+    result.found = True
+    result.skill = row.value().skill
+    result.machine = row.value().machine
+    result.fix = fix
+
+    if row.value().fix == fix:
+        # The same fix again is a no-op: keep the first stamp's time.
+        result.resolved_at = row.value().resolved_at
+        return result^
+
+    if dry_run:
+        # A preview reads the clock the write would read, through the
+        # same store connection, and writes nothing.
+        result.resolved_at = local_timestamp(db)
+        result.changed = True
+        return result^
+
+    var deadline = now_seconds() + WRITE_BUDGET_SECONDS
+    while True:
+        try:
+            return stamp_attempt(path, id, fix, result.skill, result.machine)
+        except e:
+            var message = String(e)
+            if not is_busy(message):
+                raise
+            var remaining = deadline - now_seconds()
+            if remaining <= 0:
+                raise
+            sleep(min(Float64(WRITE_RETRY_SLEEP), remaining))
+
+
+def stamp_attempt(
+    path: String, id: Int, fix: String, skill: String, machine: String
+) raises -> ResolvedRow:
+    """One write attempt: open, update the row, commit.
+
+    The transaction guard rolls back if the update fails, so a row is
+    either fully stamped or untouched.
+    """
+    var result = ResolvedRow()
+    var opened = open_write(path)
+    if opened.refusal.refused():
+        result.refusal = Refusal(
+            opened.refusal.kind, opened.refusal.path, opened.refusal.found
+        )
+        return result^
+
+    var db = opened.db.take()
+    var tx = db.transaction()
+    var stamp = local_timestamp(db)
+
+    var stmt = db.prepare(
+        "UPDATE invocations SET fix = ?, resolved_at = ? WHERE id = ?"
+    )
+    stmt.bind_text(1, fix)
+    stmt.bind_text(2, stamp)
+    stmt.bind_int(3, id)
+    _ = stmt.step()
+
+    result.found = True
+    result.skill = skill
+    result.machine = machine
+    result.fix = fix
+    result.resolved_at = stamp
+    result.changed = True
+    tx.commit()
+    return result^
