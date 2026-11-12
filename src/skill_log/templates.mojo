@@ -60,7 +60,7 @@ finding in its place:
 A clean run still lands its row, problem-less: the invocation count is
 the denominator of the problems/invocation rate. Add `--t3-thread <id>`
 when the T3 thread id is in context; the invocation date, project,
-opencode thread id, worktree, and machine are auto-detected by the tool.
+harness session, worktree, and machine are auto-detected by the tool.
 
 `add` is deliberately not idempotent: the log records occurrences, so a
 retry after a crashed run is indistinguishable from a genuine repeat.
