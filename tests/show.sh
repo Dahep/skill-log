@@ -22,35 +22,10 @@ BIN="$DIST/skill-log"
 
 SCRATCH="${SCRATCH:-/tmp/opencode/skill-log-show}"
 
-PASS=0
-FAIL=0
+# shellcheck disable=SC1091  # the harness sits beside the suite, not on PATH
+. "$HERE/lib.sh"
 
-pass() {
-    PASS=$((PASS + 1))
-    printf 'ok   %s\n' "$1"
-}
-
-fail() {
-    FAIL=$((FAIL + 1))
-    printf 'FAIL %s\n' "$1"
-}
-
-check() {
-    # check <name> <actual> <expected>
-    if [ "$2" = "$3" ]; then
-        pass "$1"
-    else
-        fail "$1 (expected '$3', got '$2')"
-    fi
-}
-
-check_contains() {
-    # check_contains <name> <actual> <needle>
-    case "$2" in
-        *"$3"*) pass "$1" ;;
-        *) fail "$1 (expected to contain '$3', got '$2')" ;;
-    esac
-}
+require_tools sqlite3 python3
 
 if [ ! -x "$BIN" ]; then
     printf 'show.sh: %s is missing; run scripts/build.sh first\n' "$BIN" >&2
@@ -78,11 +53,6 @@ run() {
     OUT="$("$BIN" "$@" 2>"$SCRATCH/stderr")"
     STATUS=$?
     ERR="$(cat "$SCRATCH/stderr")"
-}
-
-err_lines() {
-    # A failure is exactly one line on stderr.
-    printf '%s\n' "$ERR" | grep -c . || true
 }
 
 # ------------------------------------------------------------ absent store
@@ -145,6 +115,21 @@ check "an empty store says so" "$OUT" "no invocations logged yet"
 "$BIN" show --db "$SCRATCH/empty.db" --json >"$SCRATCH/empty.json" 2>/dev/null
 check "an empty store in json prints nothing" \
     "$(wc -c <"$SCRATCH/empty.json" | tr -d ' ')" "0"
+
+# A file that exists but was never initialised: no tables at all. SQLite
+# treats it as an empty database, and so does the read — it is not a
+# foreign store, because it holds nothing to be foreign.
+: >"$SCRATCH/untouched.db"
+run show --db "$SCRATCH/untouched.db"
+check "an untouched empty file exits 0" "$STATUS" "0"
+check "an untouched empty file says the log is empty" "$OUT" \
+    "no invocations logged yet"
+check "an untouched empty file stays empty" \
+    "$(wc -c <"$SCRATCH/untouched.db" | tr -d ' ')" "0"
+"$BIN" show --db "$SCRATCH/untouched.db" --json \
+    >"$SCRATCH/untouched.json" 2>/dev/null
+check "an untouched empty file has an empty JSON stream" \
+    "$(wc -c <"$SCRATCH/untouched.json" | tr -d ' ')" "0"
 
 # ------------------------------------------------------------------- rows
 
@@ -378,7 +363,7 @@ run show --db "$SCRATCH/damaged.db"
 check "a damaged store exits 1" "$STATUS" "1"
 check "a damaged store is named" \
     "$(printf '%s\n' "$ERR" | grep -c 'damaged store')" "1"
-check "a damaged store is one line" "$(err_lines)" "1"
+check_one_line "a damaged store is one line" "$ERR"
 check "a damaged store is not written" "$(md5sum <"$SCRATCH/damaged.db")" "$DAMAGED_SUM"
 check "a damaged store prints nothing on stdout" "$OUT" ""
 
@@ -388,7 +373,7 @@ run show --db "$SCRATCH/foreign.db"
 check "a foreign store exits 1" "$STATUS" "1"
 check "a foreign store is named" \
     "$(printf '%s\n' "$ERR" | grep -c 'foreign store')" "1"
-check "a foreign store is one line" "$(err_lines)" "1"
+check_one_line "a foreign store is one line" "$ERR"
 check "a foreign store is not converted" "$(md5sum <"$SCRATCH/foreign.db")" "$FOREIGN_SUM"
 
 # The Python-era store: the two tables, the old columns.
@@ -424,7 +409,7 @@ check "an older store is named as older" \
     "$(printf '%s\n' "$ERR" | grep -c 'older store')" "1"
 check "an older store says it is not converted" \
     "$(printf '%s\n' "$ERR" | grep -c 'does not convert it')" "1"
-check "an older store is one line" "$(err_lines)" "1"
+check_one_line "an older store is one line" "$ERR"
 check "an older store is not converted" "$(md5sum <"$SCRATCH/older.db")" "$OLDER_SUM"
 
 cp "$DB" "$SCRATCH/newer.db"
@@ -433,7 +418,7 @@ run show --db "$SCRATCH/newer.db"
 check "a newer store exits 1" "$STATUS" "1"
 check "a newer store is named with both versions" \
     "$(printf '%s\n' "$ERR" | grep -c 'has schema version 99.*understands 1')" "1"
-check "a newer store is one line" "$(err_lines)" "1"
+check_one_line "a newer store is one line" "$ERR"
 
 # ------------------------------------------------------------ usage errors
 
@@ -441,30 +426,33 @@ run show --nope
 check "an unknown flag is a usage error" "$STATUS" "2"
 check "an unknown flag is one named line" \
     "$(printf '%s\n' "$ERR" | grep -c '^skill-log: unknown option: --nope$')" "1"
-check "an unknown flag is one line and no more" "$(err_lines)" "1"
+check_one_line "an unknown flag is one line and no more" "$ERR"
 
 run show --skill
 check "a missing value is a usage error" "$STATUS" "2"
-check "a missing value is one line" "$(err_lines)" "1"
+check_one_line "a missing value is one line" "$ERR"
 run show --last
 check "a missing --last value is a usage error" "$STATUS" "2"
-check "a missing --last value is one line" "$(err_lines)" "1"
+check_one_line "a missing --last value is one line" "$ERR"
 run show --run
 check "a missing --run value is a usage error" "$STATUS" "2"
-check "a missing --run value is one line" "$(err_lines)" "1"
+check_one_line "a missing --run value is one line" "$ERR"
 
 run show --last abc
 check "a non-integer --last is a usage error" "$STATUS" "2"
-check "a non-integer --last is one line" "$(err_lines)" "1"
+check_one_line "a non-integer --last is one line" "$ERR"
 run show --last 0
 check "--last 0 is a usage error" "$STATUS" "2"
-check "--last 0 is one line" "$(err_lines)" "1"
+check_one_line "--last 0 is one line" "$ERR"
 run show --last -1
 check "--last -1 is a usage error" "$STATUS" "2"
-check "--last -1 is one line" "$(err_lines)" "1"
+check_one_line "--last -1 is one line" "$ERR"
 run show --last 501
 check "--last above the cap is a usage error" "$STATUS" "2"
-check "--last above the cap is one line" "$(err_lines)" "1"
+check_one_line "--last above the cap is one line" "$ERR"
+run show --last 999999999999999999999999
+check "a --last too long for an int is a usage error" "$STATUS" "2"
+check_one_line "a --last too long for an int is one line" "$ERR"
 run show --last 500
 check "--last at the cap is accepted" "$STATUS" "0"
 
@@ -472,6 +460,17 @@ run show --skill ""
 check "an empty filter value is a usage error" "$STATUS" "2"
 run show --run ""
 check "an empty run value is a usage error" "$STATUS" "2"
+
+# A flag's value is taken as written: `--run -h` names the run `-h`, while
+# a help flag elsewhere in the call is still a help request.
+run show --run -h
+check "a --run value spelled -h is a value, not a help request" "$STATUS" "0"
+check "a --run value spelled -h filters on it" "$OUT" \
+    "no invocations match --run -h"
+run show --skill alpha -h
+check "a help flag after a value still asks for help" "$STATUS" "0"
+check "the help block is the verb's usage" \
+    "$(printf '%s\n' "$OUT" | grep -c '^usage:$')" "1"
 
 # The usage error names the flag and lists the valid choices, on one
 # line. A reader who asked for a wrong value learns the right one
@@ -525,6 +524,17 @@ else
     pass "a read creates no empty database"
 fi
 
+# The help block is the verb's own text, and it documents every filter.
+run show --help
+check "show --help exits 0" "$STATUS" "0"
+for flag in --skill --machine --harness --repo --run --unresolved --last \
+    --json --db; do
+    check_contains "show --help lists $flag" "$OUT" "$flag"
+done
+check "show --help ends with 2 to 4 real invocations" \
+    "$(printf '%s\n' "$OUT" | sed -n '/^examples:$/,$p' | grep -c '^  ')" "3"
+check_contains "show --help keeps the read-only note" "$OUT" "never writes"
+
 # Nor does it create the directory that would hold one.
 FRESH="$SCRATCH/fresh/state/skill-log/skills.db"
 run show --db "$FRESH"
@@ -537,5 +547,4 @@ fi
 
 # ------------------------------------------------------------------ report
 
-printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
-[ "$FAIL" -eq 0 ]
+tally

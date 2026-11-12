@@ -1,9 +1,10 @@
-"""The writer's context: when it happened and where.
+"""The writer's context: when it happened, and on which machine.
 
-Two facts a row carries that the tool cannot be told: the invocation's
-timestamp and the machine's hostname. Both are read from the running
-machine, never from a flag, in this ticket: the other context columns
-stay at their schema defaults until a later ticket fills them.
+Two facts a row carries that neither a flag nor an adapter may invent: the
+invocation's timestamp and the machine's hostname. Both are read from the
+running machine. Every other context column belongs to the caller or to an
+adapter (`adapters.mojo`), and the arguments that carry them belong to
+`add.mojo`.
 
 The timestamp is ISO 8601 with the writer's own offset, to the second —
 the same shape the Python reference's
@@ -15,15 +16,19 @@ Mojo's C ABI is not safe on this toolchain. The two values SQLite gives
 are the local wall clock and the offset in seconds; the offset is
 formatted here.
 
-The hostname comes from libc's `gethostname`, reached the same way the
-vendored binding reaches SQLite: `dlopen` plus `dlsym`. That call is
-safe — it touches no signal state.
+The hostname comes from libc's `gethostname`, reached through the same
+`dlopen` seam the vendored binding uses (`ffi.mojo`). Unlike every other
+context field, an unreadable hostname is an error rather than a blank: the
+machine namespaces the store's markers, so a row without one cannot be
+named from outside.
 """
 
 from std.ffi import CStringSpan, OwnedDLHandle, RTLD, c_char
-from std.memory import Pointer, alloc
+from std.memory import alloc
 
 from sqlite.db import Database
+
+from skill_log.ffi import dl_sym
 
 # The query that yields the writer's local wall clock and the offset in
 # seconds, in one row.
@@ -40,10 +45,6 @@ SELECT
 # The hostname buffer. A hostname longer than this is truncated, which
 # POSIX allows and no real machine reaches.
 comptime HOSTNAME_SIZE = 256
-
-# How much of standard input one read takes. A problem's own text is
-# one line, so this is generous.
-comptime STDIN_SIZE = 65536
 
 
 def format_offset(seconds: Int) -> String:
@@ -94,104 +95,33 @@ def preview_timestamp() raises -> String:
     return local_timestamp(db)
 
 
-def _dl_sym[
-    FT: TrivialRegisterPassable
-](lib: OwnedDLHandle, name: String) raises -> FT:
-    """Look up a C-ABI symbol as a plain callable value.
-
-    The same shape the vendored binding uses: `dlopen` gave us the
-    handle, `dlsym` gives the address, and the address is called
-    through a typed pointer.
-    """
-    var opt = lib.get_symbol[FT](name)
-    if not opt:
-        raise Error("symbol not found: " + name)
-    var addr: Int = Int(opt.value())
-    return Pointer(to=addr).unsafe_bitcast[FT]()[]
+def hostname_unavailable() -> Error:
+    """The failure for a machine whose hostname cannot be read."""
+    return Error("cannot read this machine's hostname; name it with --machine")
 
 
 def hostname() raises -> String:
     """This machine's hostname.
 
-    An empty string when it cannot be read: the machine name is context,
-    not the row's subject, and a missing hostname must not fail the
-    write.
+    A hostname that cannot be read is an error, not an empty string: the
+    machine namespaces the store's markers (`machine#id`), so a row
+    without one is a row nothing can resolve. `--machine` is the way out,
+    and the failure says so.
     """
     try:
         var lib = OwnedDLHandle("libc.so.6", RTLD.NOW)
-        var gethostname = _dl_sym[def(Int, Int) thin abi("C") -> Int](
+        var gethostname = dl_sym[def(Int, Int) thin abi("C") -> Int](
             lib, "gethostname"
         )
         var buffer = alloc[c_char](HOSTNAME_SIZE)
         var rc = gethostname(Int(buffer), HOSTNAME_SIZE)
         if rc != 0:
-            return ""
+            raise hostname_unavailable()
         var text = String(
             StringSlice(unsafe_from_utf8=CStringSpan(unsafe_from_ptr=buffer))
         )
+        if text == "":
+            raise hostname_unavailable()
         return text
     except:
-        return ""
-
-
-def stdin_is_tty() -> Bool:
-    """True when standard input is a terminal.
-
-    A hook that reads the problem text from stdin must not block on an
-    interactive terminal, so the caller asks this first and refuses
-    instead of waiting.
-
-    False when the answer cannot be found: the refusal is the safe
-    side of that ambiguity, because a terminal that is mistaken for a
-    pipe would make the command hang.
-    """
-    try:
-        var lib = OwnedDLHandle("libc.so.6", RTLD.NOW)
-        var isatty = _dl_sym[def(Int) thin abi("C") -> Int](lib, "isatty")
-        return isatty(Int(0)) != 0
-    except:
-        return True
-
-
-def read_stdin_line() -> String:
-    """One line from standard input, without its newline.
-
-    An empty string when standard input carries nothing. The line is
-    read with libc's `read` in one call: the problem text is one line,
-    and a hook that pipes one line in is the shape this serves.
-    """
-    try:
-        var lib = OwnedDLHandle("libc.so.6", RTLD.NOW)
-        var read = _dl_sym[
-            def(Int, Pointer[c_char, MutUntrackedOrigin], Int) thin abi("C") -> Int
-        ](lib, "read")
-        var buffer = alloc[c_char](STDIN_SIZE)
-        var count = read(Int(0), buffer, Int(STDIN_SIZE))
-        if count <= 0:
-            return ""
-        var raw = String(
-            StringSlice(unsafe_from_utf8=CStringSpan(unsafe_from_ptr=buffer))
-        )
-        return trim_to_line(raw)
-    except:
-        return ""
-
-
-def trim_to_line(text: String) -> String:
-    """`text` up to its first newline, with the newline removed.
-
-    A carriage return before it goes too, so a CRLF pipe yields the
-    same text as a LF one.
-    """
-    var cut = text.find("\n")
-    var line = text
-    if cut != -1:
-        var part = text[byte=0:cut]
-        var without_newline = String(part)
-        line = without_newline
-    if line.endswith("\r"):
-        var shorter = line.byte_length() - 1
-        var without = line[byte=0:shorter]
-        var trimmed = String(without)
-        line = trimmed
-    return line
+        raise hostname_unavailable()

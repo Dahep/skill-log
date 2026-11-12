@@ -23,7 +23,9 @@ connection is made, so a store that is not there is never created.
 """
 
 from std.ffi import CStringSpan, OwnedDLHandle, RTLD, c_char
-from std.memory import Pointer, alloc
+from std.memory import Pointer
+
+from skill_log.ffi import dl_sym
 
 # `SQLITE_OPEN_READONLY` is 0x01. The other flags are deliberately
 # absent: no `SQLITE_OPEN_CREATE` (the file must already exist), and no
@@ -38,22 +40,6 @@ comptime SQLITE_DONE = 101
 # short; a pathological value is truncated rather than growing without
 # bound.
 comptime TEXT_SIZE = 4096
-
-
-def _dl_sym[
-    FT: TrivialRegisterPassable
-](lib: OwnedDLHandle, name: String) raises -> FT:
-    """Look up a C-ABI symbol as a plain callable value.
-
-    The same shape the vendored binding uses: `dlopen` gives us the
-    handle, `dlsym` gives the address, and the address is called
-    through a typed pointer.
-    """
-    var opt = lib.get_symbol[FT](name)
-    if not opt:
-        raise Error("symbol not found: " + name)
-    var addr: Int = Int(opt.value())
-    return Pointer(to=addr).unsafe_bitcast[FT]()[]
 
 
 def _c_string(text: String) -> List[UInt8]:
@@ -111,24 +97,23 @@ def _read_text_value(
     var lib = OwnedDLHandle(
         "libsqlite3.so.0", RTLD.NOW | RTLD.GLOBAL | RTLD.NODELETE
     )
-    var open_v2 = _dl_sym[
+    var open_v2 = dl_sym[
         def(Int, Int, Int, Int) thin abi("C") -> Int32
     ](lib, "sqlite3_open_v2")
-    var close = _dl_sym[def(Int) thin abi("C") -> Int32](lib, "sqlite3_close")
-    var prepare_v2 = _dl_sym[
+    var close = dl_sym[def(Int) thin abi("C") -> Int32](lib, "sqlite3_close")
+    var prepare_v2 = dl_sym[
         def(Int, Int, Int, Int, Int) thin abi("C") -> Int32
     ](lib, "sqlite3_prepare_v2")
-    var step = _dl_sym[def(Int) thin abi("C") -> Int32](lib, "sqlite3_step")
-    var finalize = _dl_sym[def(Int) thin abi("C") -> Int32](
+    var step = dl_sym[def(Int) thin abi("C") -> Int32](lib, "sqlite3_step")
+    var finalize = dl_sym[def(Int) thin abi("C") -> Int32](
         lib, "sqlite3_finalize"
     )
-    var bind_text = _dl_sym[
+    var bind_text = dl_sym[
         def(Int, Int, Int, Int, Int) thin abi("C") -> Int32
     ](lib, "sqlite3_bind_text")
-    var column_text = _dl_sym[def(Int, Int) thin abi("C") -> Int](
+    var column_text = dl_sym[def(Int, Int) thin abi("C") -> Int](
         lib, "sqlite3_column_text"
     )
-    var errmsg = _dl_sym[def(Int) thin abi("C") -> Int](lib, "sqlite3_errmsg")
 
     var db_out = List[Int](capacity=1)
     db_out.append(0)

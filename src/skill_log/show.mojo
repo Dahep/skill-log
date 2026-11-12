@@ -55,18 +55,21 @@ database.
 
 from std.os import getenv
 
-from skill_log.errors import EXIT_USAGE, Outcome
+from skill_log.errors import EXIT_FAILURE, EXIT_USAGE, Outcome
 from skill_log.render import render_row_json
 from skill_log.store import (
     DEFAULT_LIMIT,
     Filters,
     Invocation,
-    classify,
+    StoreOpen,
+    damaged_failure,
+    is_corruption,
+    is_skill_log_store,
     open_read,
     read_invocations,
     resolve_db,
-    sanitize,
 )
+from skill_log.text import sanitize
 
 # The ends of the `--last` range. The upper bound keeps one call from
 # pulling the whole log into memory; the lower bound is one, because
@@ -99,6 +102,23 @@ def show_examples() -> List[String]:
     return examples^
 
 
+def show_value_flags() -> List[String]:
+    """The flags that consume the next argument.
+
+    The dispatcher reads this to tell `--run -h` (a run named `-h`) from a
+    help request, the same way `add --problem -h` records the text `-h`.
+    """
+    var flags = List[String]()
+    flags.append("--skill")
+    flags.append("--machine")
+    flags.append("--harness")
+    flags.append("--repo")
+    flags.append("--run")
+    flags.append("--last")
+    flags.append("--db")
+    return flags^
+
+
 def show_notes() -> String:
     """The paragraph between the usage line and the examples.
 
@@ -113,7 +133,8 @@ def show_notes() -> String:
            "its session, its T3 thread or its parent. Matching all three\n" \
            "is what finds the tree around a run, not one row of it.\n" \
            "\n" \
-           "--last takes a number between 1 and 500, 20 by default.\n" \
+           "--last takes a number between 1 and 500, 20 by default;\n" \
+           "--unresolved keeps only the rows no commit has stamped yet.\n" \
            "\n" \
            "A filter that matches nothing says which filter it was, so\n" \
            "an empty answer is never mistaken for an empty log.\n" \
@@ -182,10 +203,14 @@ def parse_last(text: String) raises -> Int:
         var code = Int(c)
         if code < 48 or code > 57:
             raise Error("usage: " + last_range_message())
+    # The cap is checked as the digits are consumed, so a number with
+    # more digits than an Int holds cannot wrap into the valid range.
     var value = 0
     for c in text.codepoints():
         value = value * 10 + (Int(c) - 48)
-    if value < LAST_MIN or value > LAST_MAX:
+        if value > LAST_MAX:
+            raise Error("usage: " + last_range_message())
+    if value < LAST_MIN:
         raise Error("usage: " + last_range_message())
     return value
 
@@ -285,15 +310,15 @@ def empty_message(filters: Filters) -> String:
     """
     var parts = List[String]()
     if filters.skill != "":
-        parts.append("--skill " + filters.skill)
+        parts.append("--skill " + sanitize(filters.skill))
     if filters.machine != "":
-        parts.append("--machine " + filters.machine)
+        parts.append("--machine " + sanitize(filters.machine))
     if filters.harness != "":
-        parts.append("--harness " + filters.harness)
+        parts.append("--harness " + sanitize(filters.harness))
     if filters.repo != "":
-        parts.append("--repo " + filters.repo)
+        parts.append("--repo " + sanitize(filters.repo))
     if filters.run != "":
-        parts.append("--run " + filters.run)
+        parts.append("--run " + sanitize(filters.run))
 
     if len(parts) == 0:
         # No filter was given, so the log itself is empty.
@@ -420,12 +445,12 @@ def table_widths(rows: List[Invocation]) -> List[Int]:
     var headers = table_headers()
     var widths = List[Int]()
     for i in range(len(headers)):
-        widths.append(headers[i].byte_length())
+        widths.append(headers[i].count_codepoints())
     for r in range(len(rows)):
         for c in range(len(headers)):
             var text = cell(rows[r], headers[c])
-            if text.byte_length() > widths[c]:
-                widths[c] = text.byte_length()
+            if text.count_codepoints() > widths[c]:
+                widths[c] = text.count_codepoints()
     return widths^
 
 
@@ -436,7 +461,7 @@ def pad(text: String, width: Int) -> String:
     of a line.
     """
     var out = text
-    while out.byte_length() < width:
+    while out.count_codepoints() < width:
         out += " "
     return out
 
@@ -521,14 +546,35 @@ def handle_show(args: List[String]) raises -> Outcome:
     filters.unresolved = options.unresolved
     filters.limit = options.last
 
-    var rows = List[Invocation]()
+    var opened: StoreOpen
     try:
-        var db = open_read(path)
-        if db is not None:
-            rows = read_invocations(db.value(), filters)
+        opened = open_read(path)
     except e:
-        var failure = classify(path, String(e))
+        return Outcome.fail(
+            "cannot read the store: " + path + ": " + String(e), EXIT_FAILURE()
+        )
+
+    if opened.refusal.refused():
+        var failure = opened.refusal.failure()
         return Outcome.fail(failure.message, failure.code)
+
+    var rows = List[Invocation]()
+    if opened.db:
+        var db = opened.db.take()
+        try:
+            # An existing file with no store tables yet (a fresh, empty
+            # SQLite file) is an empty log, not a foreign one: the store
+            # layer accepts it, and only a file that already holds
+            # something else was refused above.
+            if is_skill_log_store(db):
+                rows = read_invocations(db, filters)
+        except e:
+            # Damage the schema probe did not reach is still named as
+            # damage, never degraded into "no invocations logged yet".
+            if is_corruption(String(e)):
+                var failure = damaged_failure(path)
+                return Outcome.fail(failure.message, failure.code)
+            raise
 
     if len(rows) == 0:
         if options.json:

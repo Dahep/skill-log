@@ -20,7 +20,13 @@ stub: a later ticket appends its verb here when it lands.
 from skill_log.add import handle_add
 from skill_log.errors import Outcome
 from skill_log.help import top_level_help
-from skill_log.show import handle_show, show_examples, show_notes, show_usage
+from skill_log.show import (
+    handle_show,
+    show_examples,
+    show_notes,
+    show_usage,
+    show_value_flags,
+)
 from skill_log.verb import Verb
 from skill_log.version import version
 
@@ -54,6 +60,24 @@ def build_verbs() raises -> List[Verb]:
         'skill-log add --skill create-skill --problem - < notes.txt'
     )
     add_examples.append("skill-log add --skill create-skill --dry-run --json")
+
+    # The flags that consume the next argument. The dispatcher reads this
+    # to tell `--problem -h` (a problem spelled `-h`) from a help request.
+    var add_value_flags = List[String]()
+    add_value_flags.append("--skill")
+    add_value_flags.append("--problem")
+    add_value_flags.append("--db")
+    add_value_flags.append("--harness")
+    add_value_flags.append("--session")
+    add_value_flags.append("--parent")
+    add_value_flags.append("--model")
+    add_value_flags.append("--repo")
+    add_value_flags.append("--worktree")
+    add_value_flags.append("--project")
+    add_value_flags.append("--t3-thread")
+    add_value_flags.append("--machine")
+    add_value_flags.append("--adapter")
+
     verbs.append(
         Verb(
             "add",
@@ -65,6 +89,7 @@ def build_verbs() raises -> List[Verb]:
             "                   [--t3-thread <id>] [--machine <name>]\n"
             "                   [--adapter <name>]... [--dry-run] [--json] [--db <path>]",
             add_examples,
+            add_value_flags,
             "A clean run still writes a row: the invocation count is the\n"
             "denominator of the problems-per-invocation rate.\n"
             "\n"
@@ -86,7 +111,8 @@ def build_verbs() raises -> List[Verb]:
             "blank field rather than an error.\n"
             "\n"
             "--problem - reads the problem text from stdin, and exits 2\n"
-            "instead of waiting when stdin is a terminal.",
+            "instead of waiting when stdin is a terminal. The text is one\n"
+            "line — up to the first newline — and at most 64 KiB.",
         )
     )
 
@@ -98,6 +124,7 @@ def build_verbs() raises -> List[Verb]:
             "read the log back: recent invocations and their problems",
             show_usage(),
             show_examples(),
+            show_value_flags(),
             show_notes(),
         )
     )
@@ -110,6 +137,7 @@ def build_verbs() raises -> List[Verb]:
             "print the release version",
             "skill-log --version",
             version_examples,
+            List[String](),
         )
     )
 
@@ -123,6 +151,7 @@ def build_verbs() raises -> List[Verb]:
             "print this usage and the available verbs",
             "skill-log --help",
             help_examples,
+            List[String](),
         )
     )
 

@@ -11,8 +11,10 @@
 #
 # Cases: first-write creation, the row and its problems, blank problems,
 # control characters, the deliberate non-idempotency, the marker shape,
-# --dry-run writing nothing, --json, the three refusals, a failed write
-# leaving nothing behind, path precedence, and usage errors.
+# --dry-run writing nothing, --json, the four refusals, a refused store
+# that a path tries to impersonate, a problems table of the wrong shape, a
+# failed write leaving nothing behind, path precedence, usage errors, a
+# flag value spelled like help, and a stdin pipe that fills the buffer.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -22,27 +24,10 @@ BIN="$DIST/skill-log"
 
 SCRATCH="${SCRATCH:-/tmp/opencode/skill-log-store}"
 
-PASS=0
-FAIL=0
+# shellcheck disable=SC1091  # the harness sits beside the suite, not on PATH
+. "$HERE/lib.sh"
 
-pass() {
-    PASS=$((PASS + 1))
-    printf 'ok   %s\n' "$1"
-}
-
-fail() {
-    FAIL=$((FAIL + 1))
-    printf 'FAIL %s\n' "$1"
-}
-
-check() {
-    # check <name> <actual> <expected>
-    if [ "$2" = "$3" ]; then
-        pass "$1"
-    else
-        fail "$1 (expected '$3', got '$2')"
-    fi
-}
+require_tools sqlite3 python3
 
 if [ ! -x "$BIN" ]; then
     printf 'store.sh: %s is missing; run scripts/build.sh first\n' "$BIN" >&2
@@ -63,11 +48,6 @@ run() {
     ERR="$(cat "$SCRATCH/stderr")"
 }
 
-err_lines() {
-    # A failure is exactly one line on stderr.
-    printf '%s\n' "$ERR" | grep -c . || true
-}
-
 DB="$SCRATCH/home/.local/state/skill-log/skills.db"
 
 # ---------------------------------------------------------------- creation
@@ -81,6 +61,30 @@ fi
 check "the store is WAL" "$(sqlite3 "$DB" 'pragma journal_mode')" "wal"
 check "the schema version is stamped" "$(sqlite3 "$DB" 'pragma user_version')" "1"
 check "one invocation row" "$(sqlite3 "$DB" 'select count(*) from invocations')" "1"
+check "the row carries a local ISO 8601 stamp with an offset" \
+    "$(sqlite3 "$DB" 'select ts from invocations order by id limit 1' \
+        | grep -cE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[+-][0-9]{2}:[0-9]{2}$')" "1"
+
+# Six writers against a store that does not exist yet. Both tables are
+# created inside one transaction, so no writer can see a half-built store
+# and refuse it as foreign; the busy retry covers the writers that queue
+# behind that transaction.
+PARALLEL_DB="$SCRATCH/parallel.db"
+PARALLEL_ERR="$SCRATCH/parallel.err"
+: >"$PARALLEL_ERR"
+for _ in 1 2 3 4 5 6; do
+    env -u XDG_STATE_HOME -u SKILL_LOG_DB HOME="$HOME_DIR" \
+        "$BIN" add --skill parallel --db "$PARALLEL_DB" >/dev/null 2>>"$PARALLEL_ERR" &
+done
+wait
+check "six concurrent first writes all land" \
+    "$(sqlite3 "$PARALLEL_DB" 'select count(*) from invocations')" "6"
+check "no concurrent writer refused the half-built store" \
+    "$(wc -l <"$PARALLEL_ERR" | tr -d ' ')" "0"
+check "the concurrent store has both tables" \
+    "$(sqlite3 "$PARALLEL_DB" \
+        "select count(*) from sqlite_master where type='table'
+            and name in ('invocations','problems')")" "2"
 
 # ------------------------------------------------------------------- rows
 
@@ -94,15 +98,19 @@ check "the problems are in order and attached" \
     "first issue|second issue"
 check "the row carries the skill" \
     "$(sqlite3 "$DB" "select skill from invocations where id = $ID")" "demo"
-check "the row carries a local ISO 8601 stamp with an offset" \
-    "$(sqlite3 "$DB" "select ts from invocations where id = $ID" \
-        | grep -cE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[+-][0-9]{2}:[0-9]{2}$')" "1"
 
-# A newline in a problem must not split it into two lines on read.
+# A newline in a problem must not survive the write. The assertion is on
+# the bytes in the store: `like '%one%two%'` would pass with the newline
+# still there, because `%` matches it, so it proves nothing.
 run add --skill demo --problem "$(printf 'line one\nline two')"
 check "a newline in a problem exits 0" "$STATUS" "0"
-check "a control character cannot split a problem into two lines" \
-    "$(sqlite3 "$DB" "select count(*) from problems where problem like '%line one%line two%'")" "1"
+NEWLINE_ID="$(sqlite3 "$DB" 'select max(id) from invocations')"
+check "a control character is replaced, not stored" \
+    "$(sqlite3 "$DB" "select count(*) from problems where invocation_id = $NEWLINE_ID
+        and problem like '%'||char(10)||'%'")" "0"
+check "the problem text is one line after the write" \
+    "$(sqlite3 "$DB" "select problem from problems where invocation_id = $NEWLINE_ID")" \
+    "line one line two"
 
 # `add` is deliberately not idempotent: two identical calls, two rows.
 BEFORE="$(sqlite3 "$DB" 'select count(*) from invocations')"
@@ -110,6 +118,39 @@ run add --skill duplicate
 run add --skill duplicate
 AFTER="$(sqlite3 "$DB" 'select count(*) from invocations')"
 check "two identical calls produce two rows" "$AFTER" "$((BEFORE + 2))"
+
+# A flag's value is taken as written, even when it is spelled like help.
+run add --skill helpval --problem -h
+check "a problem spelled -h is recorded" "$STATUS" "0"
+check "the problem value -h reaches the store" \
+    "$(sqlite3 "$DB" "select problem from problems
+        where invocation_id = (select max(id) from invocations)")" "-h"
+
+# A pipe that fills the read buffer exactly has no terminator in it. The
+# read is bounded by the count `read` returned, so the problem is exactly
+# the bytes that were piped and nothing that happened to sit next to them.
+python3 -c "import sys; sys.stdout.write('a'*65536)" | \
+    env -u XDG_STATE_HOME -u SKILL_LOG_DB HOME="$HOME_DIR" \
+    "$BIN" add --skill stdin --problem - >/dev/null 2>"$SCRATCH/stderr"
+check "a full-buffer stdin pipe exits 0" "$?" "0"
+STDIN_ID="$(sqlite3 "$DB" 'select max(id) from invocations')"
+check "a full-buffer stdin pipe stores every byte" \
+    "$(sqlite3 "$DB" "select length(problem) from problems where invocation_id = $STDIN_ID")" \
+    "65536"
+check "a full-buffer stdin pipe stores nothing beyond the pipe" \
+    "$(sqlite3 "$DB" "select count(*) from problems where invocation_id = $STDIN_ID
+        and problem glob '*[^a]*'")" "0"
+
+# One `read` may return a short count. A producer that writes the line in
+# two chunks is still one line, and both parts must survive.
+( printf 'first part'; sleep 0.2; printf ' second part\n' ) | \
+    env -u XDG_STATE_HOME -u SKILL_LOG_DB HOME="$HOME_DIR" \
+    "$BIN" add --skill stdin --problem - >/dev/null 2>"$SCRATCH/stderr"
+check "a pipe written in two chunks exits 0" "$?" "0"
+check "a pipe written in two chunks keeps both parts" \
+    "$(sqlite3 "$DB" "select problem from problems
+        where invocation_id = (select max(id) from invocations)")" \
+    "first part second part"
 
 # ----------------------------------------------------------------- marker
 
@@ -142,11 +183,10 @@ run add --skill json --json --problem "one"
 check "json exits 0" "$STATUS" "0"
 check "json is one flat object" \
     "$(printf '%s' "$OUT" | grep -c '^{.*}$')" "1"
-check "json carries every column" \
-    "$(printf '%s' "$OUT" | grep -o '"\(id\|ts\|skill\|harness\|session\|parent\|model\|repo\|worktree\|project\|t3_thread\|machine\|fix\|resolved_at\|marker\|problems\)":' | wc -l)" \
-    "16"
+check "json carries exactly the row's keys" "$(json_keys "$OUT")" \
+    "fix harness id machine marker model parent problems project repo resolved_at session skill t3_thread ts worktree"
 check "json carries the problems array" \
-    "$(printf '%s' "$OUT" | grep -c '"problems":\["one"\]')" "1"
+    "$(json_problem "$OUT")" "one"
 
 # -------------------------------------------------------------- refusals
 
@@ -156,7 +196,7 @@ run add --skill x --db "$SCRATCH/damaged.db"
 check "a damaged store exits 1" "$STATUS" "1"
 check "a damaged store is named" \
     "$(printf '%s' "$ERR" | grep -c 'damaged store')" "1"
-check "a damaged store is one line" "$(err_lines)" "1"
+check_one_line "a damaged store is one line" "$ERR"
 check "a damaged store is not written" "$(md5sum <"$SCRATCH/damaged.db")" "$BEFORE_SUM"
 
 sqlite3 "$SCRATCH/foreign.db" 'create table something (x)'
@@ -165,7 +205,7 @@ run add --skill x --db "$SCRATCH/foreign.db"
 check "a foreign store exits 1" "$STATUS" "1"
 check "a foreign store is named" \
     "$(printf '%s' "$ERR" | grep -c 'foreign store')" "1"
-check "a foreign store is one line" "$(err_lines)" "1"
+check_one_line "a foreign store is one line" "$ERR"
 check "a foreign store is not converted" "$(md5sum <"$SCRATCH/foreign.db")" "$BEFORE_SUM"
 
 cp "$DB" "$SCRATCH/newer.db"
@@ -174,7 +214,21 @@ run add --skill x --db "$SCRATCH/newer.db"
 check "a newer store exits 1" "$STATUS" "1"
 check "a newer store is named with both versions" \
     "$(printf '%s' "$ERR" | grep -c 'has schema version 99.*understands 1')" "1"
-check "a newer store is one line" "$(err_lines)" "1"
+check_one_line "a newer store is one line" "$ERR"
+
+# A store whose *invocations* table is right but whose *problems* table is
+# not this schema is refused before anything is written into it: the write
+# would fail on the problems INSERT, after the store had been accepted.
+cp "$DB" "$SCRATCH/wrong-problems.db"
+sqlite3 "$SCRATCH/wrong-problems.db" \
+    'drop table problems; create table problems (dummy TEXT)'
+BEFORE_SUM="$(md5sum <"$SCRATCH/wrong-problems.db")"
+run add --skill x --db "$SCRATCH/wrong-problems.db"
+check "a store with the wrong problems table exits 1" "$STATUS" "1"
+check "a store with the wrong problems table is foreign" \
+    "$(printf '%s' "$ERR" | grep -c 'foreign store')" "1"
+check "a store with the wrong problems table is not written" \
+    "$(md5sum <"$SCRATCH/wrong-problems.db")" "$BEFORE_SUM"
 
 # The Python-era store: the two tables exist, the columns are the old ones.
 # It is a skill-log store and it is not this schema, so it is named as
@@ -211,10 +265,35 @@ check "an older store is named as older" \
     "$(printf '%s' "$ERR" | grep -c 'older store')" "1"
 check "an older store says it is not converted" \
     "$(printf '%s' "$ERR" | grep -c 'does not convert it')" "1"
-check "an older store is one line" "$(err_lines)" "1"
+check_one_line "an older store is one line" "$ERR"
 check "an older store is not converted" "$(md5sum <"$SCRATCH/older.db")" "$BEFORE_SUM"
 check "the older row is still there untouched" \
     "$(sqlite3 "$SCRATCH/older.db" 'select count(*) from invocations')" "1"
+
+# A path may contain any word the refusal vocabulary uses. The refusal is
+# a value, so the path cannot decide which one the tool reports: a
+# directory that cannot be created is an operational failure naming the
+# directory, not an "older" or "newer 5" store.
+printf 'not a directory' >"$SCRATCH/not-a-dir"
+for pair in "older:older store" "newer5:newer store" \
+    "foreign:foreign store" "damaged:damaged store"; do
+    word="${pair%%:*}"
+    phrase="${pair##*:}"
+    run add --skill x --db "$SCRATCH/not-a-dir/$word/store.db"
+    check "a path named $word still exits 1" "$STATUS" "1"
+    check_absent "a path named $word is not reported as a $phrase" "$ERR" "$phrase"
+    check_contains "a path named $word names the directory" "$ERR" "not-a-dir"
+    check_one_line "a path named $word is one line" "$ERR"
+done
+
+# A diagnostic that carries a newline is still one line: the path below
+# includes one, and the damaged-store message names the path.
+WEIRD_DB="$SCRATCH/$(printf 'weird\npath').db"
+printf 'not a database' >"$WEIRD_DB"
+run add --skill x --db "$WEIRD_DB"
+check "a damaged store with a newline in its path is named" \
+    "$(printf '%s' "$ERR" | grep -c 'damaged store')" "1"
+check_one_line "a newline in a path does not split the diagnostic" "$ERR"
 
 # ----------------------------------------------------------- atomic write
 
@@ -226,8 +305,7 @@ chmod 644 "$DB" "$DB-wal" "$DB-shm" 2>/dev/null
 check "a failed write exits 1" "$STATUS_LOCKED" "1"
 check "a failed write leaves no row behind" \
     "$(sqlite3 "$DB" 'select count(*) from invocations')" "$BEFORE"
-check "a failed write is one line" \
-    "$(printf '%s' "$(cat "$SCRATCH/stderr")" | grep -c .)" "1"
+check_one_line "a failed write is one line" "$ERR"
 
 # ------------------------------------------------------------ precedence
 
@@ -259,12 +337,11 @@ fi
 
 run add
 check "add without --skill is a usage error" "$STATUS" "2"
-check "a usage error is one line" "$(err_lines)" "1"
+check_one_line "a usage error is one line" "$ERR"
 
 run add --skill x --nope
 check "an unknown flag is a usage error" "$STATUS" "2"
 
 # ----------------------------------------------------------------- report
 
-printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
-[ "$FAIL" -eq 0 ]
+tally

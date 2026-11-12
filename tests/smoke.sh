@@ -25,28 +25,8 @@ DIST="$ROOT/dist"
 
 SCRATCH="${SCRATCH:-/tmp/opencode/skill-log-smoke}"
 
-PASS=0
-FAIL=0
-
-pass() {
-    PASS=$((PASS + 1))
-    printf 'ok   %s\n' "$1"
-}
-
-fail() {
-    FAIL=$((FAIL + 1))
-    printf 'FAIL %s\n' "$1"
-}
-
-check() {
-    # check <name> <condition-description> <actual> <expected>
-    local name="$1" actual="$2" expected="$3"
-    if [ "$actual" = "$expected" ]; then
-        pass "$name"
-    else
-        fail "$name (expected '$expected', got '$actual')"
-    fi
-}
+# shellcheck disable=SC1091  # the harness sits beside the suite, not on PATH
+. "$HERE/lib.sh"
 
 require_artifact() {
     if [ ! -x "$DIST/skill-log" ]; then
@@ -86,13 +66,13 @@ mkdir -p "$SCRATCH"
 # the machine has a system SQLite.
 
 run_plain() {
+    # run_plain <args...>: the artifact as staged, output in $SCRATCH/plain.*
     local out="$SCRATCH/plain"
-    shift
     "$DIST/skill-log" "$@" >"$out.out" 2>"$out.err"
     echo $?
 }
 
-code="$(run_plain plain --version)"
+code="$(run_plain --version)"
 check "plain: --version exits 0" "$code" "0"
 
 version_line="$(cat "$SCRATCH/plain.out")"
@@ -105,7 +85,7 @@ fi
 check "plain: --version prints nothing on stderr" \
     "$(wc -c < "$SCRATCH/plain.err" | tr -d ' ')" "0"
 
-code="$(run_plain plain --help)"
+code="$(run_plain --help)"
 check "plain: --help exits 0" "$code" "0"
 check "plain: --help prints the usage on stdout" \
     "$(grep -c '^usage:' "$SCRATCH/plain.out")" "1"
@@ -114,10 +94,10 @@ check "plain: --help prints copy-pasteable examples" \
 check "plain: --help prints nothing on stderr" \
     "$(wc -c < "$SCRATCH/plain.err" | tr -d ' ')" "0"
 
-code="$(run_plain plain -h)"
+code="$(run_plain -h)"
 check "plain: -h exits 0" "$code" "0"
 
-code="$(run_plain plain --version --help)"
+code="$(run_plain --version --help)"
 check "plain: a verb's --help exits 0" "$code" "0"
 check "plain: a verb's --help prints that verb's usage" \
     "$(grep -c '^usage:$' "$SCRATCH/plain.out")" "1"
@@ -126,7 +106,7 @@ check "plain: a verb's --help prints that verb's name" \
 check "plain: a verb's --help prints 2 to 4 real invocations" \
     "$(count_examples "$SCRATCH/plain.out")" "2"
 
-code="$(run_plain plain)"
+code="$(run_plain)"
 check "plain: no arguments exits 2" "$code" "2"
 check "plain: no arguments keeps stdout empty" \
     "$(wc -c < "$SCRATCH/plain.out" | tr -d ' ')" "0"
@@ -135,7 +115,7 @@ check "plain: no arguments prints the usage" \
 check "plain: no arguments prints examples" \
     "$(count_examples "$SCRATCH/plain.err")" "2"
 
-code="$(run_plain plain not-a-verb)"
+code="$(run_plain not-a-verb)"
 check "plain: an unknown verb exits 2" "$code" "2"
 check "plain: an unknown verb keeps stdout empty" \
     "$(wc -c < "$SCRATCH/plain.out" | tr -d ' ')" "0"
@@ -277,5 +257,4 @@ fi
 
 # ------------------------------------------------------------------ done
 
-printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
-[ "$FAIL" -eq 0 ]
+tally

@@ -4,12 +4,14 @@ A local log of agent-skill invocations: one row per run, plus the problems
 that cost it, so friction can be counted, attributed to a skill, and closed by
 a specific change.
 
-**Status:** implementation spec settled ([issue #3](../../issues/3)); build
-starting. The behavior contract lives in [issue #1](../../issues/1), and the
-implementation decisions are recorded in
-[ADR-0001](docs/adr/0001-mojo-binary-and-sqlite.md). Until the first release,
-the Python implementation in the dotfiles repo (`bin/skill-log`) is the
-reference for behavior.
+**Status:** implementation spec settled ([issue #3](../../issues/3)); the Mojo
+binary is being built ticket by ticket. The behavior contract lives in
+[issue #1](../../issues/1), and the implementation decisions are recorded in
+[ADR-0001](docs/adr/0001-mojo-binary-and-sqlite.md) and
+[ADR-0002](docs/adr/0002-explicit-harness-context.md). The Python
+implementation it replaces is archived verbatim in
+[`reference/`](reference/README.md): that tree is the parity ground truth for
+the port, not the shipped tool.
 
 ## What it is
 
@@ -19,9 +21,9 @@ invocation, so a clean run still counts as a denominator and
 problems-per-invocation stays measurable.
 
 The store is one SQLite file under the XDG state directory. There is no
-daemon and no network except `sync`, which pulls another machine's store over
-SSH and merges its rows into an aggregate. Each machine owns its rows; an
-aggregate reads them but never resolves them.
+daemon and no network: 1.0 keeps one store per machine, with no `sync`, no
+aggregate and no merged copies (ADR-0002 §9). Rows still carry `machine`,
+because the marker grammar is `machine#id` and a store's ids are per store.
 
 A change closes the rows it fixes by committing a report file (or, in repos
 that cannot carry one, a marker trailer) naming `machine#id` markers. A
@@ -42,17 +44,26 @@ skill-log setup --repo ~/dotfiles --skills-dir ~/dotfiles/.agents/skills
 `setup` provisions the store, the post-merge hook, the repo report directory,
 and both bundled skills. `setup --check` verifies the result without writing.
 
+## Build and test
+
+```bash
+scripts/build.sh   # dist/skill-log plus dist/lib/, rpath $ORIGIN/lib
+scripts/test.sh    # the three suites against dist/
+```
+
+The suites are black-box: they run the built binary with a scratch HOME and a
+scratch store. `scripts/test.sh --build` rebuilds first.
+
 ## Command surface
 
 | Command | Purpose |
 | --- | --- |
 | `add` | Record one invocation and zero or more problems. |
-| `show` | Recent rows, filtered by skill, machine, or unresolved state. |
+| `show` | Recent rows, their problems, and the cuts: skill, machine, harness, repo, run, unresolved, last. |
 | `stats` | Per-skill (optionally per-model) invocation, problem, and resolved counts. |
 | `resolve` | Stamp one local row with the commit that fixed it. |
 | `resolve-merged` | Resolve rows from the commits a pull landed; reports in artifact mode, trailers otherwise. |
-| `fix` | Write or update the committed report listing the rows a change resolves. |
-| `sync` | Pull another machine's store over SSH and merge it. |
+| `report` | Write or update the committed report listing the rows a change resolves. |
 | `setup` | Provision or verify the store, hook, report directory, and skills. |
 | `skills audit` | Report each skill's usage-log state (`ok`, `missing`, `stale`, `edited`, `legacy`, `unowned`, `vendored`). |
 | `skills adopt` | Append missing blocks and re-render stale ones; leave `edited`, `legacy` and `unowned` untouched unless `--force`. |
