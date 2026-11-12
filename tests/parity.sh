@@ -699,10 +699,12 @@ check "case 19: a dry run leaves the row unresolved" "$(fix_of "$DB19D" 1)" ""
 # (a short name against an FQDN). The 1.0 rule is that a marker names a
 # machine exactly and a marker naming another machine is foreign
 # (SPEC §2): there is no owner lookup and no cross-machine resolution.
+# The local spelling is this host's name; the differently spelled one is
+# another machine.
 say "parity: case 20 — a marker names its machine exactly"
 R20="$(new_repo c20)"
 C20L="$DBT/c20.db"
-"$BIN" add --skill boxed --machine box --db "$C20L" >/dev/null
+"$BIN" add --skill boxed --machine "$H" --db "$C20L" >/dev/null
 printf x >"$R20/f"
 git -C "$R20" add f
 git -C "$R20" commit -q -m "skills: fix the box row" \
@@ -715,13 +717,13 @@ check "case 20: the differently spelled host is reported" \
 check "case 20: the foreign marker stamped nothing" "$(fix_of "$C20L" 1)" ""
 # The exact spelling does resolve.
 R20B="$(new_repo c20b)"
-"$BIN" add --skill boxed --machine box --db "$C20L" >/dev/null
+"$BIN" add --skill boxed --machine "$H" --db "$C20L" >/dev/null
 printf y >"$R20B/f"
 git -C "$R20B" add f
-git -C "$R20B" commit -q -m "skills: fix the box row" -m "Skill-log-Fix: box#2"
+git -C "$R20B" commit -q -m "skills: fix the box row" -m "Skill-log-Fix: $H#2"
 OUT="$(cd "$R20B" && "$BIN" resolve-merged --db "$C20L" --json 2>/dev/null)"
 check "case 20: the exact spelling resolves" \
-    "$(json_array "$OUT" resolved)" "box#2"
+    "$(json_array "$OUT" resolved)" "$H#2"
 
 # --- case 21: a marker the last-trailer-block rule hides is reported ------
 say "parity: case 21 — a marker hidden by a later trailer block is reported"

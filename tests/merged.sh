@@ -42,6 +42,10 @@ run() {
     ERR="$(cat "$SCRATCH/stderr")"
 }
 
+# This host's spelling. A marker naming it is local; a marker
+# naming any other machine is foreign and is never stamped (SPEC §2).
+H="$(hostname)"
+
 # new_repo <name>: an empty git repository under the scratch root.
 new_repo() {
     local repo="$SCRATCH/$1"
@@ -67,9 +71,9 @@ commit_file() {
 REPO="$(new_repo trailer)"
 DB="$SCRATCH/trailer.db"
 
-"$BIN" add --skill alpha --machine boxA --db "$DB" >/dev/null
-"$BIN" add --skill beta --machine boxA --db "$DB" >/dev/null
-commit_file "$REPO" "Skill-log-Fix: boxA#1, boxA#2"
+"$BIN" add --skill alpha --machine $H --db "$DB" >/dev/null
+"$BIN" add --skill beta --machine $H --db "$DB" >/dev/null
+commit_file "$REPO" "Skill-log-Fix: $H#1, $H#2"
 FIRST="$(git -C "$REPO" rev-parse HEAD)"
 
 (
@@ -77,7 +81,7 @@ FIRST="$(git -C "$REPO" rev-parse HEAD)"
     "$BIN" resolve-merged --db "$DB" --json >"$SCRATCH/one.json" 2>"$SCRATCH/one.err"
 )
 check "both named rows are stamped" \
-    "$(json_array "$(cat "$SCRATCH/one.json")" resolved)" "boxA#1,boxA#2"
+    "$(json_array "$(cat "$SCRATCH/one.json")" resolved)" "$H#1,$H#2"
 check "the stamp is the fix commit" \
     "$(sqlite3 "$DB" 'select fix from invocations where id = 1')" "$FIRST"
 check "the second row carries the same commit" \
@@ -95,7 +99,7 @@ check "the scan is silent on stderr" "$(cat "$SCRATCH/one.err")" ""
 check "a second scan stamps nothing" \
     "$(json_array "$(cat "$SCRATCH/two.json")" resolved)" ""
 check "a second scan names the rows it left alone" \
-    "$(json_array "$(cat "$SCRATCH/two.json")" unchanged)" "boxA#1,boxA#2"
+    "$(json_array "$(cat "$SCRATCH/two.json")" unchanged)" "$H#1,$H#2"
 check "a second scan prints no note" "$(cat "$SCRATCH/two.err")" ""
 (
     cd "$REPO" || exit 1
@@ -106,15 +110,15 @@ check "--quiet prints nothing" "$(cat "$SCRATCH/quiet.out")$(cat "$SCRATCH/quiet
 # ------------------------------------------------------------- reused ids
 
 # A row logged after the named commit is an id reused by a rebuilt log.
-commit_file "$REPO" "Skill-log-Fix: boxA#3"
+commit_file "$REPO" "Skill-log-Fix: $H#3"
 sleep 1
-"$BIN" add --skill logged-later --machine boxA --db "$DB" >/dev/null
+"$BIN" add --skill logged-later --machine $H --db "$DB" >/dev/null
 (
     cd "$REPO" || exit 1
     "$BIN" resolve-merged --db "$DB" >/dev/null 2>"$SCRATCH/later.err"
 )
 check_contains "a later row is skipped with its reason" \
-    "$(cat "$SCRATCH/later.err")" "boxA#3 skipped: logged_after_commit"
+    "$(cat "$SCRATCH/later.err")" "$H#3 skipped: logged_after_commit"
 check "the guarded row stays unresolved" \
     "$(sqlite3 "$DB" 'select fix from invocations where id = 3')" ""
 
@@ -131,13 +135,13 @@ check "the skip reason in JSON is the contract token" \
 
 # ---------------------------------------------- unknown, malformed, hidden
 
-commit_file "$REPO" "Skill-log-Fix: boxA#99, <id>, 7"
+commit_file "$REPO" "Skill-log-Fix: $H#99, <id>, 7"
 (
     cd "$REPO" || exit 1
     "$BIN" resolve-merged --db "$DB" --json >"$SCRATCH/bad.json" 2>"$SCRATCH/bad.err"
 )
 check_contains "an unknown id is reported by name" \
-    "$(cat "$SCRATCH/bad.err")" "boxA#99 skipped: unknown_id"
+    "$(cat "$SCRATCH/bad.err")" "$H#99 skipped: unknown_id"
 check_contains "a placeholder is reported" \
     "$(cat "$SCRATCH/bad.err")" "not a Skill-log-Fix marker (machine#id): <id>"
 check_contains "a bare id is reported" \
@@ -145,12 +149,12 @@ check_contains "a bare id is reported" \
 check "a malformed marker stamps nothing" \
     "$(sqlite3 "$DB" "select count(*) from invocations where fix <> ''")" "2"
 check "the JSON names the unknown row" \
-    "$(json_array "$(cat "$SCRATCH/bad.json")" skipped | grep -c 'boxA#99')" "1"
+    "$(json_array "$(cat "$SCRATCH/bad.json")" skipped | grep -c "$H#99")" "1"
 check "the unknown id's reason is the contract token" \
     "$(printf '%s' "$(cat "$SCRATCH/bad.json")" \
         | python3 -c 'import json,sys; print(next(
             s["reason"] for s in json.loads(sys.stdin.read())["skipped"]
-            if s["row"] == "boxA#99"))')" \
+            if s["row"] == sys.argv[1]))' "$H#99")" \
     "unknown_id"
 
 # SPEC §5.6: hidden and malformed markers are reported with their ids or
@@ -200,7 +204,36 @@ check "the foreign marker's reason is the contract token" \
 check "a foreign marker is never stamped in the answer" \
     "$(json_array "$(cat "$SCRATCH/foreign.json")" resolved)" ""
 
-"$BIN" add --skill hidden --machine boxA --db "$DB" >/dev/null
+# A stored row that carries another machine's name does not make that
+# machine this store's own: SPEC §2 says a marker naming another
+# machine is foreign and is never stamped, and the store holds one row
+# per machine only in a consolidated copy. This store is a machine's
+# own store, so the spelling that is not this host's is foreign even
+# when a row happens to carry it.
+REPO_FM="$(new_repo foreign-row)"
+DB_FM="$SCRATCH/foreign-row.db"
+"$BIN" add --skill owned-elsewhere --machine otherbox --db "$DB_FM" >/dev/null
+commit_file "$REPO_FM" "Skill-log-Fix: otherbox#1"
+(
+    cd "$REPO_FM" || exit 1
+    "$BIN" resolve-merged --db "$DB_FM" --json \
+        >"$SCRATCH/foreignrow.json" 2>"$SCRATCH/foreignrow.err"
+)
+check_contains "a marker naming another machine is foreign" \
+    "$(cat "$SCRATCH/foreignrow.err")" "otherbox#1 skipped: foreign"
+check "the foreign marker's reason is the contract token" \
+    "$(printf '%s' "$(cat "$SCRATCH/foreignrow.json")" \
+        | python3 -c 'import json,sys; print(next(
+            s["row"] + "=" + s["reason"]
+            for s in json.loads(sys.stdin.read())["skipped"]
+            if s["row"] == "otherbox#1"))')" \
+    "otherbox#1=foreign"
+check "the foreign marker stamped nothing" \
+    "$(sqlite3 "$DB_FM" 'select fix from invocations where id = 1')" ""
+check "the foreign marker is not in the resolved answer" \
+    "$(json_array "$(cat "$SCRATCH/foreignrow.json")" resolved)" ""
+
+"$BIN" add --skill hidden --machine $H --db "$DB" >/dev/null
 n="$(date +%s%N)"
 printf '%s' "$n" >"$REPO/file"
 git -C "$REPO" add file
@@ -208,7 +241,7 @@ git -C "$REPO" add file
 # trailer block that hides it from git's trailer parser.
 git -C "$REPO" commit -q \
     -m "skills: name a hidden row" \
-    -m "Skill-log-Fix: boxA#4" \
+    -m "Skill-log-Fix: $H#4" \
     -m "Co-authored-by: someone <s@example.com>"
 (
     cd "$REPO" || exit 1
@@ -227,7 +260,7 @@ check "the JSON names the hidden marker" \
     "$(json_array "$(cat "$SCRATCH/hidden.json")" ignored \
         | grep -c "not in the commit's last trailer block")" "1"
 check "the JSON names the hidden marker's text" \
-    "$(json_array "$(cat "$SCRATCH/hidden.json")" ignored | grep -c 'boxA#4')" "1"
+    "$(json_array "$(cat "$SCRATCH/hidden.json")" ignored | grep -c "$H#4")" "1"
 (
     cd "$REPO" || exit 1
     "$BIN" resolve-merged --db "$DB" --quiet >"$SCRATCH/hq.out" 2>"$SCRATCH/hq.err"
@@ -243,14 +276,14 @@ check "--quiet hides the ignored marker" \
 # block did return a value, which is the case the old scan missed.
 REPO_PB="$(new_repo partial-burial)"
 DB_PB="$SCRATCH/partial-burial.db"
-"$BIN" add --skill buried-row --machine boxA --db "$DB_PB" >/dev/null
-"$BIN" add --skill last-block-row --machine boxA --db "$DB_PB" >/dev/null
+"$BIN" add --skill buried-row --machine $H --db "$DB_PB" >/dev/null
+"$BIN" add --skill last-block-row --machine $H --db "$DB_PB" >/dev/null
 printf x >"$REPO_PB/file"
 git -C "$REPO_PB" add file
 git -C "$REPO_PB" commit -q \
     -m "skills: name two rows" \
-    -m "Skill-log-Fix: boxA#1" \
-    -m "Skill-log-Fix: boxA#2"
+    -m "Skill-log-Fix: $H#1" \
+    -m "Skill-log-Fix: $H#2"
 (
     cd "$REPO_PB" || exit 1
     "$BIN" resolve-merged --db "$DB_PB" --json \
@@ -259,15 +292,15 @@ git -C "$REPO_PB" commit -q \
 check_contains "the buried marker is reported" \
     "$(cat "$SCRATCH/partial.err")" "ignored marker"
 check_contains "the buried marker is named" \
-    "$(cat "$SCRATCH/partial.err")" "boxA#1"
+    "$(cat "$SCRATCH/partial.err")" "$H#1"
 check "the buried marker is in the ignored array" \
-    "$(json_array "$(cat "$SCRATCH/partial.json")" ignored | grep -c 'boxA#1')" "1"
+    "$(json_array "$(cat "$SCRATCH/partial.json")" ignored | grep -c "$H#1")" "1"
 check "the last block's marker is not reported as buried" \
-    "$(json_array "$(cat "$SCRATCH/partial.json")" ignored | grep -c 'boxA#2')" "0"
+    "$(json_array "$(cat "$SCRATCH/partial.json")" ignored | grep -c "$H#2")" "0"
 # The last block's marker still resolves: only the buried one is
 # reported, never stamped.
 check "the last block's marker still resolves" \
-    "$(json_array "$(cat "$SCRATCH/partial.json")" resolved)" "boxA#2"
+    "$(json_array "$(cat "$SCRATCH/partial.json")" resolved)" "$H#2"
 check "the buried marker stamped nothing" \
     "$(sqlite3 "$DB_PB" 'select fix from invocations where id = 1')" ""
 
@@ -275,10 +308,10 @@ check "the buried marker stamped nothing" \
 
 REPO2="$(new_repo newest)"
 DB2="$SCRATCH/newest.db"
-"$BIN" add --skill named-twice --machine boxA --db "$DB2" >/dev/null
-commit_file "$REPO2" "Skill-log-Fix: boxA#1"
+"$BIN" add --skill named-twice --machine $H --db "$DB2" >/dev/null
+commit_file "$REPO2" "Skill-log-Fix: $H#1"
 OLDER="$(git -C "$REPO2" rev-parse HEAD)"
-commit_file "$REPO2" "Skill-log-Fix: boxA#1"
+commit_file "$REPO2" "Skill-log-Fix: $H#1"
 NEWER="$(git -C "$REPO2" rev-parse HEAD)"
 (
     cd "$REPO2" || exit 1
@@ -289,7 +322,7 @@ check "the newest marker for a row wins" \
 check "the older marker is not the stamp" \
     "$(sqlite3 "$DB2" "select fix <> '$OLDER' from invocations where id = 1")" "1"
 check "the row appears once in the answer" \
-    "$(json_array "$(cat "$SCRATCH/newest.json")" resolved)" "boxA#1"
+    "$(json_array "$(cat "$SCRATCH/newest.json")" resolved)" "$H#1"
 
 # --------------------------------------------------- restamp on a new commit
 
@@ -298,8 +331,8 @@ check "the row appears once in the answer" \
 # second scan of the *same* commit, not a freeze on the first fix.
 REPO7="$(new_repo restamp)"
 DB7="$SCRATCH/restamp.db"
-"$BIN" add --skill amended --machine boxA --db "$DB7" >/dev/null
-commit_file "$REPO7" "Skill-log-Fix: boxA#1"
+"$BIN" add --skill amended --machine $H --db "$DB7" >/dev/null
+commit_file "$REPO7" "Skill-log-Fix: $H#1"
 OLDER_FIX="$(git -C "$REPO7" rev-parse HEAD)"
 (
     cd "$REPO7" || exit 1
@@ -311,7 +344,7 @@ RESOLVED_ONE="$(sqlite3 "$DB7" 'select resolved_at from invocations where id = 1
 
 # A newer commit naming the same row: the amended fix supersedes.
 sleep 1
-commit_file "$REPO7" "Skill-log-Fix: boxA#1"
+commit_file "$REPO7" "Skill-log-Fix: $H#1"
 NEWER_FIX="$(git -C "$REPO7" rev-parse HEAD)"
 (
     cd "$REPO7" || exit 1
@@ -320,7 +353,7 @@ NEWER_FIX="$(git -C "$REPO7" rev-parse HEAD)"
 check "a newer commit restamps the row" \
     "$(sqlite3 "$DB7" 'select fix from invocations where id = 1')" "$NEWER_FIX"
 check "the restamped row is reported as resolved" \
-    "$(json_array "$(cat "$SCRATCH/restamp2.json")" resolved)" "boxA#1"
+    "$(json_array "$(cat "$SCRATCH/restamp2.json")" resolved)" "$H#1"
 check "resolved_at moves to the restamp" \
     "$([ "$(sqlite3 "$DB7" 'select resolved_at from invocations where id = 1')" \
         != "$RESOLVED_ONE" ] && echo moved || echo frozen)" "moved"
@@ -331,7 +364,7 @@ check "resolved_at moves to the restamp" \
     "$BIN" resolve-merged --since "$OLDER_FIX" --db "$DB7" --json >"$SCRATCH/restamp3.json"
 )
 check "a same-commit row is unchanged, not restamped" \
-    "$(json_array "$(cat "$SCRATCH/restamp3.json")" unchanged)" "boxA#1"
+    "$(json_array "$(cat "$SCRATCH/restamp3.json")" unchanged)" "$H#1"
 check "a re-scan of the newer range stamps nothing" \
     "$(json_array "$(cat "$SCRATCH/restamp3.json")" resolved)" ""
 check "a re-scan leaves the stamp alone" \
@@ -341,17 +374,17 @@ check "a re-scan leaves the stamp alone" \
 
 REPO3="$(new_repo since)"
 DB3="$SCRATCH/since.db"
-"$BIN" add --skill old --machine boxA --db "$DB3" >/dev/null
-commit_file "$REPO3" "Skill-log-Fix: boxA#1"
+"$BIN" add --skill old --machine $H --db "$DB3" >/dev/null
+commit_file "$REPO3" "Skill-log-Fix: $H#1"
 BASE="$(git -C "$REPO3" rev-parse HEAD)"
-"$BIN" add --skill new --machine boxA --db "$DB3" >/dev/null
-commit_file "$REPO3" "Skill-log-Fix: boxA#2"
+"$BIN" add --skill new --machine $H --db "$DB3" >/dev/null
+commit_file "$REPO3" "Skill-log-Fix: $H#2"
 (
     cd "$REPO3" || exit 1
     "$BIN" resolve-merged --since "$BASE" --db "$DB3" --json >"$SCRATCH/since.json"
 )
 check "--since only reads what came after it" \
-    "$(json_array "$(cat "$SCRATCH/since.json")" resolved)" "boxA#2"
+    "$(json_array "$(cat "$SCRATCH/since.json")" resolved)" "$H#2"
 check "the marker before --since is left alone" \
     "$(sqlite3 "$DB3" 'select fix from invocations where id = 1')" ""
 
@@ -381,14 +414,14 @@ check_contains "an option-shaped --since says what it needs" \
 
 REPO4="$(new_repo dry)"
 DB4="$SCRATCH/dry.db"
-"$BIN" add --skill dry-run --machine boxA --db "$DB4" >/dev/null
-commit_file "$REPO4" "Skill-log-Fix: boxA#1"
+"$BIN" add --skill dry-run --machine $H --db "$DB4" >/dev/null
+commit_file "$REPO4" "Skill-log-Fix: $H#1"
 (
     cd "$REPO4" || exit 1
     "$BIN" resolve-merged --db "$DB4" --dry-run --json >"$SCRATCH/dry.json"
 )
 check "a dry run reports the row it would stamp" \
-    "$(json_array "$(cat "$SCRATCH/dry.json")" resolved)" "boxA#1"
+    "$(json_array "$(cat "$SCRATCH/dry.json")" resolved)" "$H#1"
 check "a dry run says so" "$(json_field "$(cat "$SCRATCH/dry.json")" dry_run)" "True"
 check "a dry run leaves the fix alone" \
     "$(sqlite3 "$DB4" 'select fix from invocations where id = 1')" ""
@@ -402,7 +435,7 @@ check "a real run stamps after the dry run" \
 # -------------------------------------------------------- missing store
 
 REPO5="$(new_repo missing)"
-commit_file "$REPO5" "Skill-log-Fix: boxA#1"
+commit_file "$REPO5" "Skill-log-Fix: $H#1"
 (
     cd "$REPO5" || exit 1
     "$BIN" resolve-merged --db "$SCRATCH/no-store/skills.db" --json \
@@ -426,7 +459,7 @@ BEFORE_SUM="$(md5sum <"$SCRATCH/tableless.db")"
         >"$SCRATCH/tableless.json" 2>"$SCRATCH/tableless.err"
 )
 check "a table-less store names the row as unknown" \
-    "$(json_array "$(cat "$SCRATCH/tableless.json")" skipped | grep -c 'boxA#1')" "1"
+    "$(json_array "$(cat "$SCRATCH/tableless.json")" skipped | grep -c "$H#1")" "1"
 check "a table-less store is not initialised" \
     "$(md5sum <"$SCRATCH/tableless.db")" "$BEFORE_SUM"
 
@@ -439,12 +472,12 @@ printf 'base\n' >"$REPO6/base"
 git -C "$REPO6" add -A
 git -C "$REPO6" commit -q -m base
 DB6="$SCRATCH/artifact.db"
-"$BIN" add --skill by-file --machine boxA --db "$DB6" >/dev/null
-"$BIN" add --skill by-trailer --machine boxA --db "$DB6" >/dev/null
-printf 'boxA#1\n' >"$REPO6/.skill-log/reports/fix.md"
+"$BIN" add --skill by-file --machine $H --db "$DB6" >/dev/null
+"$BIN" add --skill by-trailer --machine $H --db "$DB6" >/dev/null
+printf "$H#1\n" >"$REPO6/.skill-log/reports/fix.md"
 printf 'change\n' >"$REPO6/file"
 git -C "$REPO6" add -A
-git -C "$REPO6" commit -q -m "report the fix" -m "Skill-log-Fix: boxA#2"
+git -C "$REPO6" commit -q -m "report the fix" -m "Skill-log-Fix: $H#2"
 REPORT_COMMIT="$(git -C "$REPO6" rev-parse HEAD)"
 (
     cd "$REPO6" || exit 1
@@ -468,8 +501,8 @@ check "a bounded second scan prints nothing" \
 
 # A hand-written bad line is reported and never swallowed; the good line
 # still resolves.
-"$BIN" add --skill by-hand --machine boxA --db "$DB6" >/dev/null
-printf 'boxA#3\nnot-a-marker\n' >"$REPO6/.skill-log/reports/bad.md"
+"$BIN" add --skill by-hand --machine $H --db "$DB6" >/dev/null
+printf "$H#3\nnot-a-marker\n" >"$REPO6/.skill-log/reports/bad.md"
 printf 'change\n' >"$REPO6/file"
 git -C "$REPO6" add -A
 git -C "$REPO6" commit -q -m "a hand-edited report"
@@ -484,8 +517,8 @@ check "the good line in the same report still resolves" \
     "$(sqlite3 "$DB6" "select fix <> '' from invocations where id = 3")" "1"
 
 # A full scan reads every report file in the tree.
-"$BIN" add --skill manual --machine boxA --db "$DB6" >/dev/null
-printf 'boxA#4\n' >"$REPO6/.skill-log/reports/manual.md"
+"$BIN" add --skill manual --machine $H --db "$DB6" >/dev/null
+printf "$H#4\n" >"$REPO6/.skill-log/reports/manual.md"
 printf 'change\n' >"$REPO6/file"
 git -C "$REPO6" add -A
 git -C "$REPO6" commit -q -m "a manual report"
@@ -495,7 +528,7 @@ git -C "$REPO6" commit -q -m "a manual report"
         >"$SCRATCH/manual.json" 2>"$SCRATCH/manual.err"
 )
 check "a full scan reads every report file" \
-    "$(json_array "$(cat "$SCRATCH/manual.json")" resolved)" "boxA#4"
+    "$(json_array "$(cat "$SCRATCH/manual.json")" resolved)" "$H#4"
 
 # -------------------------------------------------------------- refusals
 

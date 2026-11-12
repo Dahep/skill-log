@@ -61,7 +61,10 @@ The product is one loop, and every command is a step in it:
   contracts, not APIs.
 - A marker is `machine#id`. The machine is required because ids are per store.
 - A marker naming another machine is **foreign**: reported, never stamped.
-  There is no owner lookup and no cross-machine resolution in 1.0.
+  There is no owner lookup and no cross-machine resolution in 1.0. The rows a
+  store holds do not change that: only this host's own spelling stamps. The one
+  exception is a stored row with an empty `machine` column — written before
+  `add` always filled it — and that row belongs to the machine reading it.
 - Reports carry machine names and local ids only — never problem text or
   project details.
 - Newest marker wins. A row whose timestamp is after the named commit is

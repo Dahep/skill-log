@@ -1468,25 +1468,6 @@ def merged_row_index(
     return -1
 
 
-def rows_carry_machine(
-    rows: List[ResolutionRow], machine: String, local_host: String
-) -> Bool:
-    """True when any row's marker names `machine`.
-
-    A marker whose machine is not this host's spelling is foreign: its
-    store is on another machine, and this scan never stamps it. A local
-    marker whose id is absent is `unknown_id` instead. The two are told
-    apart here so `plan` never has to reach for the hostname itself.
-    """
-    for i in range(len(rows)):
-        var stored = rows[i].machine
-        if stored == "":
-            stored = local_host
-        if stored == machine:
-            return True
-    return False
-
-
 def plan(
     located: List[Located],
     rows: List[ResolutionRow],
@@ -1505,13 +1486,19 @@ def plan(
     unchanged; a row stamped with a *different* commit is restamped, so
     an amended fix supersedes the earlier one — idempotency is a second
     scan seeing the same commit, not a freeze on the first fix.
+
+    A marker whose machine is not this host's spelling is foreign and is
+    never stamped (SPEC §2). The rows this store holds do not change
+    that: a row carrying another machine's name is a row this machine
+    does not own, and its id is not this store's to stamp. The one
+    exception the store has always had is a row with an *empty* machine
+    column — written before `add` always filled it — and that row
+    belongs to the machine reading it.
     """
     var result = MergedResult()
     for i in range(len(located)):
         var marker = located[i].text()
-        if located[i].machine != local_host and not rows_carry_machine(
-            rows, located[i].machine, local_host
-        ):
+        if located[i].machine != local_host:
             # A marker naming another machine: its store is elsewhere.
             # Reported, never stamped.
             var foreign = MergedSkip(marker, SKIP_FOREIGN)
