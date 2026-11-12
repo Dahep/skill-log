@@ -27,6 +27,13 @@ from skill_log.show import (
     show_usage,
     show_value_flags,
 )
+from skill_log.skills import (
+    handle_skills,
+    skills_examples,
+    skills_notes,
+    skills_usage,
+    skills_value_flags,
+)
 from skill_log.report import (
     handle_report,
     report_examples,
@@ -204,6 +211,19 @@ def build_verbs() raises -> List[Verb]:
         )
     )
 
+    # The skills surface: audit, template show/seed/reset, adopt.
+    verbs.append(
+        Verb(
+            "skills",
+            "audit a skills directory and manage the usage-log templates",
+            skills_usage(),
+            skills_examples(),
+            skills_value_flags(),
+            skills_notes(),
+            True,
+        )
+    )
+
     var version_examples = List[String]()
     version_examples.append("skill-log --version")
     version_examples.append("skill-log --help")
@@ -243,6 +263,7 @@ def build_handlers() raises -> List[type_of(handle_version)]:
     handlers.append(handle_report)
     handlers.append(handle_resolve)
     handlers.append(handle_resolve_merged)
+    handlers.append(handle_skills)
     handlers.append(handle_version)
     handlers.append(handle_help)
     return handlers^

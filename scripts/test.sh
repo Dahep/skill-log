@@ -27,7 +27,9 @@ if [ ! -x "$ROOT/dist/skill-log" ]; then
 fi
 
 FAILED=0
-for suite in smoke store context show stats report resolve merged; do
+
+for suite in smoke store context show stats report resolve merged skills; do
+
     printf '\n== %s\n' "$suite"
     if bash "$ROOT/tests/$suite.sh"; then
         printf '== %s: ok\n' "$suite"

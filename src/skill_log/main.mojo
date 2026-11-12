@@ -87,9 +87,18 @@ def run(args: List[String]) raises -> Outcome:
     # invocations, and exits 0. A token that is a *value* of a
     # value-taking flag is not a help request: `add --problem -h` records
     # the problem `-h`, so the scan steps over every flag's value.
+    #
+    # A verb that owns nested help (`skills`) renders its own subcommand
+    # help, so its `--help` is handed to the handler instead of being
+    # answered here. The bare `skill-log skills --help` (no subcommand)
+    # is still the verb's own block: the handler returns it when the
+    # subcommand is absent.
+    var nested = verbs[index.value()].nested_help
     var i = 0
     while i < len(rest):
         if rest[i] == "--help" or rest[i] == "-h":
+            if nested:
+                return handlers[index.value()](rest)
             return Outcome.ok(render_verb(verbs[index.value()]))
         if verbs[index.value()].takes_value(rest[i]):
             i += 1
