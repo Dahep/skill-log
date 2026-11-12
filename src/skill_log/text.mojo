@@ -38,3 +38,17 @@ def sanitize(text: String) -> String:
         else:
             out += String(c)
     return out
+
+
+def prefixed(lines: List[String]) -> String:
+    """The lines as the stderr notes `main` prints, one prefix each.
+
+    A verb's notes are already one line each; every one carries the same
+    `skill-log: ` prefix as a failure, so a caller can recognise the
+    tool's voice on stderr. An empty list produces no notes at all, so a
+    clean run has no stderr line.
+    """
+    var out = List[String]()
+    for i in range(len(lines)):
+        out.append("skill-log: " + lines[i])
+    return "\n".join(out)

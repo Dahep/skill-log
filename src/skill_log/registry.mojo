@@ -41,6 +41,13 @@ from skill_log.resolve import (
     resolve_usage,
     resolve_value_flags,
 )
+from skill_log.merged import (
+    handle_resolve_merged,
+    resolve_merged_examples,
+    resolve_merged_notes,
+    resolve_merged_usage,
+    resolve_merged_value_flags,
+)
 from skill_log.stats import (
     handle_stats,
     stats_examples,
@@ -185,6 +192,18 @@ def build_verbs() raises -> List[Verb]:
         )
     )
 
+    # The hook's half: stamp every row a pull's commits name.
+    verbs.append(
+        Verb(
+            "resolve-merged",
+            "resolve the rows a pull landed, from reports or commit trailers",
+            resolve_merged_usage(),
+            resolve_merged_examples(),
+            resolve_merged_value_flags(),
+            resolve_merged_notes(),
+        )
+    )
+
     var version_examples = List[String]()
     version_examples.append("skill-log --version")
     version_examples.append("skill-log --help")
@@ -223,6 +242,7 @@ def build_handlers() raises -> List[type_of(handle_version)]:
     handlers.append(handle_stats)
     handlers.append(handle_report)
     handlers.append(handle_resolve)
+    handlers.append(handle_resolve_merged)
     handlers.append(handle_version)
     handlers.append(handle_help)
     return handlers^

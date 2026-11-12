@@ -1276,3 +1276,276 @@ def stamp_attempt(path: String, id: Int, fix: String) raises -> ResolvedRow:
     result.changed = True
     tx.commit()
     return result^
+
+
+# ------------------------------------------------------------ merged scans
+
+
+struct MergedTarget(Movable):
+    """One row a scanned commit names, and the commit that names it.
+
+    A marker parses to `machine#id`; the commit and its epoch are the
+    stamp and the guard. The epoch is the commit time in seconds, which
+    is what a row logged after the commit is compared against.
+    """
+
+    var machine: String
+    var id: Int
+    var commit: String
+    var epoch: Int
+
+    def __init__(
+        out self,
+        machine: String = "",
+        id: Int = 0,
+        commit: String = "",
+        epoch: Int = 0,
+    ):
+        self.machine = machine
+        self.id = id
+        self.commit = commit
+        self.epoch = epoch
+
+    def text(self) -> String:
+        """The marker this target is named by."""
+        return self.machine + "#" + String(self.id)
+
+
+struct MergedSkip(Movable):
+    """One marker a scan could not stamp, and the reason it was skipped."""
+
+    var row: String
+    var reason: String
+
+    def __init__(out self, row: String = "", reason: String = ""):
+        self.row = row
+        self.reason = reason
+
+
+struct MergedResult(Movable):
+    """What a merged scan produced: the rows it stamped, kept, and skipped.
+
+    `refusal` is the store refusal when the file could not be used at
+    all. A dry run fills the same three lists and writes nothing.
+    """
+
+    var stamped: List[String]
+    var unchanged: List[String]
+    var skipped: List[MergedSkip]
+    var refusal: Refusal
+
+    def __init__(out self):
+        self.stamped = List[String]()
+        self.unchanged = List[String]()
+        self.skipped = List[MergedSkip]()
+        self.refusal = Refusal()
+
+
+struct ResolutionRow(Movable):
+    """The columns a merged scan needs from one invocation row.
+
+    `logged` is the row's timestamp in epoch seconds, read by SQLite so
+    the comparison against a commit time does not need a second ISO
+    parser. An unparseable timestamp reads as zero, which disables the
+    guard instead of silently skipping the row.
+    """
+
+    var id: Int
+    var machine: String
+    var fix: String
+    var logged: Int
+
+    def __init__(out self):
+        self.id = 0
+        self.machine = ""
+        self.fix = ""
+        self.logged = 0
+
+
+def read_resolution_rows(db: Database) raises -> List[ResolutionRow]:
+    """Every row's id, machine, fix and timestamp, in one read."""
+    var rows = List[ResolutionRow]()
+    var stmt = db.prepare(
+        "SELECT id, machine, fix, COALESCE(unixepoch(ts), 0)"
+        " FROM invocations"
+    )
+    while True:
+        var row = stmt.step()
+        if row is None:
+            break
+        var item = ResolutionRow()
+        item.id = row.value().int_val(0)
+        item.machine = row.value().text_val(1)
+        item.fix = row.value().text_val(2)
+        item.logged = row.value().int_val(3)
+        rows.append(item^)
+    return rows^
+
+
+def merged_row_index(
+    rows: List[ResolutionRow], machine: String, id: Int, local_host: String
+) -> Int:
+    """The index of the row a marker names, or -1.
+
+    A row written before `add` always populated the machine column has
+    an empty machine; it belongs to the machine reading it, which is the
+    reference's rule too.
+    """
+    for i in range(len(rows)):
+        var stored = rows[i].machine
+        if stored == "":
+            stored = local_host
+        if stored == machine and rows[i].id == id:
+            return i
+    return -1
+
+
+def evaluate_targets(
+    targets: List[MergedTarget],
+    rows: List[ResolutionRow],
+    local_host: String,
+) -> MergedResult:
+    """Sort every target into stamped, unchanged or skipped.
+
+    A non-empty `stamped` list is the only change signal: every target
+    lands in exactly one of the three lists, so a second pass that finds
+    a row another writer resolved answers `unchanged` instead.
+    """
+    var result = MergedResult()
+    for i in range(len(targets)):
+        var marker = targets[i].text()
+        var index = merged_row_index(
+            rows, targets[i].machine, targets[i].id, local_host
+        )
+        if index == -1:
+            var missing = MergedSkip(marker, "not in this db")
+            result.skipped.append(missing^)
+            continue
+        if rows[index].fix != "":
+            # Resolution is idempotent: the row already carries a fix, so
+            # a second hook run changes nothing, even when a newer commit
+            # in this range names it again.
+            result.unchanged.append(marker)
+            continue
+        if rows[index].logged > targets[i].epoch:
+            # The row was written after that commit: an id reused by a
+            # rebuilt log, not the row the commit fixed.
+            var later = MergedSkip(marker, "logged after that commit")
+            result.skipped.append(later^)
+            continue
+        result.stamped.append(marker)
+    return result^
+
+
+def resolve_merged_rows(
+    path: String,
+    targets: List[MergedTarget],
+    local_host: String,
+    dry_run: Bool,
+) raises -> MergedResult:
+    """Stamp every row the scanned targets name.
+
+    The first pass reads through a read connection: when nothing would
+    change (the hook's usual case) no write path is opened at all, and a
+    dry run never gets one either. A genuine change opens the store once,
+    under the same whole-attempt busy retry `add` uses, re-decides inside
+    a transaction, and stamps every changed row with one resolution time.
+    """
+    var result = MergedResult()
+    if len(targets) == 0:
+        return result^
+    if not Path(path).is_file():
+        # The store vanished between the caller's check and here. A hook
+        # must not create one.
+        return result^
+
+    var opened = open_read(path)
+    if opened.refusal.refused():
+        result.refusal = Refusal(
+            opened.refusal.kind, opened.refusal.path, opened.refusal.found
+        )
+        return result^
+    if not opened.db:
+        return result^
+
+    var db = opened.db.take()
+    var rows = List[ResolutionRow]()
+    if is_skill_log_store(db):
+        rows = read_resolution_rows(db)
+    var preview = evaluate_targets(targets, rows, local_host)
+    if dry_run or len(preview.stamped) == 0:
+        return preview^
+
+    var deadline = now_seconds() + WRITE_BUDGET_SECONDS
+    while True:
+        try:
+            return merged_write_attempt(path, targets, local_host)
+        except e:
+            var message = String(e)
+            if not is_busy(message):
+                raise
+            var remaining = deadline - now_seconds()
+            if remaining <= 0:
+                raise
+            sleep(min(Float64(WRITE_RETRY_SLEEP), remaining))
+
+
+def merged_write_attempt(
+    path: String, targets: List[MergedTarget], local_host: String
+) raises -> MergedResult:
+    """One write attempt: open, re-read, re-decide, stamp, commit.
+
+    One timestamp is read inside the transaction and written to every row
+    this attempt resolves, so a pull's rows share the moment they closed.
+    """
+    var result = MergedResult()
+    if not Path(path).is_file():
+        # The store vanished after the preview. A hook must not create a
+        # new store, so this is nothing to do, not a write.
+        return result^
+    var opened = open_write(path)
+    if opened.refusal.refused():
+        result.refusal = Refusal(
+            opened.refusal.kind, opened.refusal.path, opened.refusal.found
+        )
+        return result^
+
+    var db = opened.db.take()
+    var tx = db.transaction()
+    var stamp = local_timestamp(db)
+    var rows = read_resolution_rows(db)
+    var resolved = evaluate_targets(targets, rows, local_host)
+    if len(resolved.stamped) == 0:
+        # A concurrent writer closed every row between the preview and
+        # here. There is nothing to commit; the guard rolls back.
+        _ = tx^
+        return resolved^
+    # One prepared statement, reset per row: preparing inside the loop
+    # leaves the earlier statement unfinalized in this binding, and the
+    # transaction's COMMIT then fails with SQLITE_MISUSE.
+    var update = db.prepare(
+        "UPDATE invocations SET fix = ?, resolved_at = ? WHERE id = ?"
+    )
+    for i in range(len(resolved.stamped)):
+        var target_index = -1
+        for j in range(len(targets)):
+            if targets[j].text() == resolved.stamped[i]:
+                target_index = j
+                break
+        if target_index == -1:
+            continue
+        var row_index = merged_row_index(
+            rows,
+            targets[target_index].machine,
+            targets[target_index].id,
+            local_host,
+        )
+        if row_index == -1:
+            continue
+        update.reset()
+        update.bind_text(1, targets[target_index].commit)
+        update.bind_text(2, stamp)
+        update.bind_int(3, rows[row_index].id)
+        _ = update.step()
+    tx.commit()
+    return resolved^

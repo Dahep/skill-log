@@ -77,7 +77,7 @@ from skill_log.store import (
     read_invocations,
     resolve_db,
 )
-from skill_log.text import sanitize
+from skill_log.text import prefixed, sanitize
 
 # The report directory, relative to the checkout's root. Its presence is
 # what puts a checkout in artifact mode; its absence is trailer mode.
@@ -250,18 +250,6 @@ def marker_count(count: Int) -> String:
     if count == 1:
         return "1 marker"
     return String(count) + " markers"
-
-
-def prefixed(lines: List[String]) -> String:
-    """The lines as the stderr notes `main` prints, one prefix each.
-
-    An empty list produces no notes at all, so a clean run has no stderr
-    line.
-    """
-    var out = List[String]()
-    for i in range(len(lines)):
-        out.append("skill-log: " + lines[i])
-    return "\n".join(out)
 
 
 def first_nine(text: String) -> String:
