@@ -98,6 +98,23 @@ comptime ACTION_UNCHANGED = "unchanged"
 comptime ACTION_REFUSED = "refused"
 comptime ACTION_SKIPPED = "skipped"
 
+# The actions `template seed` and `template reset` report, exactly the
+# SPEC §5.10 vocabulary. One action per template, so a caller reads a
+# value and never matches prose:
+#
+#   seeded      — the shipped default was copied into the user directory
+#   would_seed  — a dry run: the copy would be written, and nothing was
+#   refused     — a copy is already there and `--force` was not given
+#   deleted     — the user copy was removed
+#   would_delete— a dry run: the copy would be removed, and nothing was
+#   absent      — there was no user copy to remove
+comptime TEMPLATE_ACTION_SEEDED = "seeded"
+comptime TEMPLATE_ACTION_WOULD_SEED = "would_seed"
+comptime TEMPLATE_ACTION_REFUSED = "refused"
+comptime TEMPLATE_ACTION_DELETED = "deleted"
+comptime TEMPLATE_ACTION_WOULD_DELETE = "would_delete"
+comptime TEMPLATE_ACTION_ABSENT = "absent"
+
 
 # --------------------------------------------------------------- paths
 
@@ -532,6 +549,37 @@ def template_json(t: Template) -> String:
     )
 
 
+struct TemplateAction(Movable):
+    """One template's outcome under `seed` or `reset`.
+
+    The path is the file the action is about, and the action is one of
+    the fixed tokens above. The human line is prose; the JSON carries
+    the two values.
+    """
+
+    var path: String
+    var action: String
+    var note: String
+
+    def __init__(
+        out self, path: String = "", action: String = "", note: String = ""
+    ):
+        self.path = path
+        self.action = action
+        self.note = note
+
+
+def template_action_json(item: TemplateAction) -> String:
+    """One action object, exactly `path`, `action` (SPEC §5.10)."""
+    return (
+        "{\"path\":"
+        + json_string(item.path)
+        + ",\"action\":"
+        + json_string(item.action)
+        + "}"
+    )
+
+
 # ---------------------------------------------------------- subcommand
 
 
@@ -752,11 +800,15 @@ def subcommand_help(sub: String) -> String:
             "skills template seed — copy the shipped defaults into the "
             "user directory\n"
             "\nusage:\n"
-            "  skill-log skills template seed [--force] [--dry-run]\n"
+            "  skill-log skills template seed [--force] [--dry-run] [--json]\n"
             "\n"
             "Copies the two shipped defaults into\n"
             "${XDG_CONFIG_HOME:-~/.config}/skill-log/templates/. Without\n"
             "--force it refuses to overwrite an existing copy.\n"
+            "\n"
+            "--json emits one object per template: the path and the\n"
+            "action, which is one of seeded, would_seed (a dry run) or\n"
+            "refused (a copy is already there).\n"
             "\nexamples:\n"
             "  skill-log skills template seed\n"
             "  skill-log skills template seed --force\n"
@@ -767,11 +819,15 @@ def subcommand_help(sub: String) -> String:
             "skills template reset — delete the user copies, back to the "
             "shipped defaults\n"
             "\nusage:\n"
-            "  skill-log skills template reset [--force] [--dry-run]\n"
+            "  skill-log skills template reset [--force] [--dry-run] [--json]\n"
             "\n"
             "Deletes the user copies and returns to the shipped defaults,\n"
             "which the next adopt re-renders. It refuses while copies\n"
             "exist unless --force is given.\n"
+            "\n"
+            "--json emits one object per template: the path and the\n"
+            "action, which is one of deleted, would_delete (a dry run),\n"
+            "absent (there was no copy) or refused (copies are there).\n"
             "\nexamples:\n"
             "  skill-log skills template reset --force\n"
             "  skill-log skills template reset --force --dry-run\n"
@@ -782,8 +838,8 @@ def subcommand_help(sub: String) -> String:
             "skills template — the two shipped usage-log templates\n"
             "\nusage:\n"
             "  skill-log skills template show [--json] [--template-dir <dir>]\n"
-            "  skill-log skills template seed [--force] [--dry-run]\n"
-            "  skill-log skills template reset [--force] [--dry-run]\n"
+            "  skill-log skills template seed [--force] [--dry-run] [--json]\n"
+            "  skill-log skills template reset [--force] [--dry-run] [--json]\n"
             "\n"
             "Subcommands, not mode flags: show reports, seed copies the\n"
             "shipped defaults into the user directory, reset deletes them\n"
@@ -791,6 +847,10 @@ def subcommand_help(sub: String) -> String:
             "--template-dir, then SKILL_LOG_TEMPLATE_DIR, then\n"
             "${XDG_CONFIG_HOME:-~/.config}/skill-log/templates/, then the\n"
             "shipped default in the binary.\n"
+            "\n"
+            "seed and reset emit one JSON object per template -- the path\n"
+            "and the action -- so a caller reads a value and never\n"
+            "matches prose.\n"
             "\nexamples:\n"
             "  skill-log skills template show\n"
             "  skill-log skills template seed --force\n"
@@ -1039,10 +1099,15 @@ def handle_template_show(options: SkillsOptions) raises -> Outcome:
 
 def handle_template_seed(options: SkillsOptions) raises -> Outcome:
     """`skills template seed`: copy the shipped defaults into the user
-    directory, refusing an existing copy without `--force`."""
+    directory, refusing an existing copy without `--force`.
+
+    One action per template. The action is a fixed token, so the JSON
+    carries the same fact the human line does; `--dry-run` previews the
+    same shape and writes nothing.
+    """
     var dir = default_template_dir()
     var names = template_names()
-    var actions = List[String]()
+    var actions = List[TemplateAction]()
     var refused = False
 
     for i in range(len(names)):
@@ -1051,22 +1116,34 @@ def handle_template_seed(options: SkillsOptions) raises -> Outcome:
         var exists = Path(target).is_file()
         if exists and not options.force:
             refused = True
-            actions.append(name + ": refused (exists; use --force)")
+            var note = name + ": refused (exists; use --force)"
+            actions.append(
+                TemplateAction(target^, TEMPLATE_ACTION_REFUSED, note)
+            )
             continue
         var content = shipped_template(name)
         if options.dry_run:
-            actions.append(name + ": would write " + target)
+            var note = name + ": would write " + target
+            actions.append(
+                TemplateAction(target^, TEMPLATE_ACTION_WOULD_SEED, note)
+            )
             continue
         makedirs(dir, exist_ok=True)
         write_text(target, content)
         write_seeded(name, fnv1a64_hex(content))
-        actions.append(name + ": wrote " + target)
+        var note = name + ": wrote " + target
+        actions.append(
+            TemplateAction(target^, TEMPLATE_ACTION_SEEDED, note)
+        )
 
     var text = String("")
     for i in range(len(actions)):
         if i > 0:
             text += "\n"
-        text += actions[i]
+        if options.json:
+            text += template_action_json(actions[i])
+        else:
+            text += actions[i].note
 
     if refused:
         var outcome = Outcome.fail(
@@ -1079,27 +1156,43 @@ def handle_template_seed(options: SkillsOptions) raises -> Outcome:
 
 def handle_template_reset(options: SkillsOptions) raises -> Outcome:
     """`skills template reset`: delete the user copies back to the
-    shipped defaults, refusing while copies exist without `--force`."""
+    shipped defaults, refusing while copies exist without `--force`.
+
+    One action per template, with the same fixed tokens `seed` uses: a
+    copy that is not there is `absent`, not a deletion.
+    """
     var dir = default_template_dir()
     var names = template_names()
-    var actions = List[String]()
+    var actions = List[TemplateAction]()
     var refused = False
 
     for i in range(len(names)):
         var name = names[i]
         var target = dir + "/" + name
         if not Path(target).is_file():
-            actions.append(name + ": absent")
+            var note = name + ": absent"
+            actions.append(
+                TemplateAction(target^, TEMPLATE_ACTION_ABSENT, note)
+            )
             continue
         if not options.force:
             refused = True
-            actions.append(name + ": refused (exists; use --force)")
+            var note = name + ": refused (exists; use --force)"
+            actions.append(
+                TemplateAction(target^, TEMPLATE_ACTION_REFUSED, note)
+            )
             continue
         if options.dry_run:
-            actions.append(name + ": would delete " + target)
+            var note = name + ": would delete " + target
+            actions.append(
+                TemplateAction(target^, TEMPLATE_ACTION_WOULD_DELETE, note)
+            )
             continue
         remove(target)
-        actions.append(name + ": deleted " + target)
+        var note = name + ": deleted " + target
+        actions.append(
+            TemplateAction(target^, TEMPLATE_ACTION_DELETED, note)
+        )
 
     if options.force and not options.dry_run:
         for i in range(len(names)):
@@ -1109,7 +1202,10 @@ def handle_template_reset(options: SkillsOptions) raises -> Outcome:
     for i in range(len(actions)):
         if i > 0:
             text += "\n"
-        text += actions[i]
+        if options.json:
+            text += template_action_json(actions[i])
+        else:
+            text += actions[i].note
 
     if refused:
         var outcome = Outcome.fail(

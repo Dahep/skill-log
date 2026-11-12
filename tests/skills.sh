@@ -159,6 +159,74 @@ check "seed --dry-run writes nothing" \
 run skills template seed --force
 check "seed --force restores the copy" "$STATUS" "0"
 
+# The JSON shape of seed and reset (SPEC §5.10): one object per
+# template, with `path` and `action`. The action vocabulary is fixed
+# here, so a caller reads a value and never matches prose.
+run skills template reset --force
+check "reset --force clears the copies for the JSON case" "$STATUS" "0"
+run skills template seed --json
+check "seed --json exits 0" "$STATUS" "0"
+check "seed --json emits one object per template" \
+    "$(printf '%s\n' "$OUT" | grep -c '^{')" "2"
+check "seed --json object keys are exactly path, action" \
+    "$(json_keys "$(printf '%s\n' "$OUT" | head -1)")" "action path"
+check "seed --json names the seeded path" \
+    "$(json_field "$(printf '%s\n' "$OUT" | head -1)" path)" \
+    "$TPL/usage-log.md"
+check "seed --json names the seeded action" \
+    "$(json_field "$(printf '%s\n' "$OUT" | head -1)" action)" "seeded"
+check "seed --json seeds both templates" \
+    "$(printf '%s\n' "$OUT" | python3 -c "import json,sys; print(','.join(o['action'] for o in [json.loads(l) for l in sys.stdin if l.strip()]))")" \
+    "seeded,seeded"
+
+# A dry run previews the same shape and writes nothing.
+run skills template reset --force
+rm -f "$TPL/usage-log.md"
+run skills template seed --json --dry-run
+check "seed --json --dry-run exits 0" "$STATUS" "0"
+check "seed --json --dry-run previews the action" \
+    "$(json_field "$(printf '%s\n' "$OUT" | head -1)" action)" "would_seed"
+check "seed --json --dry-run writes nothing" \
+    "$(test -f "$TPL/usage-log.md" && echo yes || echo no)" "no"
+
+# The refusal is a value too, not prose.
+run skills template seed --force --json
+check "seed --json --force exits 0" "$STATUS" "0"
+run skills template seed --json
+check "seed --json refuses an existing copy" "$STATUS" "1"
+check "seed --json names the refusal action" \
+    "$(json_field "$(printf '%s\n' "$OUT" | head -1)" action)" "refused"
+
+run skills template seed --force --json
+check "seed --json --force exits 0" "$STATUS" "0"
+
+# reset has the same shape, with its own action vocabulary.
+run skills template reset --json
+check "reset --json refuses while copies exist" "$STATUS" "1"
+check "reset --json names the refusal action" \
+    "$(json_field "$(printf '%s\n' "$OUT" | head -1)" action)" "refused"
+run skills template reset --json --force
+check "reset --json --force exits 0" "$STATUS" "0"
+check "reset --json emits one object per template" \
+    "$(printf '%s\n' "$OUT" | grep -c '^{')" "2"
+check "reset --json object keys are exactly path, action" \
+    "$(json_keys "$(printf '%s\n' "$OUT" | head -1)")" "action path"
+check "reset --json names the deleted path" \
+    "$(json_field "$(printf '%s\n' "$OUT" | head -1)" path)" \
+    "$TPL/usage-log.md"
+check "reset --json names the deleted action" \
+    "$(json_field "$(printf '%s\n' "$OUT" | head -1)" action)" "deleted"
+
+# A template that is not there is reported as absent, not as a deletion.
+run skills template reset --json --force
+check "reset --json on absent copies exits 0" "$STATUS" "0"
+check "reset --json names the absent action" \
+    "$(json_field "$(printf '%s\n' "$OUT" | head -1)" action)" "absent"
+
+# The copies are back for the cases that follow.
+run skills template seed --force
+check "seed restores the copies for the later cases" "$STATUS" "0"
+
 # ------------------------------------------------- moved default report
 
 # Point the seeded-from record at a hash that is not the current shipped
