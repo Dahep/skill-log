@@ -5,8 +5,9 @@
 [issue #3](https://github.com/Dahep/skill-log/issues/3); the adoption
 invariants in [CONTEXT.md](../../CONTEXT.md); and the acceptance criteria of
 tickets #7, #9, #10, #11, #12, #13, #14, #15, #16, #17, #18, #19 and #21.
-**Supersedes nothing.** The behavior contract in #1 is unchanged except where
-#3 already amended it.
+**Current rules:** [SPEC.md](../../SPEC.md).
+**Supersedes nothing.** The behavior contract moved to `SPEC.md`; this record
+is the reasoning behind its module boundaries.
 
 ## Context
 
@@ -143,7 +144,8 @@ removing a contract.
 ### Testing
 
 The installed CLI stays the only seam, and `SKILL_LOG_NOW` is the only clock
-injection, alongside the fault-injection variable #1 already sanctions.
+injection. Write contention is exercised by a real second process holding a
+write lock, not a second injection variable.
 `resolve-merged --dry-run --json` already exposes stamps, unchanged rows and
 skip reasons, so the plan's decisions are observable through the binary. No
 unit harness.
