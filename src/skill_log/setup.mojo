@@ -12,20 +12,25 @@ One command, four artifacts, and no ceremony:
    `--remove-hook` removes only a marked hook.
 3. **The report directory** — `<repo>/.skill-log/reports/` with its README
    and keep file. Files already there are left byte-for-byte alone.
-4. **The skills verdict** — the document classification over
-   `--skills-dir`, the same one `skills audit` gives, so the two commands
-   can never disagree.
+4. **The skills install** — the two bundled skills under `--skills-dir`
+   (see `bundled.mojo`): the read-and-report skill copied verbatim with
+   its version stamp, and the review skill rendered from its template
+   followed by its own usage-log block. A differing copy is left alone
+   unless `--force`; `--check` verifies the install — the stamp and the
+   content — and drifts on anything else.
 
 ## A thin coordinator
 
-Each artifact is asked for its own verdict (`store.verify`, the hook
-marker, the directory's files, the document classification); `setup`
-does not know their formats and there is no uniform provisioner
-interface — only the verdict struct below. A verdict is one of the five
-statuses the JSON contract names (`created`, `updated`, `unchanged`,
-`drift`, `skipped`) plus a detail that names its reason. Any drift is
-the run's failure: the first one is the one stderr line, and the exit
-code is 1.
+Each artifact is asked for its own verdict (the store, the hook marker,
+the directory's files, the skills install); `setup` does not know their
+formats and there is no uniform provisioner interface — only the verdict
+struct below. A verdict is one of the five statuses the JSON contract
+names (`created`, `updated`, `unchanged`, `drift`, `skipped`) plus a
+detail that names its reason. Any drift is the run's failure: the first
+one is the one stderr line, and the exit code is 1. The skills verdict
+is the one aggregate one: it names each skill and its own verdict in
+the detail (`skill-log:created, skill-friction-review:created`), so one
+artifact line still carries one skill per answer.
 
 `--check` is the same verdicts with every write turned off: drift means
 "this is not set up", and nothing on disk moves. `--dry-run` shows what
@@ -50,9 +55,16 @@ the same way.
 from std.os import makedirs, remove
 from std.pathlib import Path
 
+from skill_log.bundled import (
+    REVIEW_SKILL,
+    SKILL_LOG_SKILL,
+    review_document,
+    skill_log_document,
+    stamp_version,
+)
 from skill_log.context import hostname
 from skill_log.detect import git_common_dir, git_toplevel, git_toplevel_of
-from skill_log.document import STATE_OK, STATE_VENDORED, render
+from skill_log.document import is_vendored
 from skill_log.errors import EXIT_FAILURE, EXIT_USAGE, Outcome
 from skill_log.files import read_text, write_text, write_text_mode
 from skill_log.flags import take_value
@@ -65,14 +77,14 @@ from skill_log.report import (
 )
 from skill_log.skills import (
     Template,
-    audit_skill,
     load_template,
     resolve_template_dir,
-    skill_dirs,
+    resolved_command,
     validate_effective,
 )
 from skill_log.store import expand_home, open_write, resolve_db, verify
-from skill_log.templates import USAGE_LOG_NAME
+from skill_log.templates import REVIEW_NAME, USAGE_LOG_NAME
+from skill_log.version import version
 
 # The ownership marker every generated hook carries, on a line of its
 # own. It is the one thing that says "this tool wrote this file": the
@@ -468,60 +480,206 @@ def report_dir_verdict(repo: String, options: Options) raises -> Verdict:
     return Verdict(ARTIFACT_REPORT_DIR, status, dir)
 
 
-def skills_verdict(skills_dir: String) raises -> Verdict:
-    """The installed skills' verdict: the document classification.
+def skills_verdict(skills_dir: String, options: Options) raises -> Verdict:
+    """The installed skills' verdict.
 
-    It is the same classification `skills audit` reports, over
-    `--skills-dir`, so a directory an audit calls clean is one `setup
-    --check` calls clean. Without `--skills-dir` there is nothing to
-    classify and the artifact is skipped with that named reason.
+    `--skills-dir` installs the two bundled skills and says, per skill,
+    what happened. Without it the artifact is skipped with that named
+    reason. Under `--check` the same per-skill verdicts are computed
+    with every write turned off: anything but this version's exact
+    install is drift. `--dry-run` shows what a real run would change.
     """
     if String(skills_dir.strip()) == "":
         return Verdict(
             ARTIFACT_SKILLS, STATUS_SKIPPED, "no --skills-dir given"
         )
     var dir = String(expand_home(String(skills_dir.strip())))
-    if not Path(dir).is_dir():
+    if Path(dir).is_file():
         return Verdict(
             ARTIFACT_SKILLS, STATUS_SKIPPED, dir + " is not a directory"
         )
-    var names = skill_dirs(dir)
-    if len(names) == 0:
-        return Verdict(
-            ARTIFACT_SKILLS, STATUS_SKIPPED, "no skills in " + dir
-        )
 
-    # The current render is what the fences are compared against; a
-    # template that cannot be rendered is drift with its own named
-    # message rather than a crash in the middle of a setup run.
-    var template: Template
+    # The effective templates are validated first: a broken one would
+    # silently write blocks no skill can log from.
+    var template_dir = resolve_template_dir("")
+    var usage: Template
+    var review: Template
     try:
-        template = load_template(USAGE_LOG_NAME, resolve_template_dir(""))
-        validate_effective(USAGE_LOG_NAME, template)
+        usage = load_template(USAGE_LOG_NAME, template_dir)
+        review = load_template(REVIEW_NAME, template_dir)
+        validate_effective(USAGE_LOG_NAME, usage)
+        validate_effective(REVIEW_NAME, review)
     except e:
         return Verdict(ARTIFACT_SKILLS, STATUS_DRIFT, String(e))
-    var rendered = render(template.content, "skill", "skill-log")
+    var command = resolved_command()
 
-    var bad = List[String]()
-    for i in range(len(names)):
-        var item = audit_skill(
-            dir, names[i], rendered.template_hash, rendered.content_hash
-        )
-        if item.state != STATE_OK and item.state != STATE_VENDORED:
-            bad.append(item.skill + ":" + item.state)
+    var wanted_log = String("")
+    var wanted_review = String("")
+    try:
+        wanted_log = skill_log_document(usage.content, command)
+        wanted_review = review_document(review.content, usage.content, command)
+    except e:
+        return Verdict(ARTIFACT_SKILLS, STATUS_DRIFT, String(e))
 
-    if len(bad) == 0:
-        return Verdict(
-            ARTIFACT_SKILLS,
-            STATUS_UNCHANGED,
-            String(len(names)) + " skills conform",
-        )
+    # Per-skill verdicts, in the order the artifact names them. Each
+    # answer is one install; the aggregate status and detail follow.
+    var entries = List[String]()
+    var created = False
+    var anything = False
+    var drift = False
+    for i in range(2):
+        var name: String
+        var wanted: String
+        if i == 0:
+            name = SKILL_LOG_SKILL
+            wanted = wanted_log
+        else:
+            name = REVIEW_SKILL
+            wanted = wanted_review
+        var entry = installed_skill_action(dir, name, wanted, options)
+        entries.append(entry)
+        if entry.find(":created") > 0:
+            created = True
+        if entry.find(":drift") > 0:
+            drift = True
+        if entry.find(":unchanged") < 0:
+            anything = True
+
     var detail = String("")
-    for i in range(len(bad)):
+    for i in range(len(entries)):
         if i > 0:
             detail += ", "
-        detail += bad[i]
-    return Verdict(ARTIFACT_SKILLS, STATUS_DRIFT, detail)
+        detail += entries[i]
+    if drift:
+        return Verdict(ARTIFACT_SKILLS, STATUS_DRIFT, detail)
+    if anything:
+        # `created` only when every skill landed fresh — a first run, or
+        # its `--dry-run` preview. A run that replaced one copy of two is
+        # an update and does not claim it created the directory.
+        var all_created = True
+        for i in range(len(entries)):
+            if entries[i].find(":created") < 0:
+                all_created = False
+        if created and all_created:
+            return Verdict(ARTIFACT_SKILLS, STATUS_CREATED, detail)
+        return Verdict(ARTIFACT_SKILLS, STATUS_UPDATED, detail)
+    return Verdict(ARTIFACT_SKILLS, STATUS_UNCHANGED, detail)
+
+
+def installed_skill_action(
+    dir: String,
+    name: String,
+    wanted: String,
+    options: Options,
+) raises -> String:
+    """One skill's install answer, as `name:verdict` with its reason.
+
+    The verdict is one of the five statuses the JSON contract names; the
+    reason names the path and why, so an operator can act on the line
+    alone. The questions, in order:
+
+    1. **Is it there at all?** No file is `created` (or `drift`, under
+       `--check`, naming the path).
+    2. **Is it this version's install?** Byte comparison. A differing
+       copy is left alone and refused — `skipped`, named, with the one
+       flag that overrides — unless `--force` replaces it. Only
+       `skill-log` is distinguished further: it is copied verbatim, so
+       the only thing that can tell a stale install from a hand edit is
+       its version stamp.
+    3. **Does the stamp match?** A missing stamp is a hand-edited copy,
+       refused as above. A stamp naming another version is `stale`:
+       under `--force` the copy is replaced (`updated`, naming both
+       versions), and without it the copy is left alone with the line
+       that says exactly what is installed and what would replace it.
+       A `--force`-replaced copy is never drift — `--check` after the
+       forced update must be green.
+    4. **Under `--check` nothing is written.** A differing copy is drift
+       — "this is not this version's install" — never replaced.
+
+    A vendored copy is skipped entirely: its wording belongs to its
+    upstream, not to this tool. The write is `files.mojo`'s atomic
+    replacement; `--dry-run` reports the same answer and writes nothing.
+    """
+    var path = dir + "/" + name + "/SKILL.md"
+    if not Path(path).is_file():
+        if options.check:
+            return name + ":drift (missing at " + path + ")"
+        if options.dry_run:
+            return name + ":created (would write " + path + ")"
+        if not Path(dir + "/" + name).is_dir():
+            makedirs(dir + "/" + name, exist_ok=True)
+        write_text(path, wanted)
+        return name + ":created (" + path + ")"
+
+    var text = read_text(path)
+    if text == wanted:
+        return name + ":unchanged (" + path + ")"
+    if is_vendored(text):
+        return name + ":skipped (vendored; " + path + " is left alone)"
+
+    # `skill-log` is copied verbatim, so the only thing that can tell a
+    # stale install from a hand edit is its version stamp. The stamp
+    # reads on every differing copy, `--force` or not: the reason a
+    # `--check` names is the reason the copy differs.
+    var stamp = ""
+    if name == SKILL_LOG_SKILL:
+        stamp = stamp_version(text)
+    if stamp == "" and name == SKILL_LOG_SKILL:
+        if options.check:
+            return name + ":drift (no version stamp at " + path + ")"
+        if options.force:
+            if not options.dry_run:
+                write_text(path, wanted)
+            return name + ":updated (" + path + ")"
+        return (
+            name
+            + ":skipped (no version stamp; left alone at "
+            + path
+            + "; use --force to replace)"
+        )
+    if stamp != "" and stamp != version():
+        if options.check:
+            return (
+                name
+                + ":drift (installed by "
+                + stamp
+                + " at "
+                + path
+                + ")"
+            )
+        if options.force:
+            if not options.dry_run:
+                write_text(path, wanted)
+            return (
+                name
+                + ":updated (was installed by "
+                + stamp
+                + ", this is "
+                + version()
+                + ")"
+            )
+        return (
+            name
+            + ":stale (installed by "
+            + stamp
+            + ", this is "
+            + version()
+            + "; left alone at "
+            + path
+            + ")"
+        )
+    if options.check:
+        return name + ":drift (differs from this version at " + path + ")"
+    if options.force:
+        if not options.dry_run:
+            write_text(path, wanted)
+        return name + ":updated (" + path + ")"
+    return (
+        name
+        + ":skipped (differing copy left alone at "
+        + path
+        + "; use --force to replace)"
+    )
 
 
 # --------------------------------------------------------------- help
@@ -556,10 +714,11 @@ def setup_value_flags() -> List[String]:
 def setup_notes() -> String:
     """The paragraph between the usage line and the examples."""
     return "One command makes a machine and a repo ready: the store, the git\n" \
-           "post-merge hook that resolves what a pull landed, and the report\n" \
-           "directory (.skill-log/reports/ with its README and keep file). It\n" \
-           "prints the machine identity the log will use, so the spelling\n" \
-           "every marker must match is visible. Re-running is a no-op.\n" \
+           "post-merge hook that resolves what a pull landed, the report\n" \
+           "directory (.skill-log/reports/ with its README and keep file),\n" \
+           "and the two bundled skills under --skills-dir. It prints the\n" \
+           "machine identity the log will use, so the spelling every marker\n" \
+           "must match is visible. Re-running is a no-op.\n" \
            "\n" \
            "The hook goes only into the repository's common hooks directory\n" \
            "(git rev-parse --git-common-dir), so a linked worktree shares one\n" \
@@ -568,15 +727,25 @@ def setup_notes() -> String:
            "hook. The hook resolves the CLI at run time and never changes a\n" \
            "pull's exit status.\n" \
            "\n" \
-           "--check verifies the store, the hook, the report directory and\n" \
-           "the skills under --skills-dir instead of writing, and exits 1 on\n" \
-           "drift. --dry-run shows what a real run would change. A store\n" \
-           "written by another schema is named and left alone: setup creates\n" \
-           "a store and never migrates one.\n" \
+           "--skills-dir installs the two bundled skills: skill-log (the\n" \
+           "read-and-report skill, copied verbatim with a version stamp that\n" \
+           "is its only provenance) and skill-friction-review (rendered from\n" \
+           "the skill-friction-review.md template with the resolved binary\n" \
+           "path, followed by its own usage-log block). Both audit ok on the\n" \
+           "next skills audit. A differing copy is left alone and named\n" \
+           "unless --force replaces it; customising the review skill means\n" \
+           "editing the template, not the installed file.\n" \
            "\n" \
-           "--no-hook and --no-report-dir turn one artifact off; --force\n" \
-           "applies to the skills install. A directory that is not a git\n" \
-           "checkout is skipped with a named reason, exit 0."
+           "--check verifies the store, the hook, the report directory and\n" \
+           "the installed skills instead of writing, and exits 1 on drift —\n" \
+           "a missing skill, a stale or stripped version stamp, or a\n" \
+           "differing copy. --dry-run shows what a real run would change. A\n" \
+           "store written by another schema is named and left alone: setup\n" \
+           "creates a store and never migrates one.\n" \
+           "\n" \
+           "--no-hook and --no-report-dir turn one artifact off. A directory\n" \
+           "that is not a git checkout is skipped with a named reason,\n" \
+           "exit 0."
 
 
 # -------------------------------------------------------------- handler
@@ -632,7 +801,7 @@ def handle_setup(args: List[String]) raises -> Outcome:
     verdicts.append(store_verdict(path, options.check, options.dry_run))
     verdicts.append(hook_verdict(common, options))
     verdicts.append(report_dir_verdict(repo, options))
-    verdicts.append(skills_verdict(options.skills_dir))
+    verdicts.append(skills_verdict(options.skills_dir, options))
 
     var text = String("")
     if options.json:

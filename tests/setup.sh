@@ -16,7 +16,8 @@
 # --dry-run writing nothing, a report directory with content left
 # byte-for-byte alone, the generated hook's CLI-resolution fallbacks and
 # its --since argument, pulls that keep their exit status with a failing
-# or absent CLI, the machine line, the skills verdict, the store
+# or absent CLI, the machine line, the skills install (--skills-dir,
+# the version stamp, the differing-copy rule, --check drifts), the store
 # refusals, and usage errors.
 set -uo pipefail
 
@@ -55,6 +56,15 @@ run() {
 }
 
 DB="$HOME_DIR/.local/state/skill-log/skills.db"
+
+# get <args...>: the binary's stdout alone, for values another case
+# compares against (the baked version, template text). No stderr file,
+# so it cannot clobber the one `run` owns.
+get() {
+    env -u XDG_STATE_HOME -u SKILL_LOG_DB -u XDG_CONFIG_HOME \
+        -u SKILL_LOG_TEMPLATE_DIR \
+        HOME="$HOME_DIR" "$BIN" "$@"
+}
 
 # make_repo <dir>: a git repository with one commit.
 make_repo() {
@@ -603,29 +613,233 @@ fi
 
 # -------------------------------------------------------------- skills
 #
-# The skills verdict is the document classification over --skills-dir.
+# --skills-dir installs the two bundled skills: the read-and-report
+# skill copied verbatim with its version stamp, and the review skill
+# rendered from its template followed by its own usage-log block. A
+# differing copy is left alone unless --force; --check verifies the
+# install (the stamp and the content) and drifts on anything else.
 
-mkdir -p "$TMP/skills/demo"
-printf 'a skill\n' >"$TMP/skills/demo/SKILL.md"
-run setup --repo "$TMP/r1" --skills-dir "$TMP/skills" --check
-check "skills: an unadopted skill is drift" \
-    "$(status_of "$OUT" skills)" "drift"
-check_contains "skills: the drift names the skill and its state" \
-    "$(detail_of "$OUT" skills)" "demo:missing"
-check "skills: drift exits 1" "$STATUS" "1"
+DIR="$TMP/skillsdir"
+run setup --repo "$TMP/r1" --skills-dir "$DIR" --db "$TMP/skills-store.db"
+check "skills install: exits 0" "$STATUS" "0"
+check "skills install: the verdict is created" \
+    "$(status_of "$OUT" skills)" "created"
+check_contains "skills install: the detail names skill-log" \
+    "$(detail_of "$OUT" skills)" "skill-log:created"
+check_contains "skills install: the detail names the review skill" \
+    "$(detail_of "$OUT" skills)" "skill-friction-review:created"
+LOG_DOC="$DIR/skill-log/SKILL.md"
+REVIEW_DOC="$DIR/skill-friction-review/SKILL.md"
+if [ -f "$LOG_DOC" ]; then pass "skills install: the read-and-report skill lands"; else
+    fail "skills install: the read-and-report skill lands"
+fi
+if [ -f "$REVIEW_DOC" ]; then pass "skills install: the review skill lands"; else
+    fail "skills install: the review skill lands"
+fi
 
-mkdir -p "$TMP/skills-empty"
-run setup --repo "$TMP/r1" --skills-dir "$TMP/skills-empty" --check
-check "skills: an empty directory is skipped" \
+# The installed body teaches the contract's vocabulary: the marker
+# grammar, the report/show --run/stats --by surface, and the deliberate
+# non-idempotency of add.
+check_contains "the body teaches the marker grammar" \
+    "$(cat "$LOG_DOC")" "machine#id"
+check_contains "the body teaches report" "$(cat "$LOG_DOC")" "report"
+check_contains "the body teaches show --run" "$(cat "$LOG_DOC")" "show --run"
+check_contains "the body teaches stats --by" "$(cat "$LOG_DOC")" "stats --by"
+check_contains "the body teaches the non-idempotency of add" \
+    "$(cat "$LOG_DOC")" "not idempotent"
+check_contains "the body says a reader never calls add" \
+    "$(cat "$LOG_DOC")" "reader never calls"
+
+# The version stamp is the copied skill's only provenance, and it names
+# this build.
+VER="$(get --version)"
+check_contains "the version stamp matches --version" "$(cat "$LOG_DOC")" \
+    "<!-- skill-log:installed version=$VER -->"
+
+# The review skill is the rendered template followed by its own
+# usage-log block; both skills' blocks name their own skill.
+check_contains "the review skill is the rendered template" \
+    "$(cat "$REVIEW_DOC")" "# Skill friction review"
+check_contains "the review skill carries its own usage-log block" \
+    "$(cat "$REVIEW_DOC")" "add --skill skill-friction-review"
+check_contains "the read-and-report skill carries its usage-log block" \
+    "$(cat "$LOG_DOC")" "add --skill skill-log"
+
+# A fresh install audits clean: install and audit agree.
+run skills audit --dir "$DIR"
+check "skills audit over the install exits 0" "$STATUS" "0"
+check_contains "skills audit reports skill-log ok" "$OUT" "ok  skill-log"
+check_contains "skills audit reports the review skill ok" "$OUT" \
+    "ok  skill-friction-review"
+
+# Re-running is a no-op: byte-identical files, an unchanged verdict.
+cp "$LOG_DOC" "$SCRATCH/skill-log.before"
+cp "$REVIEW_DOC" "$SCRATCH/review.before"
+LOG_SUM="$(cksum <"$LOG_DOC")"
+REVIEW_SUM="$(cksum <"$REVIEW_DOC")"
+run setup --repo "$TMP/r1" --skills-dir "$DIR" --db "$TMP/skills-store.db"
+check "skills re-run exits 0" "$STATUS" "0"
+check "skills re-run: the verdict is unchanged" \
+    "$(status_of "$OUT" skills)" "unchanged"
+check "skills re-run: the read-and-report bytes did not move" \
+    "$(cksum <"$LOG_DOC")" "$LOG_SUM"
+check "skills re-run: the review bytes did not move" \
+    "$(cksum <"$REVIEW_DOC")" "$REVIEW_SUM"
+
+# A differing copy is left alone and named; --force replaces it. The
+# reason names the skill, the refusal and the one flag that overrides.
+sed -i 's/# Skill log/# Skill log, edited/' "$LOG_DOC"
+cp "$LOG_DOC" "$SCRATCH/skill-log.edited"
+run setup --repo "$TMP/r1" --skills-dir "$DIR" --db "$TMP/skills-store.db"
+check "a differing copy exits 0" "$STATUS" "0"
+check_contains "the differing copy is refused by name" \
+    "$(detail_of "$OUT" skills)" "skill-log:skipped"
+check_contains "the refusal names the skill's path" \
+    "$(detail_of "$OUT" skills)" "$LOG_DOC"
+check_contains "the refusal names --force" "$(detail_of "$OUT" skills)" \
+    "--force"
+if cmp -s "$LOG_DOC" "$SCRATCH/skill-log.edited"; then
+    pass "a differing copy is left byte-for-byte alone"
+else
+    fail "a differing copy is left byte-for-byte alone"
+fi
+check "a differing copy leaves the review skill alone" \
+    "$(cksum <"$REVIEW_DOC")" "$REVIEW_SUM"
+
+run setup --repo "$TMP/r1" --skills-dir "$DIR" --force --db "$TMP/skills-store.db"
+check "--force exits 0" "$STATUS" "0"
+check "--force updates the differing copy" \
+    "$(status_of "$OUT" skills)" "updated"
+check_contains "--force: the detail names the update" \
+    "$(detail_of "$OUT" skills)" "skill-log:updated"
+if cmp -s "$LOG_DOC" "$SCRATCH/skill-log.before"; then
+    pass "--force replaces the copy with this version's install"
+else
+    fail "--force replaces the copy with this version's install"
+fi
+
+# --check verifies the install: green when it matches, drift on each
+# drift with nothing written.
+run setup --repo "$TMP/r1" --skills-dir "$DIR" --check --db "$TMP/skills-store.db"
+check "check on a fresh install exits 0" "$STATUS" "0"
+check "check on a fresh install is unchanged" \
+    "$(status_of "$OUT" skills)" "unchanged"
+
+# drift: a skill is missing.
+rm "$REVIEW_DOC"
+run setup --repo "$TMP/r1" --skills-dir "$DIR" --check --db "$TMP/skills-store.db"
+check "check: a missing skill exits 1" "$STATUS" "1"
+check "check: a missing skill is drift" "$(status_of "$OUT" skills)" "drift"
+check_contains "check: the drift names the missing skill" \
+    "$(detail_of "$OUT" skills)" "skill-friction-review:drift (missing"
+check "check: the missing skill is not written" \
+    "$([ -e "$REVIEW_DOC" ] && echo yes || echo no)" "no"
+cp "$SCRATCH/review.before" "$REVIEW_DOC"
+
+# drift: the version stamp was stripped.
+sed -i '/skill-log:installed version/d' "$LOG_DOC"
+cp "$LOG_DOC" "$SCRATCH/skill-log.nostamp"
+run setup --repo "$TMP/r1" --skills-dir "$DIR" --check --db "$TMP/skills-store.db"
+check "check: a stripped stamp exits 1" "$STATUS" "1"
+check "check: a stripped stamp is drift" "$(status_of "$OUT" skills)" "drift"
+check_contains "check: the stripped stamp is named" \
+    "$(detail_of "$OUT" skills)" "skill-log:drift (no version stamp"
+if cmp -s "$LOG_DOC" "$SCRATCH/skill-log.nostamp"; then
+    pass "check: the stripped-stamp copy is left byte-for-byte alone"
+else
+    fail "check: the stripped-stamp copy is left byte-for-byte alone"
+fi
+cp "$SCRATCH/skill-log.before" "$LOG_DOC"
+
+# drift: an edited body.
+sed -i 's/# Skill log/# Skill log, edited/' "$LOG_DOC"
+cp "$LOG_DOC" "$SCRATCH/skill-log.edited2"
+run setup --repo "$TMP/r1" --skills-dir "$DIR" --check --db "$TMP/skills-store.db"
+check "check: an edited body exits 1" "$STATUS" "1"
+check "check: an edited body is drift" "$(status_of "$OUT" skills)" "drift"
+check_contains "check: the edited body is named" \
+    "$(detail_of "$OUT" skills)" "skill-log:drift (differs from this version"
+if cmp -s "$LOG_DOC" "$SCRATCH/skill-log.edited2"; then
+    pass "check: the edited copy is left byte-for-byte alone"
+else
+    fail "check: the edited copy is left byte-for-byte alone"
+fi
+cp "$SCRATCH/skill-log.before" "$LOG_DOC"
+
+# drift: a stale install — the stamp names another version.
+sed -i "s/version=$VER/version=0.0.1/" "$LOG_DOC"
+run setup --repo "$TMP/r1" --skills-dir "$DIR" --check --db "$TMP/skills-store.db"
+check "check: a stale install exits 1" "$STATUS" "1"
+check_contains "check: the stale install names its version" \
+    "$(detail_of "$OUT" skills)" \
+    "skill-log:drift (installed by 0.0.1"
+cp "$SCRATCH/skill-log.before" "$LOG_DOC"
+
+# The skills verdict keeps the artifact/status/detail shape, with each
+# skill and its verdict named in detail, and --dry-run writes nothing.
+DIRJ="$TMP/skillsdir-json"
+mkdir -p "$DIRJ"
+run setup --repo "$TMP/r1" --skills-dir "$DIRJ" --dry-run --json \
+    --db "$TMP/skills-json.db"
+check "skills json exits 0" "$STATUS" "0"
+check "skills json: nothing is written" \
+    "$([ -e "$DIRJ/skill-log" ] && echo yes || echo no)" "no"
+check "skills json: the shape is the contract's" \
+    "$(printf '%s' "$OUT" | python3 -c '
+import json, sys
+dirj = sys.argv[1]
+objects = [json.loads(line) for line in sys.stdin.read().splitlines()]
+verdict = "ok"
+if [o["artifact"] for o in objects] != ["store", "hook", "report_dir", "skills"]:
+    verdict = "artifact order"
+if objects[-1]["status"] != "created":
+    verdict = "statuses"
+for o in objects:
+    if sorted(o.keys()) != ["artifact", "detail", "status"]:
+        verdict = "keys"
+if objects[-1]["detail"] != ("skill-log:created (would write " + dirj + "/skill-log/SKILL.md), "
+                            "skill-friction-review:created (would write " + dirj + "/skill-friction-review/SKILL.md)"):
+    verdict = "detail"
+print(verdict)
+' "$DIRJ")" "ok"
+
+# A missing skills directory is created by the install; a path that is
+# not a directory is skipped with its named reason.
+DIR3="$TMP/skillsdir3"
+run setup --repo "$TMP/r1" --skills-dir "$DIR3" --db "$TMP/skills3-store.db"
+check "a missing skills directory is created" \
+    "$([ -d "$DIR3" ] && echo yes || echo no)" "yes"
+check "a missing skills directory: the verdict is created" \
+    "$(status_of "$OUT" skills)" "created"
+check_contains "a missing skills directory: both skills land" \
+    "$(detail_of "$OUT" skills)" "skill-friction-review:created"
+run setup --repo "$TMP/r1" --skills-dir "$DIR3" --check --db "$TMP/skills3-store.db"
+check "check through a missing directory: exits 0 after the install" \
+    "$STATUS" "0"
+
+printf 'not a directory\n' >"$TMP/skills-file"
+run setup --repo "$TMP/r1" --skills-dir "$TMP/skills-file" --db "$TMP/skills3-store.db"
+check "a non-directory path is skipped" \
     "$(status_of "$OUT" skills)" "skipped"
-check_contains "skills: the empty skip is named" \
-    "$(detail_of "$OUT" skills)" "no skills in"
-
-run setup --repo "$TMP/r1" --skills-dir "$TMP/skills-absent" --check
-check "skills: a missing directory is skipped" \
-    "$(status_of "$OUT" skills)" "skipped"
-check_contains "skills: the missing skip is named" \
+check_contains "a non-directory skip is named" \
     "$(detail_of "$OUT" skills)" "is not a directory"
+
+# The review skill renders from the effective template: customising
+# means editing the template, not the installed file.
+mkdir -p "$HOME_DIR/.config/skill-log/templates"
+printf '# custom review body <command>\n' \
+    >"$HOME_DIR/.config/skill-log/templates/skill-friction-review.md"
+DIR2="$TMP/skillsdir2"
+mkdir -p "$DIR2"
+run setup --repo "$TMP/r1" --skills-dir "$DIR2" --db "$TMP/skills2-store.db"
+check "template override: exits 0" "$STATUS" "0"
+check_contains "template override: the installed review skill is the render" \
+    "$(cat "$DIR2/skill-friction-review/SKILL.md")" "# custom review body"
+run skills audit --dir "$DIR2"
+check "template override: the install still audits clean" "$STATUS" "0"
+run setup --repo "$TMP/r1" --skills-dir "$DIR2" --check --db "$TMP/skills2-store.db"
+check "template override: --check is green" "$STATUS" "0"
+rm -rf "$HOME_DIR/.config/skill-log"
 
 # --------------------------------------------------------- store refusals
 #
@@ -664,6 +878,7 @@ fi
 run setup --help
 check "help exits 0" "$STATUS" "0"
 check_contains "help prints the usage" "$OUT" "usage:"
+check_contains "help names the bundled skills" "$OUT" "skill-friction-review"
 EX="$(printf '%s\n' "$OUT" | sed -n '/^examples:$/,$p' | grep -c '^  ')"
 if [ "$EX" -ge 2 ] && [ "$EX" -le 4 ]; then
     pass "help prints 2 to 4 real invocations ($EX)"
