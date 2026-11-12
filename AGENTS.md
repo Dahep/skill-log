@@ -20,7 +20,7 @@ lives in `CONTEXT.md`; design decisions in `docs/adr/`.
   `dist/lib/`, rpath `$ORIGIN/lib`, the version baked in. Needs `mise` (the
   Mojo pin in `mise.toml`), `patchelf`, and a system `libsqlite3.so.0` to
   bundle.
-- `scripts/test.sh` — the three suites under `tests/`, against `dist/`.
+- `scripts/test.sh` — the suites under `tests/`, against `dist/`.
   `--build` rebuilds first. Each suite also runs on its own.
 - The suites are black-box: they run the binary as a process with a scratch
   HOME and a scratch store. `tests/lib.sh` holds the shared assertions —
