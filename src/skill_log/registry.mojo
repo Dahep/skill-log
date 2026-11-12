@@ -27,6 +27,13 @@ from skill_log.show import (
     show_usage,
     show_value_flags,
 )
+from skill_log.report import (
+    handle_report,
+    report_examples,
+    report_notes,
+    report_usage,
+    report_value_flags,
+)
 from skill_log.stats import (
     handle_stats,
     stats_examples,
@@ -147,6 +154,18 @@ def build_verbs() raises -> List[Verb]:
         )
     )
 
+    # The authoring verb: the change names the rows it fixes.
+    verbs.append(
+        Verb(
+            "report",
+            "name the rows a change fixes, in the repo's report file",
+            report_usage(),
+            report_examples(),
+            report_value_flags(),
+            report_notes(),
+        )
+    )
+
     var version_examples = List[String]()
     version_examples.append("skill-log --version")
     version_examples.append("skill-log --help")
@@ -183,6 +202,7 @@ def build_handlers() raises -> List[type_of(handle_version)]:
     handlers.append(handle_add)
     handlers.append(handle_show)
     handlers.append(handle_stats)
+    handlers.append(handle_report)
     handlers.append(handle_version)
     handlers.append(handle_help)
     return handlers^

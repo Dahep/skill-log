@@ -38,6 +38,7 @@ from std.subprocess import run
 # the directory — quoted — may vary.
 comptime GIT_TOPLEVEL_ARGS = "rev-parse --show-toplevel"
 comptime GIT_ORIGIN_ARGS = "remote get-url origin"
+comptime GIT_BRANCH_ARGS = "rev-parse --abbrev-ref HEAD"
 
 # The directory T3 keeps its worktrees in, relative to the T3 home.
 comptime T3_WORKTREES_DIR = "worktrees"
@@ -100,6 +101,16 @@ def git_toplevel() -> String:
     directory and not the main checkout's.
     """
     return run_git("", GIT_TOPLEVEL_ARGS)
+
+
+def git_branch(dir: String) -> String:
+    """The current branch of the repository `dir` is in, or an empty string.
+
+    A detached HEAD answers `HEAD`, which names no report file; the
+    caller refuses it and asks for `--slug`. Outside a repository the
+    answer is empty.
+    """
+    return run_git(dir, GIT_BRANCH_ARGS)
 
 
 def git_toplevel_of(dir: String) -> String:

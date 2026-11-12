@@ -63,7 +63,7 @@ scratch store. `scripts/test.sh --build` rebuilds first.
 | `stats` | Invocation, problem and resolved counts, and problems per invocation, per cut (`--by`). |
 | `resolve` | Stamp one local row with the commit that fixed it. |
 | `resolve-merged` | Resolve rows from the commits a pull landed; reports in artifact mode, trailers otherwise. |
-| `report` | Write or update the committed report listing the rows a change resolves. |
+| `report` | Name the rows a change fixes: the committed report file, or the trailer in a repo without one. |
 | `setup` | Provision or verify the store, hook, report directory, and skills. |
 | `skills audit` | Report each skill's usage-log state (`ok`, `missing`, `stale`, `edited`, `legacy`, `unowned`, `vendored`). |
 | `skills adopt` | Append missing blocks and re-render stale ones; leave `edited`, `legacy` and `unowned` untouched unless `--force`. |

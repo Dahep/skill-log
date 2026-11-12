@@ -764,18 +764,26 @@ def read_invocations(db: Database, filters: Filters) raises -> List[Invocation]:
     var clause = filter_clause(filters)
     var marks = filter_parameters(filters)
 
+    # A limit of zero means "every matching row": `report` selects the
+    # rows a change fixes and must not silently drop the tail of a large
+    # selection. `show` always passes 1..500.
+    var limit = " LIMIT ?"
+    if filters.limit <= 0:
+        limit = ""
+
     var stmt = db.prepare(
         "SELECT id, ts, skill, harness, session, parent, model, repo,"
         " worktree, project, t3_thread, machine, fix, resolved_at"
         " FROM invocations" + clause
-        + " ORDER BY datetime(ts) DESC, id DESC LIMIT ?"
+        + " ORDER BY datetime(ts) DESC, id DESC" + limit
     )
 
     # The filter values bind first, in the clause's order, and the limit
     # binds last.
     for i in range(len(marks)):
         stmt.bind_text(i + 1, marks[i])
-    stmt.bind_int(len(marks) + 1, filters.limit)
+    if filters.limit > 0:
+        stmt.bind_int(len(marks) + 1, filters.limit)
 
     var rows = List[Invocation]()
     while True:
