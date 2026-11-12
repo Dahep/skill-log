@@ -216,8 +216,12 @@ next reader does not take the map above for the tree as it is.
   the foreign marker are all decided in one place.
 - **The store owns the taxonomy.** A refusal is a value (`Refusal`), never a
   word inside a message, and a SQLite failure is classified by the store
-  (`read_failure`) rather than inspected by a handler — damage is damage, a
-  lock is a lock. That much of §1's promise is kept.
+  rather than inspected by a handler — damage is damage, a lock is a lock,
+  and a file that cannot be written is read-only. The read path's
+  classifier is `read_failure` and the write path's is `write_failure`, and
+  no handler reads a SQLite message: `show`, `stats` and `report` render
+  what the store answered. That much of §1's promise is kept, on both
+  paths.
 - **The document module answers the five questions.** `parse` splits at the
   fence, `classify` decides the state, `rewrite` and `append` splice without
   touching a byte outside the fence.
@@ -249,21 +253,38 @@ next reader does not take the map above for the tree as it is.
   `invocations` columns by hand, and the single-row read and the multi-row
   read spell out the same list, in the same order, twice more. One list, read
   by all three, is the whole change.
+- **One SQLite image for the read path.** The read path opens the store
+  read-only, because the vendored binding opens read-write and a read must
+  never create the store. That open lives in `opendb.mojo`, which `dlopen`s
+  `libsqlite3.so.0` itself and plants the handle in the vendored
+  `Database._handle`. The vendored binding loads the library its own way —
+  `_find_sqlite3_library()` honours `$CONDA_PREFIX` — so a machine with
+  `CONDA_PREFIX` set can make the two resolve **two different images**: the
+  handle belongs to one and the binding's function pointers to the other, and
+  the calls then run against a library that never opened the file. The latent
+  risk is real but unobserved: the release ships without a toolchain and
+  without `CONDA_PREFIX`, so the two paths agree there. The fix belongs in
+  the vendored binding: a `Database.open_v2(path, flags)` that opens with
+  SQLite's own flags and returns a handle from the *same* image the binding
+  calls through.
 
 ### Why
 
 The behaviour is met and the contract holds — every promise in `SPEC.md` is
 pinned by a suite, and the four reviews that examined the tree found no
 contract violation in any of these. What is missing is the *shape*: the same
-decisions are still re-derived in more than one place, and each of the five
-items above is one of them. A rewrite of the tree is out of proportion to a
+decisions are still re-derived in more than one place, and each of the items
+above is one of them. A rewrite of the tree is out of proportion to a
 behaviour that is already right, so the debt is recorded here and worked as a
 separate change.
 
 The follow-up is
 [issue #26](https://github.com/Dahep/skill-log/issues/26), labelled
-`ready-for-agent`: it lists the five items with this section as the review
-evidence, and its acceptance criteria are shape, not behaviour.
+`ready-for-agent`: it lists the shape items with this section as the review
+evidence, and its acceptance criteria are shape, not behaviour. The
+read-only-open seam's latent risk — one SQLite image for the read path — is
+the sixth of them, and it is the only one with a fix that belongs in the
+vendored binding: a `Database.open_v2(path, flags)`.
 
 ## Alternatives rejected
 

@@ -163,8 +163,16 @@ marker this store does not own is a warning, not a failure.
 The store classifies and returns a typed refusal. The CLI boundary renders the
 one-line message and maps the exit code; no handler inspects a SQLite error or
 a store's absence on its own. The store classifies a SQLite failure the same
-way: damage is damage, a lock is a lock, and anything else is the generic
-operational failure.
+way on both paths: damage is damage, a lock is a lock, a file that cannot be
+written is read-only, and anything else is the generic operational failure.
+
+The classification never reads the caller's path: the path is stripped from
+the message first, because a path can carry any word in the vocabulary and
+must not choose the answer.
+
+A lock is not a refusal — a refusal is final, and a lock is retryable. The
+write path retries a busy failure as a whole attempt inside its budget, and
+names the lock only when the budget is spent.
 
 ### Location and overrides
 
@@ -505,6 +513,15 @@ Placeholders: `<name>` (the skill's name) and `<command>` (the resolved binary
 path). `usage-log.md` requires both, and `audit` rejects a template that lacks
 `<name>` or an invocation of `<command> add` — a typo there would silently stop
 every skill from logging. The review template requires `<command>`.
+
+The rendered block is shell source: the reader copies a command line out of
+it and runs it. So a substituted value is shell-quoted on every command line
+— single quotes, with an embedded quote closed, escaped and reopened — and
+left plain in prose. A command line is one that starts a command: the
+placeholder is the first thing on the line after the indentation, or it
+follows a markdown list item's label and colon. A skill named
+`alpha; touch /tmp/pwned` therefore renders a command line that runs the
+skill and nothing else.
 
 The default template is expected to change between releases. The default moving
 never touches a user copy: the state directory records the hash of the shipped
