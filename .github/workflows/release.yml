@@ -4,10 +4,10 @@
 # publishing, as a dry run (add the publish input to create the release
 # from a dispatch). The jobs:
 #
-#   build     — pinned toolchain, build with the runner-fetched pinned
-#               SQLite, pack the archive, digest, clean-container
-#               packaging test (tests/packaging.sh on ubuntu:22.04,
-#               the glibc floor), upload for the next jobs.
+#   build     — pinned Go toolchain, build a static executable with the
+#               version baked in, pack the archive, digest, clean-container
+#               packaging test (tests/packaging.sh on ubuntu:22.04),
+#               upload for the next jobs.
 #   release   — create the release for the tag, upload the archive and
 #               its digest, attach the provenance attestation.
 #   mise      — after the release is published: install the released tag
@@ -15,10 +15,12 @@
 #               run --version and setup --dry-run. Skippable by input.
 #
 # The archive is skill-log-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz with
-# exactly skill-log and lib/ (SPEC.md §8); the version is baked in from
-# the tag. The bundled libsqlite3.so.0 is fetched and verified by
-# scripts/package.sh on the runner — never taken from a development
-# machine.
+# the static executable and the licence material (§8); the version is
+# baked in from the tag.
+#
+# The build is CGO_ENABLED=0: the SQLite implementation is pure Go and
+# travels inside the executable, so the artifact is statically linked and
+# a machine needs neither a toolchain nor a SQLite to run it.
 #
 # Two rules the pipeline keeps, because the tag is a name somebody
 # chose:
@@ -70,9 +72,6 @@ jobs:
           mise trust
           mise install
 
-      - name: "Install the packaging tools"
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends patchelf zstd
-
       - name: "Version from the tag"
         id: version
         env:
@@ -102,11 +101,14 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "SKILL_LOG_VERSION=$version" >> "$GITHUB_ENV"
 
-      - name: "Package"
+      - name: "Build and package"
         env:
           # The version comes from the environment, not from an
           # expression inside the shell source.
           SKILL_LOG_VERSION: ${{ steps.version.outputs.version }}
+          # The build is pure Go: the executable links nothing, so it
+          # runs on a machine with no toolchain and no SQLite.
+          CGO_ENABLED: "0"
         run: ./scripts/package.sh --version "$SKILL_LOG_VERSION"
 
       - name: "Packaging test in a clean container"
@@ -195,7 +197,7 @@ jobs:
           gh release create "$version" \
             --repo "$GITHUB_REPOSITORY" \
             --title "skill-log $version" \
-            --notes "One archive: the skill-log executable plus its bundled libraries (SPEC.md §8). Install with: mise use -g github:Dahep/skill-log@$version" \
+            --notes "One archive: the static skill-log executable plus the licence material (SPEC.md §8). Install with: mise use -g github:Dahep/skill-log@$version" \
             "${verify[@]}" \
             "$archive" "$archive.sha256" || {
               # A re-run of an existing release appends the assets.

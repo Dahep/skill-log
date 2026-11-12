@@ -2,31 +2,33 @@
 # Build the release archive: the versioned artifact mise installs.
 #
 #   scripts/package.sh --version vX.Y.Z
-#   scripts/package.sh --version vX.Y.Z --sqlite /path/to/libsqlite3.so.0
+#   scripts/package.sh --version vX.Y.Z --out /tmp/release
 #
 # Produces, in dist/ (or --out):
 #
 #   skill-log-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz
 #   skill-log-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz.sha256
 #
-# The archive holds exactly `skill-log` and `lib/` (the three Mojo
-# runtime libraries and libsqlite3.so.0), never reference/ or tests/.
+# The archive holds one statically linked executable plus the licence
+# material a redistributor must carry:
 #
-# The bundled SQLite is never taken from this machine. By default it is
-# fetched from the pinned Ubuntu 22.04 (jammy) libsqlite3-0 package — a
-# glibc 2.35 floor — verified against the sha256 Ubuntu's signed archive
-# index records for it, then verified again as the extracted file.
-# `--sqlite <path>` substitutes a locally built copy, checked the same
-# way: an ELF shared object with the libsqlite3.so.0 soname and the same
-# glibc floor. Nothing falls back to a development machine's library;
-# the release job fails if the library is missing or too new.
+#   skill-log              the executable (CGO_ENABLED=0, no shared object)
+#   LICENSE                this project's licence (MIT)
+#   THIRD-PARTY-NOTICES.md the notices of everything linked into the binary
+#   NOTICE-LICENSES/       the licence texts those notices point at
+#
+# Nothing else is shipped: no reference/, no tests/, no lib/ and no
+# shared object at all. The SQLite implementation is pure Go and travels
+# inside the executable, so there is no library to fetch, to bundle or to
+# resolve at run time — and no .package-cache to keep warm.
 #
 # The version is baked in from --version, else SKILL_LOG_VERSION, else
 # `git describe --tags`; a release always passes the tag (vX.Y.Z), which
 # is also the archive name's version and what `--version` prints.
 #
-# The download is cached in .package-cache/ and re-verified on every run,
-# so a re-run needs no network once the cache is warm.
+# The notices are read from the module cache, resolved through `go list -m`,
+# so they always match the version of modernc.org/sqlite that go.mod pins:
+# no checked-in copy can drift away from what the binary actually links.
 #
 # This rebuilds dist/ from scratch (scripts/build.sh clears it), so the
 # gate order is: build.sh, test.sh (or just test.sh --build), then
@@ -35,30 +37,10 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT="$(cd "$HERE/.." && pwd)"
-
-# The pinned Ubuntu 22.04 (jammy) libsqlite3-0, the newest
-# jammy-updates/jammy-security build. The deb's sha256 is the one in
-# Ubuntu's signed archive index
-# (dists/jammy-updates/main/binary-amd64/Packages.gz, "SHA256:"); the
-# Launchpad librarian URL keeps superseded files available forever, so
-# the pin cannot rot when the pool moves on. The extracted file's
-# sha256 is pinned as well: that is the file the release ships.
-SQLITE_DEB=libsqlite3-0_3.37.2-2ubuntu0.8_amd64.deb
-SQLITE_DEB_URL="https://launchpad.net/ubuntu/+archive/primary/+files/$SQLITE_DEB"
-SQLITE_DEB_SHA256=6e22b1e8d375fed6a1d52cad5887e762b6cdeaba137595e726c95486968dfab5
-SQLITE_DEB_SO=usr/lib/x86_64-linux-gnu/libsqlite3.so.0.8.6
-SQLITE_SO_SHA256=f5a7fc236f80f3185608d14e9f4dea3e3fd647582e123e8a00f253629fe16830
-
-# The glibc floor the bundled SQLite may require at most: the jammy
-# package's own floor. A library needing more than this would silently
-# raise the release's floor, so it is refused.
-GLIBC_FLOOR="${SKILL_LOG_SQLITE_FLOOR:-2.35}"
+ROOT="$(cd "$(dirname "$HERE")" && pwd)"
 
 # The archive shape of SPEC.md §8.
 TARGET=x86_64-unknown-linux-gnu
-
-CACHE="$ROOT/.package-cache"
 
 log() { printf '==> %s\n' "$*"; }
 
@@ -69,18 +51,15 @@ die() {
 
 usage() {
     cat <<EOF
-usage: scripts/package.sh [--version <vX.Y.Z>] [--sqlite <path>] [--out <dir>]
+usage: scripts/package.sh [--version <vX.Y.Z>] [--out <dir>]
 
   --version <vX.Y.Z>  the release version (default: SKILL_LOG_VERSION,
                       then git describe --tags)
-  --sqlite <path>     bundle this libsqlite3.so.0 instead of fetching
-                      the pinned Ubuntu 22.04 package
   --out <dir>         where the archive goes (default: dist/)
 EOF
 }
 
 VERSION_ARG=""
-SQLITE_ARG=""
 OUT="$ROOT/dist"
 
 while [ $# -gt 0 ]; do
@@ -88,11 +67,6 @@ while [ $# -gt 0 ]; do
         --version)
             [ $# -ge 2 ] || die "--version needs a value"
             VERSION_ARG="$2"
-            shift 2
-            ;;
-        --sqlite)
-            [ $# -ge 2 ] || die "--sqlite needs a path"
-            SQLITE_ARG="$2"
             shift 2
             ;;
         --out)
@@ -111,7 +85,7 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-for tool in readelf sha256sum tar curl; do
+for tool in go tar sha256sum; do
     command -v "$tool" >/dev/null 2>&1 || die "$tool is required"
 done
 
@@ -127,92 +101,38 @@ fi
 [ -n "$VERSION" ] ||
     die "no version: pass --version vX.Y.Z or set SKILL_LOG_VERSION"
 case "$VERSION" in
-    */* | *' '* | *$'\t'*) die "version must not contain a slash or space: $VERSION" ;;
+    */* | *" "* | *$'\t'*) die "version must not contain a slash or space: $VERSION" ;;
 esac
-
-# ----------------------------------------------------------------- sqlite
-
-# check_sqlite <file> <label>: the shape every bundled library must have.
-check_sqlite() {
-    local file="$1" label="$2" soname max floor
-    [ -f "$file" ] || die "$label is not a file: $file"
-    readelf -h "$file" 2>/dev/null | grep -q 'Type:.*DYN' ||
-        die "$label is not an ELF shared object: $file"
-    soname="$(readelf -d "$file" 2>/dev/null |
-        sed -n 's/.*(SONAME).*\[\(.*\)\]$/\1/p')"
-    [ "$soname" = "libsqlite3.so.0" ] ||
-        die "$label has soname '$soname', expected libsqlite3.so.0"
-
-    # The glibc floor guard: the library's own symbol needs must not
-    # exceed the floor. This is what refuses a development machine's
-    # SQLite on a modern distro.
-    max="$(readelf --version-info "$file" 2>/dev/null |
-        grep -o 'GLIBC_[0-9.]*' | sed 's/^GLIBC_//' | sort -uV | tail -1 || true)"
-    if [ -n "$max" ]; then
-        floor="$(printf '%s\n%s\n' "$GLIBC_FLOOR" "$max" | sort -uV | tail -1)"
-        [ "$floor" = "$GLIBC_FLOOR" ] ||
-            die "$label needs GLIBC_$max, above the $GLIBC_FLOOR floor: $file"
-    fi
-}
-
-# The pinned fetch: download once into the cache, verify both hashes on
-# every run, and use the extracted file. Its stdout is only the path —
-# the caller captures it — so every message goes to stderr.
-fetch_sqlite() {
-    local deb="$CACHE/$SQLITE_DEB" so
-
-    if [ ! -f "$deb" ]; then
-        log "fetching $SQLITE_DEB" >&2
-        mkdir -p "$CACHE"
-        curl -fsSL --retry 3 -o "$deb.part" "$SQLITE_DEB_URL" ||
-            die "cannot download $SQLITE_DEB_URL"
-        mv "$deb.part" "$deb"
-    fi
-
-    printf '%s  %s\n' "$SQLITE_DEB_SHA256" "$deb" | sha256sum -c - >/dev/null ||
-        die "the downloaded $SQLITE_DEB does not match its pinned sha256"
-
-    so="$CACHE/libsqlite3.so.0"
-    if [ ! -f "$so" ] ||
-        ! printf '%s  %s\n' "$SQLITE_SO_SHA256" "$so" | sha256sum -c - >/dev/null; then
-        log "extracting $SQLITE_DEB" >&2
-        rm -rf "$CACHE/extract"
-        mkdir -p "$CACHE/extract"
-        if command -v dpkg-deb >/dev/null 2>&1; then
-            dpkg-deb -x "$deb" "$CACHE/extract" ||
-                die "cannot extract $SQLITE_DEB"
-        else
-            command -v zstd >/dev/null 2>&1 ||
-                die "zstd is required to extract $SQLITE_DEB"
-            (cd "$CACHE/extract" && ar x "$deb") ||
-                die "cannot extract $SQLITE_DEB"
-            tar --zstd -xf "$CACHE/extract/data.tar.zst" -C "$CACHE/extract" ||
-                die "cannot unpack $SQLITE_DEB"
-        fi
-        [ -f "$CACHE/extract/$SQLITE_DEB_SO" ] ||
-            die "$SQLITE_DEB does not contain $SQLITE_DEB_SO"
-        cp "$CACHE/extract/$SQLITE_DEB_SO" "$so"
-    fi
-
-    printf '%s  %s\n' "$SQLITE_SO_SHA256" "$so" | sha256sum -c - >/dev/null ||
-        die "the extracted libsqlite3.so.0 does not match its pinned sha256"
-
-    printf '%s' "$so"
-}
-
-if [ -n "$SQLITE_ARG" ]; then
-    SQLITE="$(readlink -f "$SQLITE_ARG" 2>/dev/null || true)"
-    [ -n "$SQLITE" ] || die "--sqlite path does not exist: $SQLITE_ARG"
-    log "sqlite: $SQLITE (given)"
-else
-    SQLITE="$(fetch_sqlite)"
-    log "sqlite: $SQLITE (pinned $SQLITE_DEB)"
-fi
-check_sqlite "$SQLITE" "the bundled SQLite"
 
 # ------------------------------------------------------------------ build
 
-SKILL_LOG_VERSION="$VERSION" SKILL_LOG_SQLITE="$SQLITE" "$HERE/build.sh"
+SKILL_LOG_VERSION="$VERSION" "$HERE/build.sh"
+
+# ------------------------------------------------------- the licence material
+#
+# The binary links modernc.org/sqlite, whose module carries the flattened
+# third-party notices and the licence texts they point at. The module
+# directory is resolved through `go list -m`, so the notices are always the
+# ones of the version go.mod pins.
+
+MODULE_DIR="$(go list -m -f '{{.Dir}}' modernc.org/sqlite 2>/dev/null || true)"
+[ -n "$MODULE_DIR" ] && [ -d "$MODULE_DIR" ] ||
+    die "the modernc.org/sqlite module is not in the module cache; run go mod download"
+
+NOTICE="$MODULE_DIR/LICENSE-3RD-PARTY.md"
+[ -f "$NOTICE" ] ||
+    die "$NOTICE is missing; the module carries no third-party notices"
+
+# The licence texts the notices reference, by the names the notices use.
+# Every file the notices point at is shipped, so a reader of the archive
+# never meets a reference that does not resolve.
+NOTICE_LICENSES=()
+for name in LICENSE LICENSE-SQLITE LICENSE-SQLITE_VEC; do
+    [ -f "$MODULE_DIR/$name" ] || continue
+    NOTICE_LICENSES+=("$name")
+done
+[ "${#NOTICE_LICENSES[@]}" -gt 0 ] ||
+    die "$MODULE_DIR carries no licence text to ship"
 
 # ------------------------------------------------------------ pack + hash
 
@@ -221,21 +141,84 @@ NAME="skill-log-$VERSION-$TARGET.tar.gz"
 
 [ -x "$STAGE/skill-log" ] || die "$STAGE/skill-log is missing after the build"
 
-# The staged libraries, by name and not by `ls`: a glob cannot pick up
-# a stray file the way a directory listing can, and the names are what
-# the archive must carry.
-staged="$(printf '%s\n' "$STAGE"/lib/* | sed "s|^$STAGE/lib/||" | sort)"
-expected="$(printf '%s\n' \
-    libAsyncRTRuntimeGlobals.so \
-    libKGENCompilerRTShared.so \
-    libMSupportGlobals.so \
-    libsqlite3.so.0 | sort)"
-[ "$staged" = "$expected" ] ||
-    die "$STAGE/lib holds more (or less) than the four libraries"
+# The archive is staged in its own directory, so the tarball's entries are
+# exactly the shipped names and the root directory never leaks into it.
+PACK="$ROOT/.package-stage"
+rm -rf "$PACK"
+mkdir -p "$PACK/NOTICE-LICENSES"
+
+cp "$STAGE/skill-log" "$PACK/skill-log"
+cp "$ROOT/LICENSE" "$PACK/LICENSE"
+
+# The driver's licence files keep their names inside NOTICE-LICENSES/, so
+# the archive root's LICENSE stays this project's own. The notices file
+# points at the driver's licences by their upstream names; those names are
+# repointed at the copies' real place, and the rewrite is asserted so a
+# change upstream cannot slip an unfixed reference into the archive.
+#
+# The backticks in the patterns are the notices file's own quoting, not
+# shell substitution: they must reach sed literally.
+# shellcheck disable=SC2016  # the backticks are the text being looked for
+sed -e 's|\[LICENSE\](LICENSE)|[LICENSE](NOTICE-LICENSES/LICENSE)|' \
+    -e 's|`LICENSE-SQLITE_VEC`|`NOTICE-LICENSES/LICENSE-SQLITE_VEC`|g' \
+    -e 's|`LICENSE-SQLITE`|`NOTICE-LICENSES/LICENSE-SQLITE`|g' \
+    "$NOTICE" >"$PACK/THIRD-PARTY-NOTICES.md"
+if grep -qF '[LICENSE](LICENSE)' "$PACK/THIRD-PARTY-NOTICES.md"; then
+    die "the third-party notices still link to a licence that is not in the archive"
+fi
+for name in "${NOTICE_LICENSES[@]}"; do
+    cp "$MODULE_DIR/$name" "$PACK/NOTICE-LICENSES/$name"
+done
+
+# Every file the notices point at is in the archive: a reference that does
+# not resolve is a licence nobody can read.
+grep -oE 'NOTICE-LICENSES/[A-Za-z0-9._-]+' "$PACK/THIRD-PARTY-NOTICES.md" |
+    sort -u >"$PACK/.referenced"
+while IFS= read -r referenced; do
+    [ -n "$referenced" ] || continue
+    [ -f "$PACK/$referenced" ] ||
+        die "the third-party notices point at $referenced, which the archive does not carry"
+done <"$PACK/.referenced"
+rm -f "$PACK/.referenced"
+
+# The three licence files this archive ships are named in the notices by
+# their upstream names; the rewrite above must have caught every one of
+# them, or a licence the notices point at is not in the archive. The other
+# names in the notices are paths inside the upstream module tree, whose
+# texts the notices reproduce in full in their own appendix.
+for name in "${NOTICE_LICENSES[@]}"; do
+    case "$name" in
+        LICENSE)
+            grep -qF 'NOTICE-LICENSES/LICENSE' "$PACK/THIRD-PARTY-NOTICES.md" ||
+                die "the third-party notices no longer name $name"
+            ;;
+        *)
+            grep -qF "NOTICE-LICENSES/$name" "$PACK/THIRD-PARTY-NOTICES.md" ||
+                die "the third-party notices no longer name $name"
+            ;;
+    esac
+done
+
+# The archive carries no shared object: the executable is statically
+# linked, so there is nothing to resolve at run time.
+if find "$PACK" -type f -name '*.so*' | grep -q .; then
+    die "the staged tree holds a shared object; the archive must carry only the executable"
+fi
 
 mkdir -p "$OUT"
-tar -C "$STAGE" -czf "$OUT/$NAME" skill-log lib
+rm -f "$OUT/$NAME" "$OUT/$NAME.sha256"
+
+# The archive is byte-reproducible: the entries are sorted, the owner is
+# fixed, and the mtime is a constant. A release digest that changes when
+# nothing changed is a digest nobody can verify twice.
+tar --sort=name \
+    --mtime=@0 \
+    --owner=0 --group=0 --numeric-owner \
+    --pax-option=delete=atime,delete=ctime \
+    -C "$PACK" -czf "$OUT/$NAME" \
+    skill-log LICENSE THIRD-PARTY-NOTICES.md NOTICE-LICENSES
 (cd "$OUT" && sha256sum "$NAME" >"$NAME.sha256")
+rm -rf "$PACK"
 
 log "packaged:"
 log "  $OUT/$NAME"

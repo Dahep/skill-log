@@ -7,11 +7,12 @@
 #
 #   1. plain — the artifact as staged, on this machine
 #   2. sandbox — a bubblewrap root with no system SQLite anywhere, so the
-#      bundled copy in dist/lib/ is the only possible source
+#      SQLite that travels inside the binary is the only possible source
 #
-# The sandbox is the decisive one: without it, removing the bundled
-# libsqlite3.so.0 would fall through to the loader cache and find the
-# distro copy, and the failure path would never run.
+# The artifact is one statically linked executable: there is no lib/ beside
+# it, no rpath, and no shared object to resolve. The sandbox is still the
+# decisive environment: without it, a dynamically linked build would find
+# the distro's SQLite and the failure path would never run.
 #
 # bwrap is used rather than a container: no daemon, no cgroup namespace,
 # no privileges, and the desktop's live session cgroups are never touched.
@@ -20,7 +21,7 @@
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT="$(cd "$HERE/.." && pwd)"
+ROOT="$(cd "$(dirname "$HERE")" && pwd)"
 DIST="$ROOT/dist"
 
 SCRATCH="${SCRATCH:-/tmp/opencode/skill-log-smoke}"
@@ -34,14 +35,16 @@ require_artifact() {
             "$DIST" >&2
         exit 1
     fi
-    if [ ! -f "$DIST/lib/libsqlite3.so.0" ]; then
-        printf 'smoke.sh: %s/lib/libsqlite3.so.0 is missing; run scripts/build.sh first\n' \
+    # The release ships one executable and nothing beside it: a lib/
+    # directory in dist/ means the build picked up something it must not.
+    if [ -d "$DIST/lib" ]; then
+        printf 'smoke.sh: %s/lib must not be staged; the artifact is one static binary\n' \
             "$DIST" >&2
         exit 1
     fi
     # The reference area is never shipped: the archive stages only the
-    # binary and its libraries. A reference/ in dist/ means the build
-    # picked up something it must not.
+    # binary. A reference/ in dist/ means the build picked up something
+    # it must not.
     if [ -e "$DIST/reference" ]; then
         printf 'smoke.sh: %s/reference must not be staged in the release archive\n' \
             "$DIST" >&2
@@ -53,6 +56,22 @@ require_artifact() {
 # under the `examples:` heading, not the usage lines above it.
 count_examples() {
     sed -n '/^examples:$/,$p' "$1" | grep -c '^  ' || true
+}
+
+# static_binary <path>: the executable resolves no shared object at run
+# time. ldd says so on a static ELF; where ldd is missing, file says it.
+#
+# ldd exits 1 when it prints "not a dynamic executable": that is the
+# answer, not a failure, so the exit status is dropped and only the text
+# is read.
+static_binary() {
+    local report
+    if command -v ldd >/dev/null 2>&1; then
+        report="$(ldd "$1" 2>&1 || true)"
+        printf '%s\n' "$report" | grep -qi 'not a dynamic executable'
+        return $?
+    fi
+    file "$1" 2>/dev/null | grep -qi 'statically linked'
 }
 
 require_artifact
@@ -124,135 +143,83 @@ check "plain: an unknown verb prints exactly one stderr line" \
 check "plain: an unknown verb names the verb" \
     "$(grep -c '^skill-log: unknown verb: not-a-verb$' "$SCRATCH/plain.err")" "1"
 
-# ---------------------------------------------------------- LD_DEBUG proof
+# -------------------------------------------------------- static link proof
 #
-# The bundled libsqlite3.so.0 is the one that gets loaded: the loader
-# search trace names the path inside dist/lib/.
+# The executable carries no shared object: the loader has nothing to
+# resolve, so the SQLite inside it is the only SQLite there is.
 
-LD_DEBUG=libs "$DIST/skill-log" --version >"$SCRATCH/ld.out" 2>"$SCRATCH/ld.err"
-check "plain: the loader resolves libsqlite3.so.0 from dist/lib" \
-    "$(grep -c "calling init: $DIST/lib/libsqlite3.so.0" "$SCRATCH/ld.err")" "1"
+if static_binary "$DIST/skill-log"; then
+    pass "plain: the artifact is a static executable"
+else
+    fail "plain: the artifact is a static executable"
+fi
 
 # --------------------------------------------------------------- sandbox
 #
-# A root with no system SQLite at all: the packaged copy is the only
-# possible source, and removing it must produce one named line.
+# A root with no system libraries at all: no SQLite, no loader cache,
+# no toolchain. The executable still runs, because the SQLite travels
+# inside it.
 
 sandbox_available=1
-command -v bwrap >/dev/null 2>&1 || sandbox_available=0
-
-build_sandbox_root() {
-    local root="$1"
-    rm -rf "$root"
-    mkdir -p "$root/usr/lib" "$root/usr/lib32" "$root/usr/bin" "$root/lib64" \
-        "$root/etc" "$root/dev" "$root/proc" "$root/pkg/lib"
-    chmod 1777 "$root"
-
-    # /usr/lib and /usr/lib32 without any libsqlite3*, and without the
-    # ld.so cache, so the loader has nothing but its default search path.
-    python3 - "$root" <<'PY'
-import os
-import shutil
-import sys
-
-root = sys.argv[1]
-for src, dst in (("/usr/lib", os.path.join(root, "usr/lib")),
-                 ("/usr/lib32", os.path.join(root, "usr/lib32"))):
-    if not os.path.isdir(src):
-        continue
-    for name in sorted(os.listdir(src)):
-        if "sqlite" in name:
-            continue
-        s = os.path.join(src, name)
-        d = os.path.join(dst, name)
-        try:
-            if os.path.islink(s):
-                if os.path.lexists(d):
-                    os.remove(d)
-                tgt = os.readlink(s)
-                full = os.path.join(src, tgt)
-                if os.path.isfile(full):
-                    shutil.copy2(full, d)
-                else:
-                    os.symlink(tgt, d)
-            elif os.path.isdir(s):
-                os.makedirs(d, exist_ok=True)
-            elif not os.path.lexists(d):
-                try:
-                    os.link(s, d)
-                except OSError:
-                    try:
-                        shutil.copy2(s, d)
-                    except OSError:
-                        pass
-        except OSError:
-            pass
-PY
-
-    # The dynamic loader must be a real file at /lib64.
-    cp -a /lib64/ld-linux-x86-64.so.2 "$root/lib64/"
-
-    # A few binaries for diagnostics inside the sandbox.
-    for b in sh bash cat ls env; do
-        p="$(command -v "$b" || true)"
-        [ -n "$p" ] && cp -a "$p" "$root/usr/bin/" || true
-    done
-
-    # The package under test.
-    cp -a "$DIST/skill-log" "$root/pkg/"
-    cp -a "$DIST"/lib/*.so "$root/pkg/lib/" 2>/dev/null || true
-    cp -a "$DIST/lib/libsqlite3.so.0" "$root/pkg/lib/"
-}
+if ! command -v bwrap >/dev/null 2>&1 ||
+    ! bwrap --ro-bind / / --dev /dev --unshare-all true >/dev/null 2>&1; then
+    # A bwrap on the PATH that cannot create a namespace is not a
+    # sandbox: the cases below would run in it and prove nothing.
+    sandbox_available=0
+fi
 
 run_sandbox() {
-    # run_sandbox <root> <args...>
-    local root="$1"
-    shift
-    bwrap --ro-bind "$root" / --bind /dev /dev --proc /proc --unshare-all \
-        --die-with-parent --setenv HOME /tmp --setenv PATH /usr/bin:/bin \
-        "$@"
+    # run_sandbox <args...>: the command in the sandbox root.
+    sandbox_run "$ROOTFS" "$SANDBOX_HOME" "$@"
 }
 
 if [ "$sandbox_available" -eq 0 ]; then
     printf 'skip bwrap is not installed: the sandbox checks did not run\n'
 else
     ROOTFS="$SCRATCH/root"
-    build_sandbox_root "$ROOTFS"
+    SANDBOX_HOME="$SCRATCH/sandbox-home"
+    rm -rf "$SANDBOX_HOME"
+    mkdir -p "$SANDBOX_HOME"
+    sandbox_root "$ROOTFS" "$DIST/skill-log"
 
-    # Positive: the bundled copy is found with no system SQLite present.
-    run_sandbox "$ROOTFS" /pkg/skill-log --version \
+    # Positive: the executable runs with no system SQLite present.
+    run_sandbox /pkg/skill-log --version \
         >"$SCRATCH/box.out" 2>"$SCRATCH/box.err"
     check "sandbox: --version exits 0 with no system SQLite" "$?" "0"
     check "sandbox: --version prints a version" \
         "$(grep -c '^[^[:space:]]' "$SCRATCH/box.out")" "1"
 
-    run_sandbox "$ROOTFS" /pkg/skill-log --help \
+    run_sandbox /pkg/skill-log --help \
         >"$SCRATCH/boxhelp.out" 2>"$SCRATCH/boxhelp.err"
     check "sandbox: --help exits 0 with no system SQLite" "$?" "0"
 
-    # The loader proof, inside the sandbox: the packaged copy is loaded.
-    LD_DEBUG=libs run_sandbox "$ROOTFS" /pkg/skill-log --version \
-        >"$SCRATCH/boxld.out" 2>"$SCRATCH/boxld.err"
-    check "sandbox: the loader resolves libsqlite3.so.0 from the package" \
-        "$(grep -c 'calling init: /pkg/lib/libsqlite3.so.0' "$SCRATCH/boxld.err")" "1"
+    # The store works there too: the SQLite inside the binary writes a row
+    # with no system SQLite anywhere on the machine.
+    run_sandbox /pkg/skill-log add --skill sandboxed \
+        >"$SCRATCH/boxadd.out" 2>"$SCRATCH/boxadd.err"
+    check "sandbox: a write exits 0 with no system SQLite" "$?" "0"
+    check "sandbox: a write prints the marker" \
+        "$(grep -c '^[^[:space:]]' "$SCRATCH/boxadd.out")" "1"
+    check "sandbox: a write prints nothing on stderr" \
+        "$(wc -c < "$SCRATCH/boxadd.err" | tr -d ' ')" "0"
 
-    # Negative: the bundled copy removed, and there is no system SQLite to
-    # fall back on. One named line, exit 1, no traceback.
-    rm -f "$ROOTFS/pkg/lib/libsqlite3.so.0"
-    run_sandbox "$ROOTFS" /pkg/skill-log --version \
-        >"$SCRATCH/neg.out" 2>"$SCRATCH/neg.err"
-    neg_code=$?
-    check "sandbox: a missing bundled SQLite exits 1" "$neg_code" "1"
-    check "sandbox: a missing bundled SQLite keeps stdout empty" \
-        "$(wc -c < "$SCRATCH/neg.out" | tr -d ' ')" "0"
-    check "sandbox: a missing bundled SQLite prints exactly one stderr line" \
-        "$(wc -l < "$SCRATCH/neg.err" | tr -d ' ')" "1"
-    check "sandbox: a missing bundled SQLite names the cause" \
-        "$(grep -c '^skill-log: sqlite unavailable: ' "$SCRATCH/neg.err")" "1"
-    check "sandbox: a missing bundled SQLite prints no traceback" \
-        "$(grep -ci 'unhandled exception\|stack trace' "$SCRATCH/neg.err")" "0"
-
-    printf 'negative-test stderr: %s\n' "$(cat "$SCRATCH/neg.err")"
+    # The root has no system libraries at all: no SQLite, no loader
+    # cache, no toolchain. The runs above worked because the binary
+    # carries its own.
+    #
+    # The root is read from the outside, where the truth is: the
+    # diagnostics copied into it are dynamically linked and would not
+    # run there anyway, which is the point.
+    check "sandbox: the root carries no library directory" \
+        "$([ -d "$ROOTFS/usr/lib" ] && printf yes || printf no)" "no"
+    check "sandbox: the root carries no loader" \
+        "$([ -e "$ROOTFS/lib64" ] && printf yes || printf no)" "no"
+    check "sandbox: the root carries no SQLite library" \
+        "$(find "$ROOTFS" -name 'libsqlite3*' 2>/dev/null | wc -l | tr -d ' ')" "0"
+    check "sandbox: the root carries no toolchain" \
+        "$(find "$ROOTFS/usr/bin" -maxdepth 1 \
+            \( -name go -o -name mojo -o -name gcc -o -name cc \) 2>/dev/null |
+            wc -l | tr -d ' ')" "0"
 fi
 
 # ------------------------------------------------------------------ done
