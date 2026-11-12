@@ -255,7 +255,7 @@ def read_only_failure(path: String) -> Failure:
 def is_read_only(message: String) -> Bool:
     """True when a SQLite error means the file could not be written.
 
-    SQLite says the same thing in a few wordings — "attempt to write a
+    SQLite says the same thing in two wordings — "attempt to write a
     readonly database" and "attempt to write a read-only database" — and
     only the wording that names the file's writability counts. A disk
     error is not one of them.
@@ -264,8 +264,6 @@ def is_read_only(message: String) -> Bool:
     return (
         text.find("readonly database") != -1
         or text.find("read-only database") != -1
-        or text.find("attempt to write a readonly") != -1
-        or text.find("attempt to write a read-only") != -1
     )
 
 

@@ -187,10 +187,9 @@ def substitute(template: String, name: String, command: String) -> String:
         out += substitute_line(one, name, command)
         out += "\n"
     # `split` gives one more element than the template has lines, and
-    # the join above added a newline for each of them; the template's
-    # own trailing newline is the one that must survive.
-    if template.endswith("\n"):
-        return String(out[byte=0 : out.byte_length() - 1])
+    # the loop above added a newline for each of them, so the last one
+    # is the extra. The template's own trailing newline is the one that
+    # must survive, and a template without one must not gain one.
     return String(out[byte=0 : out.byte_length() - 1])
 
 
