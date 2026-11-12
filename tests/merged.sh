@@ -235,6 +235,42 @@ check "the JSON names the hidden marker's text" \
 check "--quiet hides the ignored marker" \
     "$(cat "$SCRATCH/hq.out")$(cat "$SCRATCH/hq.err")" ""
 
+# --------------------------------------------------- partially buried markers
+#
+# Two marker blocks in one body: git's trailer parser returns only the
+# last one, so the earlier one is buried. The buried marker must be
+# reported, not dropped — and it must be reported even when the last
+# block did return a value, which is the case the old scan missed.
+REPO_PB="$(new_repo partial-burial)"
+DB_PB="$SCRATCH/partial-burial.db"
+"$BIN" add --skill buried-row --machine boxA --db "$DB_PB" >/dev/null
+"$BIN" add --skill last-block-row --machine boxA --db "$DB_PB" >/dev/null
+printf x >"$REPO_PB/file"
+git -C "$REPO_PB" add file
+git -C "$REPO_PB" commit -q \
+    -m "skills: name two rows" \
+    -m "Skill-log-Fix: boxA#1" \
+    -m "Skill-log-Fix: boxA#2"
+(
+    cd "$REPO_PB" || exit 1
+    "$BIN" resolve-merged --db "$DB_PB" --json \
+        >"$SCRATCH/partial.json" 2>"$SCRATCH/partial.err"
+)
+check_contains "the buried marker is reported" \
+    "$(cat "$SCRATCH/partial.err")" "ignored marker"
+check_contains "the buried marker is named" \
+    "$(cat "$SCRATCH/partial.err")" "boxA#1"
+check "the buried marker is in the ignored array" \
+    "$(json_array "$(cat "$SCRATCH/partial.json")" ignored | grep -c 'boxA#1')" "1"
+check "the last block's marker is not reported as buried" \
+    "$(json_array "$(cat "$SCRATCH/partial.json")" ignored | grep -c 'boxA#2')" "0"
+# The last block's marker still resolves: only the buried one is
+# reported, never stamped.
+check "the last block's marker still resolves" \
+    "$(json_array "$(cat "$SCRATCH/partial.json")" resolved)" "boxA#2"
+check "the buried marker stamped nothing" \
+    "$(sqlite3 "$DB_PB" 'select fix from invocations where id = 1')" ""
+
 # ----------------------------------------------------------- newest wins
 
 REPO2="$(new_repo newest)"

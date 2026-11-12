@@ -240,8 +240,20 @@ def git_commit(root: String, revision: String) -> String:
     return String(git_output(root, args).strip())
 
 
-def hidden_trailer_value(body: String) -> String:
-    """The value of a `Skill-log-Fix:` line the trailer parser did not see."""
+def body_trailer_values(body: String) -> List[String]:
+    """Every marker the body's `Skill-log-Fix:` lines carry, in body order.
+
+    The scan is line-based and prefix-based, like the marker grammar
+    itself: a line whose first characters are the key, then a colon,
+    then the value. A prose mention of the key in the middle of a
+    paragraph is not a marker.
+
+    A line may hold several comma-separated markers — the trailer
+    grammar allows it — so the line's value is split into its pieces
+    here. Both sides of the comparison are then one marker each, which
+    is the only way "did the parser return this one?" has an answer.
+    """
+    var values = List[String]()
     var key = TRAILER_KEY.lower()
     for line in body.split("\n"):
         var text = String(line.strip())
@@ -253,23 +265,72 @@ def hidden_trailer_value(body: String) -> String:
         if trimmed == "" or not trimmed.startswith(":"):
             continue
         var value = String(trimmed[byte=1:].strip())
-        if value != "":
-            return sanitize(value)
-    return ""
+        if value == "":
+            continue
+        for piece in value.split(","):
+            var marker = String(piece.strip())
+            if marker != "":
+                values.append(sanitize(marker))
+    return values^
+
+
+def value_returned(returned: String, value: String) -> Bool:
+    """True when the trailer parser returned `value`.
+
+    The parser returns one line per trailer it read, and a line may
+    hold several comma-separated markers. The comparison is on the
+    pieces, so `boxA#1, boxA#2` counts as returning both.
+    """
+    for line in returned.split("\n"):
+        for piece in line.split(","):
+            if String(piece.strip()) == value:
+                return True
+    return False
+
+
+def contains_text(items: List[String], value: String) -> Bool:
+    """True when `value` is already in `items`."""
+    for i in range(len(items)):
+        if items[i] == value:
+            return True
+    return False
+
+
+def buried_trailer_values(body: String, returned: String) -> List[String]:
+    """The values the body carries that the trailer parser did not see.
+
+    Git's last-trailer-block rule returns the markers of the final
+    block only. A body with two marker blocks — a squash that names one
+    row and a later paragraph that names another — therefore loses the
+    earlier one. Every value in the body the parser did not return is
+    reported, so the scan names what it did not act on.
+    """
+    var buried = List[String]()
+    var values = body_trailer_values(body)
+    for i in range(len(values)):
+        if value_returned(returned, values[i]):
+            continue
+        if contains_text(buried, values[i]):
+            continue
+        buried.append(values[i])
+    return buried^
 
 
 def scan_trailers(root: String, since: String) -> Scan:
     """Every trailer marker reachable from HEAD, newest commit first."""
     var scan = Scan()
-    var range = "HEAD"
+    # The revision range the scan walks. It is named `span`, not
+    # `range`: a local called `range` shadows the builtin the loop
+    # below needs, and the compiler would call the string.
+    var span = "HEAD"
     if since != "":
-        range = since + "..HEAD"
+        span = since + "..HEAD"
     var format = (
         "--format=%H%x00%ct%x00%(trailers:key="
         + TRAILER_KEY
         + ",valueonly)%x00%B%x1e"
     )
-    var args = "log " + shell_quote(format) + " " + shell_quote(range)
+    var args = "log " + shell_quote(format) + " " + shell_quote(span)
     var out = git_output(root, args)
 
     for raw in out.split(RECORD):
@@ -290,23 +351,21 @@ def scan_trailers(root: String, since: String) -> Scan:
         var values = String(fields[2])
         var body = String(fields[3])
 
-        if String(values.strip()) == "":
-            # The trailer parser returned nothing. If the body still
-            # carries the key, a later trailer block hid it: name the
-            # marker rather than letting it disappear.
-            var buried = hidden_trailer_value(body)
-            if buried != "":
-                scan.hidden.append(
-                    first_nine(commit)
-                    + ": "
-                    + TRAILER_KEY
-                    + ": "
-                    + buried
-                    + " is not in the commit's last trailer block"
-                    + " (a later block, e.g. Co-authored-by, hides it)"
-                    + " \u2014 resolve those rows by hand"
-                )
-
+        # Every value the body carries that the trailer parser did not
+        # return is buried — a later trailer block hid it. The scan
+        # names it instead of letting it disappear.
+        var buried = buried_trailer_values(body, values)
+        for i in range(len(buried)):
+            scan.hidden.append(
+                first_nine(commit)
+                + ": "
+                + TRAILER_KEY
+                + ": "
+                + buried[i]
+                + " is not in the commit's last trailer block"
+                + " (a later block, e.g. Co-authored-by, hides it)"
+                + " \u2014 resolve those rows by hand"
+            )
         for value_line in values.split("\n"):
             for piece in value_line.split(","):
                 var value = String(piece.strip())
