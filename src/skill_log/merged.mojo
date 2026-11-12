@@ -574,11 +574,23 @@ def ignored_markers(chosen: Scan, hidden: List[String]) -> List[String]:
     return items^
 
 
+def stamped_markers(result: MergedResult) -> List[String]:
+    """The markers of the rows a scan stamped, in order.
+
+    The answer carries markers; the commit that stamped each one
+    travels with it inside the result, for the writer and the summary.
+    """
+    var markers = List[String]()
+    for i in range(len(result.stamped)):
+        markers.append(result.stamped[i].marker)
+    return markers^
+
+
 def render_json(
     result: MergedResult, ignored: List[String], dry_run: Bool
 ) -> String:
     """One shape for every path, so a `--json` caller never guesses keys."""
-    var out = "{\"resolved\":" + json_string_array(result.stamped)
+    var out = "{\"resolved\":" + json_string_array(stamped_markers(result))
     out += ",\"unchanged\":" + json_string_array(result.unchanged)
     out += ",\"skipped\":" + skipped_json(result.skipped)
     out += ",\"ignored\":" + json_string_array(ignored)
@@ -612,22 +624,21 @@ def unique_sorted(items: List[String]) -> List[String]:
     return out^
 
 
-def summary(
-    result: MergedResult, located: List[Located], dry_run: Bool
-) -> String:
+def summary(result: MergedResult, dry_run: Bool) -> String:
     """The one stdout line a non-JSON scan prints when it stamped a row.
 
     Nothing to stamp means nothing to say: the hook's output has to stay
     trustworthy, so a pull with no markers is silent.
+
+    The commit each row was stamped with travels with the marker in the
+    result, so the summary names it without searching the scan for the
+    marker that matches.
     """
     if len(result.stamped) == 0:
         return ""
     var commits = List[String]()
     for i in range(len(result.stamped)):
-        for j in range(len(located)):
-            if located[j].text() == result.stamped[i]:
-                commits.append(first_nine(located[j].commit))
-                break
+        commits.append(first_nine(result.stamped[i].commit))
     var shorts = unique_sorted(commits)
     var verb = "resolved"
     if dry_run:
@@ -793,4 +804,4 @@ def handle_resolve_merged(args: List[String]) raises -> Outcome:
             render_json(result, ignored, options.dry_run),
             notes,
         )
-    return Outcome.ok_notes(summary(result, chosen.located, options.dry_run), notes)
+    return Outcome.ok_notes(summary(result, options.dry_run), notes)

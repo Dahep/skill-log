@@ -419,7 +419,7 @@ def record_row(
     row: Invocation, mut pending: List[String], mut resolved: List[String]
 ):
     """Sort one row into the report (pending) or the skip list (resolved)."""
-    var text = marker_text(row)
+    var text = marker_text(row.machine, row.id)
     if row.fix != "":
         resolved.append(text)
     else:

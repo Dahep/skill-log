@@ -11,10 +11,20 @@ decimal: a sign, a space or a fraction is not an invocation id.
 
 `add` writes the marker a row is named by; `report` writes markers to a
 file; `resolve-merged` will parse them back. The spelling lives here so
-all three agree.
+all three agree — and this module is a leaf: it depends on nothing, so
+the store, the resolver and the report can all reach it without a
+cycle.
 """
 
-from skill_log.store import Invocation
+
+def marker_text(machine: String, id: Int) -> String:
+    """The canonical spelling of a marker: the machine, `#`, the id.
+
+    This is the one place a marker is assembled. Every site that names
+    a row from outside the store calls it, so the grammar is decided
+    once and cannot drift.
+    """
+    return machine + "#" + String(id)
 
 
 struct Marker(Movable):
@@ -29,12 +39,7 @@ struct Marker(Movable):
 
     def text(self) -> String:
         """The canonical spelling: the machine, `#`, the id in decimal."""
-        return self.machine + "#" + String(self.id)
-
-
-def marker_text(row: Invocation) -> String:
-    """The marker a row is named by: its machine and its local id."""
-    return row.machine + "#" + String(row.id)
+        return marker_text(self.machine, self.id)
 
 
 def parse_marker(value: String) -> Optional[Marker]:

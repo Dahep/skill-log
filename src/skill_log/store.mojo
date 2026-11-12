@@ -39,6 +39,7 @@ from sqlite.db import Database
 from skill_log.context import local_timestamp
 from skill_log.errors import Failure, operational_failure
 from skill_log.ffi import dl_sym
+from skill_log.markers import marker_text
 from skill_log.opendb import read_only_database
 from skill_log.text import sanitize
 
@@ -722,7 +723,7 @@ struct Invocation(Movable):
         """
         if self.id == 0:
             return ""
-        return self.machine + "#" + String(self.id)
+        return marker_text(self.machine, self.id)
 
 
 def read_invocation(db: Database, id: Int) raises -> Optional[Invocation]:
@@ -1372,7 +1373,7 @@ struct Located(Movable):
 
     def text(self) -> String:
         """The marker this located value is named by."""
-        return self.machine + "#" + String(self.id)
+        return marker_text(self.machine, self.id)
 
 
 struct MergedSkip(Movable):
@@ -1391,20 +1392,51 @@ struct MergedSkip(Movable):
         self.reason = reason
 
 
+struct Stamped(Movable):
+    """One row a merged scan stamped: its marker and what stamped it.
+
+    The commit travels with the marker because the two consumers of the
+    answer both need it — the writer stamps the row with it, and the
+    summary names it. The machine and the id travel too, so the writer
+    finds the row without searching the scan's markers for the one that
+    matches.
+    """
+
+    var marker: String
+    var commit: String
+    var machine: String
+    var id: Int
+
+    def __init__(
+        out self,
+        marker: String = "",
+        commit: String = "",
+        machine: String = "",
+        id: Int = 0,
+    ):
+        self.marker = marker
+        self.commit = commit
+        self.machine = machine
+        self.id = id
+
+
 struct MergedResult(Movable):
     """What a merged scan produced: the rows it stamped, kept, and skipped.
 
-    `refusal` is the store refusal when the file could not be used at
-    all. A dry run fills the same three lists and writes nothing.
+    `stamped` carries the marker and the commit that stamped it;
+    `unchanged` carries markers only, because a row that already
+    carries the commit is named and nothing else. `refusal` is the
+    store refusal when the file could not be used at all. A dry run
+    fills the same three lists and writes nothing.
     """
 
-    var stamped: List[String]
+    var stamped: List[Stamped]
     var unchanged: List[String]
     var skipped: List[MergedSkip]
     var refusal: Refusal
 
     def __init__(out self):
-        self.stamped = List[String]()
+        self.stamped = List[Stamped]()
         self.unchanged = List[String]()
         self.skipped = List[MergedSkip]()
         self.refusal = Refusal()
@@ -1527,7 +1559,9 @@ def plan(
         # An empty fix, or a different one: the row is stamped with this
         # commit. A differing commit is a restamp, so an amended fix
         # supersedes the earlier one.
-        result.stamped.append(marker)
+        result.stamped.append(
+            Stamped(marker, located[i].commit, located[i].machine, located[i].id)
+        )
     return result^
 
 
@@ -1622,23 +1656,18 @@ def merged_write_attempt(
         "UPDATE invocations SET fix = ?, resolved_at = ? WHERE id = ?"
     )
     for i in range(len(resolved.stamped)):
-        var target_index = -1
-        for j in range(len(located)):
-            if located[j].text() == resolved.stamped[i]:
-                target_index = j
-                break
-        if target_index == -1:
-            continue
+        # The plan's answer carries the machine and the id, so the row
+        # is found directly: no search through the scan's markers.
         var row_index = merged_row_index(
             rows,
-            located[target_index].machine,
-            located[target_index].id,
+            resolved.stamped[i].machine,
+            resolved.stamped[i].id,
             local_host,
         )
         if row_index == -1:
             continue
         update.reset()
-        update.bind_text(1, located[target_index].commit)
+        update.bind_text(1, resolved.stamped[i].commit)
         update.bind_text(2, stamp)
         update.bind_int(3, rows[row_index].id)
         _ = update.step()
