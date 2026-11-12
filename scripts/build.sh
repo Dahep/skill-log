@@ -16,6 +16,10 @@
 # this script replaces it in the artifact. A bare `mojo build` ships that
 # placeholder, so this script is the one way to produce a versioned artifact.
 #
+# The bundled SQLite comes from SKILL_LOG_SQLITE when set — the pinned
+# library scripts/package.sh fetched — else from this machine's system
+# copy, which is the local gate's convenience and never the release's.
+#
 # Only src/ and vendor/ are built, and only the binary and its libraries
 # are staged. The reference/ area is the verbatim report-era implementation
 # kept as the parity ground truth: it is never built, never staged and
@@ -66,6 +70,7 @@ VERSION="$(resolve_version)"
 log "version $VERSION"
 
 rm -rf "$BUILD"
+rm -rf "$DIST"
 mkdir -p "$BUILD/src/skill_log" "$DIST/lib"
 
 # The sources the build compiles: the tree under src/.
@@ -153,9 +158,21 @@ done
 # The SQLite library the vendored binding dlopens by soname. The real
 # file behind the symlink is copied and named with the soname the loader
 # asks for.
-SQLITE_SOURCE="$(readlink -f /usr/lib/libsqlite3.so.0 2>/dev/null || true)"
-[ -n "$SQLITE_SOURCE" ] && [ -f "$SQLITE_SOURCE" ] ||
-    die "cannot find libsqlite3.so.0 on this machine"
+#
+# A release never uses this machine's copy: scripts/package.sh supplies
+# the fetched, pinned library through SKILL_LOG_SQLITE. The system
+# library below is the local gate's convenience only — fine for
+# scripts/test.sh, never what the release ships. A release build that
+# cannot find its library fails here, loudly.
+if [ -n "${SKILL_LOG_SQLITE:-}" ]; then
+    SQLITE_SOURCE="$SKILL_LOG_SQLITE"
+    [ -f "$SQLITE_SOURCE" ] ||
+        die "SKILL_LOG_SQLITE names $SQLITE_SOURCE, which is not a file"
+else
+    SQLITE_SOURCE="$(readlink -f /usr/lib/libsqlite3.so.0 2>/dev/null || true)"
+    [ -n "$SQLITE_SOURCE" ] && [ -f "$SQLITE_SOURCE" ] ||
+        die "cannot find libsqlite3.so.0 on this machine"
+fi
 log "sqlite: $SQLITE_SOURCE"
 cp "$SQLITE_SOURCE" "$DIST/lib/libsqlite3.so.0"
 

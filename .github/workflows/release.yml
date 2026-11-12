@@ -1,0 +1,208 @@
+# Release: a tag produces the artifact mise installs.
+#
+# Triggered by a v* tag; workflow_dispatch builds and tests without
+# publishing, as a dry run (add the publish input to create the release
+# from a dispatch). The jobs:
+#
+#   build     — pinned toolchain, build with the runner-fetched pinned
+#               SQLite, pack the archive, digest, clean-container
+#               packaging test (tests/packaging.sh on ubuntu:22.04,
+#               the glibc floor), upload for the next jobs.
+#   release   — create the release for the tag, upload the archive and
+#               its digest, attach the provenance attestation.
+#   mise      — after the release is published: install the released tag
+#               through mise's github: backend in a clean container and
+#               run --version and setup --dry-run. Skippable by input.
+#
+# The archive is skill-log-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz with
+# exactly skill-log and lib/ (SPEC.md §8); the version is baked in from
+# the tag. The bundled libsqlite3.so.0 is fetched and verified by
+# scripts/package.sh on the runner — never taken from a development
+# machine.
+
+name: "release"
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "create the GitHub release (dispatch runs are dry by default)"
+        type: boolean
+        default: false
+      mise:
+        description: "run the mise install exercise after publishing"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: "Checkout"
+        uses: actions/checkout@v4
+
+      - name: "Install the pinned toolchain"
+        run: |
+          curl -fsSL https://mise.run | MISE_QUIET=1 sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          mise trust
+          mise install
+
+      - name: "Install the packaging tools"
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends patchelf zstd
+
+      - name: "Version from the tag"
+        id: version
+        run: |
+          if [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
+            version="$GITHUB_REF_NAME"
+          else
+            version="v0.0.0-ci.$GITHUB_RUN_NUMBER"
+          fi
+          case "$version" in
+            v*) ;;
+            *) echo "release: tag must look like vX.Y.Z, got: $version" >&2; exit 1 ;;
+          esac
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "SKILL_LOG_VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: "Package"
+        run: ./scripts/package.sh --version "${{ steps.version.outputs.version }}"
+
+      - name: "Packaging test in a clean container"
+        run: |
+          bash tests/packaging.sh \
+            --archive "dist/skill-log-${{ steps.version.outputs.version }}-x86_64-unknown-linux-gnu.tar.gz" \
+            --image ubuntu:22.04
+
+      - name: "Attest the archive"
+        id: attest
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: dist/skill-log-*-x86_64-unknown-linux-gnu.tar.gz
+
+      - name: "Upload the archive and digest"
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-artifact
+          path: |
+            dist/skill-log-*-x86_64-unknown-linux-gnu.tar.gz
+            dist/skill-log-*-x86_64-unknown-linux-gnu.tar.gz.sha256
+          if-no-files-found: error
+
+      - name: "Upload the attestation bundle"
+        uses: actions/upload-artifact@v4
+        with:
+          name: attestation-bundle
+          path: ${{ steps.attest.outputs.bundle-path }}
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: github.ref_type == 'tag' || inputs.publish
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - name: "Download the archive and digest"
+        uses: actions/download-artifact@v4
+        with:
+          name: release-artifact
+          path: dist
+
+      - name: "Download the attestation bundle"
+        uses: actions/download-artifact@v4
+        with:
+          name: attestation-bundle
+          path: attestation
+
+      - name: "Create the release and upload"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          archives=(dist/skill-log-*-x86_64-unknown-linux-gnu.tar.gz)
+          [ "${#archives[@]}" -eq 1 ] || { echo "release: expected exactly one archive" >&2; exit 1; }
+          archive="${archives[0]}"
+          base="$(basename "$archive")"
+          version="$VERSION"
+          if [ -z "$version" ]; then
+            version="${base#skill-log-}"
+            version="${version%-x86_64-unknown-linux-gnu.tar.gz}"
+          fi
+          [ -f "$archive.sha256" ] || { echo "release: $archive.sha256 is missing" >&2; exit 1; }
+
+          # The tag is the release; a dispatch publishing run may name a
+          # version that has no tag yet, so --verify-tag is a tag-run
+          # check rather than an unconditional flag.
+          if [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
+            verify=(--verify-tag)
+          else
+            verify=()
+          fi
+          gh release create "$version" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "skill-log $version" \
+            --notes "One archive: the skill-log executable plus its bundled libraries (SPEC.md §8). Install with: mise use -g github:Dahep/skill-log@$version" \
+            "${verify[@]}" \
+            "$archive" "$archive.sha256" || {
+              # A re-run of an existing release appends the assets.
+              gh release upload "$version" --clobber \
+                --repo "$GITHUB_REPOSITORY" \
+                "$archive" "$archive.sha256"
+            }
+
+          # The provenance attestation, as the Sigstore bundle the
+          # attestation action produced.
+          bundles=(attestation/*.json)
+          [ "${#bundles[@]}" -ge 1 ] || { echo "release: no attestation bundle" >&2; exit 1; }
+          gh release upload "$version" --clobber \
+            --repo "$GITHUB_REPOSITORY" "${bundles[@]}"
+
+  mise:
+    needs: [build, release]
+    if: always() && needs.release.result == 'success' && (github.ref_type == 'tag' || inputs.mise)
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    steps:
+      - name: "Install the released tag through mise's github: backend"
+        run: |
+          set -euo pipefail
+          version="${{ needs.build.outputs.version }}"
+          if [ -z "$version" ]; then
+            echo "mise: no version from the build job" >&2
+            exit 1
+          fi
+          docker run --rm -e SKILL_LOG_TAG="$version" ubuntu:22.04 bash -c '
+            set -euo pipefail
+            apt-get update >/dev/null
+            apt-get install -y --no-install-recommends curl ca-certificates git >/dev/null
+            useradd -m user
+            cat > /tmp/inner.sh <<"INNER"
+          set -euo pipefail
+          curl -fsSL https://mise.run | MISE_QUIET=1 sh
+          export PATH="$HOME/.local/bin:$PATH"
+          mise use -g "github:Dahep/skill-log@$SKILL_LOG_TAG"
+          export PATH="$HOME/.local/share/mise/shims:$PATH"
+          skill-log --version
+          mkdir -p /tmp/scratch-repo
+          skill-log setup --dry-run --repo /tmp/scratch-repo --db /tmp/scratch-repo/store.db
+          INNER
+            chmod 644 /tmp/inner.sh
+            su user -c "bash /tmp/inner.sh"
+          '
