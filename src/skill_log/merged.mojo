@@ -19,7 +19,9 @@ it is bounded, quiet, and safe to run after every pull.
 A commit whose body carries a marker the last-trailer-block rule did not
 return — a multi-author squash puts `Co-authored-by:` in a later block —
 is reported with its value instead of being dropped. A value that is not
-`machine#id` is reported the same way.
+`machine#id` is reported the same way. Both kinds reach the `ignored`
+array of the `--json` answer, so a `--quiet --json` caller still learns
+what the scan did not act on.
 
 ## The scan
 
@@ -493,14 +495,34 @@ def skipped_json(items: List[MergedSkip]) -> String:
     return out
 
 
+def ignored_markers(chosen: Scan, hidden: List[String]) -> List[String]:
+    """Every marker the scan did not act on, hidden and malformed alike.
+
+    SPEC §5.6 names one array for both: "hidden and malformed markers
+    are reported with their ids or text in `ignored`, never silently
+    dropped". A malformed value reaches the JSON only through this
+    array, so a `--quiet --json` caller still learns about it — the
+    quiet suppresses the stderr notes, not the report.
+
+    The malformed text comes first: it is the value itself, where the
+    hidden entry carries the commit it was buried in.
+    """
+    var items = List[String]()
+    for i in range(len(chosen.malformed)):
+        items.append(chosen.malformed[i])
+    for i in range(len(hidden)):
+        items.append(hidden[i])
+    return items^
+
+
 def render_json(
-    result: MergedResult, hidden: List[String], dry_run: Bool
+    result: MergedResult, ignored: List[String], dry_run: Bool
 ) -> String:
     """One shape for every path, so a `--json` caller never guesses keys."""
     var out = "{\"resolved\":" + json_string_array(result.stamped)
     out += ",\"unchanged\":" + json_string_array(result.unchanged)
     out += ",\"skipped\":" + skipped_json(result.skipped)
-    out += ",\"ignored\":" + json_string_array(hidden)
+    out += ",\"ignored\":" + json_string_array(ignored)
     out += ",\"dry_run\":" + json_bool(dry_run)
     out += "}"
     return out
@@ -660,6 +682,11 @@ def handle_resolve_merged(args: List[String]) raises -> Outcome:
     else:
         chosen = trailer_scan^
 
+    # The markers the scan did not act on: the malformed values it read
+    # and the ones the trailer parse hid. Both are reported in one
+    # array, so `--quiet --json` still says what was dropped.
+    var ignored = ignored_markers(chosen, hidden)
+
     var result = MergedResult()
     if len(chosen.located) > 0:
         var path = resolve_db(options.db)
@@ -704,7 +731,7 @@ def handle_resolve_merged(args: List[String]) raises -> Outcome:
 
     if options.json:
         return Outcome.ok_notes(
-            render_json(result, hidden, options.dry_run),
+            render_json(result, ignored, options.dry_run),
             notes,
         )
     return Outcome.ok_notes(summary(result, chosen.located, options.dry_run), notes)

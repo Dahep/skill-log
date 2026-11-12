@@ -153,6 +153,31 @@ check "the unknown id's reason is the contract token" \
             if s["row"] == "boxA#99"))')" \
     "unknown_id"
 
+# SPEC §5.6: hidden and malformed markers are reported with their ids or
+# text in `ignored`, never silently dropped. The malformed text is
+# therefore in the JSON array too, not only on stderr — a `--quiet --json`
+# caller must still learn about it.
+check "a malformed marker is in the ignored array" \
+    "$(json_array "$(cat "$SCRATCH/bad.json")" ignored | grep -c '<id>')" "1"
+check "a bare id is in the ignored array" \
+    "$(json_array "$(cat "$SCRATCH/bad.json")" ignored | grep -c ',7')" "1"
+check "the ignored array holds both malformed markers" \
+    "$(printf '%s' "$(cat "$SCRATCH/bad.json")" \
+        | python3 -c 'import json,sys; print(len(json.loads(sys.stdin.read())["ignored"]))')" \
+    "2"
+
+# The same answer with --quiet: the JSON keeps the report, the stderr
+# notes stay suppressed.
+(
+    cd "$REPO" || exit 1
+    "$BIN" resolve-merged --db "$DB" --quiet --json \
+        >"$SCRATCH/badquiet.json" 2>"$SCRATCH/badquiet.err"
+)
+check "--quiet --json still names the malformed marker" \
+    "$(json_array "$(cat "$SCRATCH/badquiet.json")" ignored | grep -c '<id>')" "1"
+check "--quiet --json keeps the stderr silent" \
+    "$(cat "$SCRATCH/badquiet.err")" ""
+
 # ----------------------------------------------------------- foreign markers
 
 # A marker naming another machine is foreign: reported, never stamped.
@@ -195,9 +220,14 @@ check_contains "the hidden note says why" \
     "$(cat "$SCRATCH/hidden.err")" "not in the commit's last trailer block"
 check "the hidden marker stamped nothing" \
     "$(sqlite3 "$DB" 'select fix from invocations where id = 4')" ""
-check "the JSON names one ignored marker" \
-    "$(printf '%s' "$(cat "$SCRATCH/hidden.json")" \
-        | python3 -c 'import json,sys; print(len(json.loads(sys.stdin.read())["ignored"]))')" "1"
+# The ignored array carries the hidden marker and the malformed values
+# this repo's earlier commits left behind (SPEC §5.6: one array for
+# both). The hidden one is named by the commit it was buried in.
+check "the JSON names the hidden marker" \
+    "$(json_array "$(cat "$SCRATCH/hidden.json")" ignored \
+        | grep -c "not in the commit's last trailer block")" "1"
+check "the JSON names the hidden marker's text" \
+    "$(json_array "$(cat "$SCRATCH/hidden.json")" ignored | grep -c 'boxA#4')" "1"
 (
     cd "$REPO" || exit 1
     "$BIN" resolve-merged --db "$DB" --quiet >"$SCRATCH/hq.out" 2>"$SCRATCH/hq.err"
