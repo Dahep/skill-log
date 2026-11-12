@@ -1,4 +1,4 @@
-"""A read-only SQLite reader for another tool's database.
+"""A read-only SQLite reader.
 
 The opencode adapter needs one value out of opencode's own session store:
 the model of the session that ran the skill. That store belongs to another
@@ -20,10 +20,22 @@ The risk worth naming: opening another tool's database read-write can
 race that tool's own writes and can leave a `-wal` file behind. This
 reader never does that, and the file is checked for existence before the
 connection is made, so a store that is not there is never created.
+
+## The store's own read path
+
+`read_only_database` is the same seam, used for this tool's own store.
+The vendored binding opens read-write — `sqlite3_open` creates a file
+that is not there — and SPEC §2 says a read never creates the store. The
+read path therefore opens the store through this module, with SQLite's
+own `SQLITE_OPEN_READONLY` and no `SQLITE_OPEN_CREATE`: a file that is
+not there is a failure of the open, not a new file, and the
+check-then-open window a read-write open leaves open is gone.
 """
 
 from std.ffi import CStringSpan, OwnedDLHandle, RTLD, c_char
 from std.memory import Pointer
+
+from sqlite.db import Database
 
 from skill_log.ffi import dl_sym
 
@@ -63,6 +75,53 @@ def _ptr_to_string(addr: Int) -> String:
         return String("")
     var p = Pointer[c_char, MutUntrackedOrigin](unsafe_from_address=addr)
     return String(StringSlice(unsafe_from_utf8=CStringSpan(unsafe_from_ptr=p)))
+
+
+def read_only_database(path: String) raises -> Database:
+    """A `Database` opened read-only, or a failure naming the path.
+
+    The vendored binding opens read-write: `sqlite3_open` creates a file
+    that is not there and hands back a handle that can write. A read
+    must never create the store, so the handle is opened here instead,
+    with SQLite's own flags: `SQLITE_OPEN_READONLY` and no
+    `SQLITE_OPEN_CREATE`. A file that is not there is a failure, not a
+    new file — the check-then-open window a read-write open leaves open
+    is gone with it.
+
+    The returned `Database` is the vendored struct with the read-only
+    handle in it. The handle the constructor opened is closed first, so
+    the connection that is left is the read-only one and nothing leaks.
+    """
+    var lib = OwnedDLHandle(
+        "libsqlite3.so.0", RTLD.NOW | RTLD.GLOBAL | RTLD.NODELETE
+    )
+    var open_v2 = dl_sym[def(Int, Int, Int, Int) thin abi("C") -> Int32](
+        lib, "sqlite3_open_v2"
+    )
+    var close = dl_sym[def(Int) thin abi("C") -> Int32](lib, "sqlite3_close")
+
+    # The read-only handle first: if the file is not there, nothing has
+    # been opened and nothing has to be closed.
+    var db_out = List[Int](capacity=1)
+    db_out.append(0)
+    var path_buf = _c_string(path)
+    var rc = open_v2(
+        Int(path_buf.unsafe_ptr()),
+        Int(db_out.unsafe_ptr()),
+        SQLITE_OPEN_READONLY,
+        Int(0),
+    )
+    _ = path_buf^
+    if Int(rc) != SQLITE_OK:
+        raise Error("cannot open " + path + " read-only")
+
+    # The vendored struct, with the handle swapped for the read-only
+    # one. The handle its constructor opened is closed here, so the
+    # connection the struct owns is the read-only one.
+    var db = Database(":memory:")
+    _ = close(db._handle)
+    db._handle = db_out[0]
+    return db^
 
 
 def read_text_value(

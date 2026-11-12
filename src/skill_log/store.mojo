@@ -39,6 +39,7 @@ from sqlite.db import Database
 from skill_log.context import local_timestamp
 from skill_log.errors import Failure, operational_failure
 from skill_log.ffi import dl_sym
+from skill_log.opendb import read_only_database
 from skill_log.text import sanitize
 
 # The schema version this binary writes and understands. A store stamped
@@ -534,15 +535,15 @@ def open_read(path: String) raises -> StoreOpen:
 
     The vendored binding opens read-write (it exposes no open flags), so
     a file deleted between the `is_file` check and the open would be
-    recreated. That window is two syscalls wide and no normal writer
-    closes it; a genuinely read-only open needs an open-flag seam this
-    binding does not have.
+    recreated. The read path opens the store read-only instead — the
+    seam is `opendb.mojo`'s — so a file that is not there is a failure
+    and never a new file.
     """
     var opened = StoreOpen()
     if not Path(path).is_file():
         return opened^
 
-    var db = Database(path)
+    var db = read_only_database(path)
 
     # Before the first read, and before any refusal can return: closing
     # this connection must not checkpoint a WAL into the file, refused or

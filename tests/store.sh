@@ -354,6 +354,65 @@ check_one_line "a usage error is one line" "$ERR"
 run add --skill x --nope
 check "an unknown flag is a usage error" "$STATUS" "2"
 
+# ------------------------------------------------------- reads create nothing
+#
+# SPEC §2: reads never create the state directory, an empty database, or a
+# missing store. The read path opens the store read-only — SQLite's own
+# `SQLITE_OPEN_READONLY`, through the seam in `opendb.mojo` — so a store
+# that is not there is a failure of the open, never a new file. The
+# check-then-open window a read-write open leaves open is gone with it.
+#
+# The proof is the open itself. A read of a store whose file carries no
+# write permission succeeds — a read-write open would have had to fall
+# back to a read-only one to get there — and the read moves neither the
+# file's bytes nor its mtime, and leaves no sidecar behind.
+#
+# The creation case is the one a read-write open gets wrong: it opens
+# with `SQLITE_OPEN_CREATE`, so a file that vanished between the
+# existence check and the open would be recreated. A read-only open
+# refuses that file instead.
+RODIR="$SCRATCH/readonly"
+chmod -R 0755 "$RODIR" 2>/dev/null
+rm -rf "$RODIR"
+mkdir -p "$RODIR"
+RO_DB="$RODIR/skills.db"
+run add --skill read-only --db "$RO_DB"
+check "the read-only fixture is written" "$STATUS" "0"
+# A non-WAL store, so the read needs no sidecar of its own.
+sqlite3 "$RO_DB" 'PRAGMA journal_mode=DELETE;' >/dev/null
+rm -f "$RO_DB-wal" "$RO_DB-shm"
+chmod 0444 "$RO_DB"
+chmod 0555 "$RODIR"
+RO_BEFORE="$(md5sum <"$RO_DB")"
+RO_MTIME="$(stat -c %Y "$RO_DB")"
+sleep 1
+run show --db "$RO_DB" --json
+check "a read of a store with no write permission exits 0" "$STATUS" "0"
+check "a read of a store with no write permission reads the rows" \
+    "$(json_field "$OUT" skill)" "read-only"
+check "the read left the store's bytes alone" \
+    "$(md5sum <"$RO_DB")" "$RO_BEFORE"
+check "the read left the store's mtime alone" \
+    "$(stat -c %Y "$RO_DB")" "$RO_MTIME"
+check "the read created no sidecar" \
+    "$(ls "$RODIR" | grep -c 'skills.db-')" "0"
+# The directory is writable again, so the next run's cleanup can remove
+# it.
+chmod 0755 "$RODIR"
+chmod 0644 "$RO_DB"
+
+# A read of a store that is not there creates nothing: not the file,
+# not the directory, not an empty database.
+ABSENT="$SCRATCH/absent/db/skills.db"
+run show --db "$ABSENT"
+check "a read of an absent store exits 0" "$STATUS" "0"
+check "a read of an absent store is the empty message" "$OUT" \
+    "no invocations logged yet"
+check "a read of an absent store created no store" \
+    "$([ -e "$ABSENT" ] && echo created || echo absent)" "absent"
+check "a read of an absent store created no directory" \
+    "$([ -d "$SCRATCH/absent" ] && echo created || echo absent)" "absent"
+
 # ----------------------------------------------------------------- report
 
 tally
