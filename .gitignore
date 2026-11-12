@@ -2,5 +2,5 @@
 /dist/
 /build/
 
-# Release packaging cache (scripts/package.sh)
-/.package-cache/
+# Release packaging staging area (scripts/package.sh)
+/.package-stage/

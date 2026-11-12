@@ -74,6 +74,57 @@ require_tools() {
     done
 }
 
+# sandbox_root <root> <binary>...
+#
+# Build a minimal bubblewrap root that holds the given executables and
+# nothing else: no /usr/lib, no /lib, no ld.so cache, no SQLite, no
+# toolchain.
+#
+# The artifact is statically linked, so it needs none of the host's
+# libraries to run — which is the whole point of the root. A root that
+# carried a copy of /usr/lib would be eleven gigabytes and would put a
+# system SQLite back within the binary's reach, which is exactly what
+# these cases exist to rule out.
+#
+# No helper binary is copied in: the host's own tools are dynamically
+# linked and would not run in a root without libraries, so the cases read
+# the root from the outside instead.
+sandbox_root() {
+    local root="$1"
+    shift
+    rm -rf "$root"
+    mkdir -p "$root/usr/bin" "$root/etc" "$root/dev" "$root/proc" \
+        "$root/pkg" "$root/tmp"
+    chmod 1777 "$root" "$root/tmp"
+
+    local binary name
+    for binary in "$@"; do
+        name="$(basename "$binary")"
+        cp -a "$binary" "$root/pkg/$name"
+    done
+}
+
+# sandbox_run <root> <scratch-home> <args...>
+#
+# Run a command in the sandbox root: read-only, no network, no
+# privileges, and a writable scratch home bound over /tmp so a store can
+# be written.
+#
+# The store environment is cleared: an XDG_STATE_HOME inherited from the
+# developer's machine would point the store outside the sandbox, and the
+# case would prove nothing about the sandbox at all.
+sandbox_run() {
+    local root="$1" home="$2"
+    shift 2
+    bwrap --ro-bind "$root" / --bind /dev /dev --proc /proc --unshare-all \
+        --bind "$home" /tmp --die-with-parent \
+        --setenv HOME /tmp --setenv PATH /usr/bin:/bin \
+        --setenv XDG_STATE_HOME /tmp/.local/state \
+        --setenv XDG_CONFIG_HOME /tmp/.config \
+        --unsetenv SKILL_LOG_DB \
+        "$@"
+}
+
 # json_field <json> <key>: one top-level string field.
 #
 # Read with a real JSON parser, not `sed`. A `sed` expression cannot

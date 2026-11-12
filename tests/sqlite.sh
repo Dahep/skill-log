@@ -1,22 +1,32 @@
 #!/usr/bin/env bash
-# The pinned-SQLite test: the artifact against the SQLite it ships.
+# The SQLite test: the store's SQLite travels inside the binary.
 #
 #   tests/sqlite.sh
 #
-# The release bundles a pinned SQLite — the jammy package
-# `libsqlite3-0_3.37.2-2ubuntu0.8_amd64.deb` — and the default gate
-# builds against the machine's own copy, which is newer. So the gate can
-# be green while the released artifact cannot write a row: the clock
-# query the writer uses has to work on the library that ships.
+# The release ships one statically linked executable. The SQLite it uses
+# is a pure-Go implementation compiled into that executable, so the store
+# needs no library on the machine it runs on — and the machine it runs on
+# need not have a SQLite at all.
 #
-# This suite builds the artifact against the pinned library when it is
-# available (scripts/package.sh fetches and verifies it), and runs the
-# store's write path against it. Without the pinned library the case
-# prints a skip rather than pretending it ran.
+# This suite proves that, at the seam the contract names: the artifact as
+# a process, with no system SQLite anywhere in reach. A write, a read and
+# a resolve all go through the store, so all three succeeding is the
+# round-trip that says the store works where no SQLite is installed.
+#
+# The environment without a system SQLite is a bubblewrap root that holds
+# the executable and nothing else: no /usr/lib, no loader, no SQLite, no
+# toolchain. bwrap is used rather than a container: no daemon, no cgroup
+# namespace, no privileges, and the desktop's live session cgroups are
+# never touched. Where bwrap is missing, the suite falls back to an empty
+# environment (env -i), which proves the binary needs no environment of
+# the developer's machine at all but cannot rule out a library found
+# through the loader's default path; that case says so rather than
+# pretending.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT="$(cd "$HERE/.." && pwd)"
+ROOT="$(cd "$(dirname "$HERE")" && pwd)"
+DIST="$ROOT/dist"
 
 SCRATCH="${SCRATCH:-/tmp/opencode/skill-log-sqlite}"
 
@@ -24,96 +34,149 @@ SCRATCH="${SCRATCH:-/tmp/opencode/skill-log-sqlite}"
 # shellcheck disable=SC1091  # the harness sits beside the suite, not on PATH
 . "$HERE/lib.sh"
 
-# The pinned library: the one scripts/package.sh fetches and verifies.
-PINNED=""
-for candidate in \
-    "$ROOT/.package-cache/libsqlite3.so.0" \
-    "$ROOT/.package-cache/extract/usr/lib/x86_64-linux-gnu/libsqlite3.so.0"; do
-    if [ -f "$candidate" ]; then
-        PINNED="$candidate"
-        break
-    fi
-done
-
-if [ -z "$PINNED" ]; then
-    printf 'skip: the pinned libsqlite3.so.0 is not here; run scripts/package.sh first\n'
-    exit 0
-fi
-
-printf 'pinned library: %s\n' "$PINNED"
-
-rm -rf "$SCRATCH"
-mkdir -p "$SCRATCH/home" "$SCRATCH/build" "$SCRATCH/src"
-
-# The artifact, built against the pinned library: the same sources, the
-# same build script, the library the release ships.
-cp -r "$ROOT/src/skill_log/." "$SCRATCH/src/skill_log/"
-mkdir -p "$SCRATCH/src/skill_log"
-cp "$ROOT/src/skill_log/version.mojo" "$SCRATCH/src/skill_log/version.mojo"
-cat >"$SCRATCH/src/skill_log/version.mojo" <<'EOF'
-"""The release version, baked in at build time."""
-
-
-def version() -> String:
-    """The release version of this build."""
-    return "0.0.0-test"
-EOF
-
-MOJO_BIN="$(mise x -- which mojo)"
-if ! "$MOJO_BIN" build -I "$ROOT/vendor" -I "$SCRATCH/src" \
-    -o "$SCRATCH/build/skill-log" "$SCRATCH/src/skill_log/main.mojo" \
-    >"$SCRATCH/build.log" 2>&1; then
-    fail "the artifact builds against the pinned library"
-    printf '     %s\n' "$(tail -5 "$SCRATCH/build.log")"
-    tally
+if [ ! -x "$DIST/skill-log" ]; then
+    printf 'sqlite.sh: %s/skill-log is missing; run scripts/build.sh first\n' \
+        "$DIST" >&2
     exit 1
 fi
-pass "the artifact builds against the pinned library"
 
-# The bundled libraries, beside the binary: the release's own layout. The
-# Mojo runtime libraries come from the artifact `scripts/build.sh`
-# staged; only the SQLite is the one under test.
-mkdir -p "$SCRATCH/build/lib"
-for lib in "$ROOT"/dist/lib/*.so*; do
-    [ -e "$lib" ] || continue
-    cp "$lib" "$SCRATCH/build/lib/"
-done
-cp "$PINNED" "$SCRATCH/build/lib/libsqlite3.so.0"
-# shellcheck disable=SC2016  # $ORIGIN must reach patchelf literally
-patchelf --set-rpath '$ORIGIN/lib' "$SCRATCH/build/skill-log"
-BIN="$SCRATCH/build/skill-log"
+# The artifact is static: there is no shared object for the loader to
+# find, so the SQLite that reaches the store is the one inside the
+# executable.
+if command -v ldd >/dev/null 2>&1; then
+    ldd_report="$(ldd "$DIST/skill-log" 2>&1 || true)"
+    if printf '%s\n' "$ldd_report" | grep -qi 'not a dynamic executable'; then
+        pass "the artifact is a static executable"
+    else
+        fail "the artifact is a static executable ($ldd_report)"
+    fi
+else
+    if file "$DIST/skill-log" 2>/dev/null | grep -qi 'statically linked'; then
+        pass "the artifact is a static executable"
+    else
+        fail "the artifact is a static executable"
+    fi
+fi
 
+rm -rf "$SCRATCH"
+mkdir -p "$SCRATCH"
+
+# ------------------------------------------------- the environment
+#
+# Two shapes, strongest first. The first one that exists is the one the
+# round-trip runs in.
+
+SANDBOX_HOME="$SCRATCH/home"
+mkdir -p "$SANDBOX_HOME"
+
+SANDBOX_ROOT=""
+ENVIRONMENT=""
+
+# The sandbox is used only when bwrap actually works: a bwrap on the PATH
+# that cannot create a namespace is not a sandbox, and a case that ran
+# in it would prove nothing.
+if command -v bwrap >/dev/null 2>&1 &&
+    bwrap --ro-bind / / --dev /dev --unshare-all true >/dev/null 2>&1; then
+    # A root with no system libraries at all: no /usr/lib, no loader
+    # cache, no SQLite, no toolchain. The static artifact needs none of
+    # them, and a root that carried a copy of /usr/lib would put a
+    # system SQLite back within its reach — which is exactly what this
+    # case exists to rule out.
+    SANDBOX_ROOT="$SCRATCH/root"
+    sandbox_root "$SANDBOX_ROOT" "$DIST/skill-log"
+    ENVIRONMENT="bubblewrap"
+else
+    # No bwrap: an empty environment. It proves the binary needs no
+    # environment of the developer's machine, but the loader's default
+    # path is still the host's, so a system SQLite cannot be ruled out.
+    ENVIRONMENT="env -i"
+fi
+
+printf 'environment: %s\n' "$ENVIRONMENT"
+
+# run <args...>: the artifact in the environment, with a scratch store.
+#
+# Every run's stderr is kept: the point of the suite is that no run
+# anywhere reported a missing or unusable SQLite.
 run() {
-    OUT="$(env -u XDG_STATE_HOME -u SKILL_LOG_DB HOME="$SCRATCH/home" \
-        "$BIN" "$@" 2>"$SCRATCH/stderr")"
+    local out err
+    out="$SCRATCH/out"
+    err="$SCRATCH/err"
+    if [ "$ENVIRONMENT" = "bubblewrap" ]; then
+        sandbox_run "$SANDBOX_ROOT" "$SANDBOX_HOME" /pkg/skill-log "$@" \
+            >"$out" 2>"$err"
+    else
+        env -i HOME="$SANDBOX_HOME" PATH=/usr/bin:/bin \
+            "$DIST/skill-log" "$@" >"$out" 2>"$err"
+    fi
     STATUS=$?
-    ERR="$(cat "$SCRATCH/stderr")"
-    export ERR
+    OUT="$(cat "$out")"
+    ERR="$(cat "$err")"
+    printf '%s\n' "$ERR" >>"$SCRATCH/all-err"
 }
 
-# The write path: the row, its timestamp, and its marker. The clock is
-# read through SQLite, so this is the case that says whether the pinned
-# library can carry the tool.
+# The round-trip: a write, a read and a resolve, all through the store,
+# in an environment with no system SQLite.
 run add --skill alpha
-check "a write against the pinned library exits 0" "$STATUS" "0"
-check "a write against the pinned library prints the marker" \
-    "$OUT" "$(hostname)#1"
-check "the row carries a local ISO 8601 stamp with an offset" \
-    "$(sqlite3 "$SCRATCH/home/.local/state/skill-log/skills.db" \
-        "select ts from invocations" \
-        | grep -cE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[+-][0-9]{2}:[0-9]{2}$')" "1"
+check "a write exits 0" "$STATUS" "0"
+check "a write prints the marker" "$OUT" "$(hostname)#1"
+check "a write prints nothing on stderr" \
+    "$(wc -c < "$SCRATCH/err" | tr -d ' ')" "0"
 
-# The read path, and the resolution that writes a stamp — both go through
-# the same clock.
 run show --json
-check "a read against the pinned library exits 0" "$STATUS" "0"
-check "a read against the pinned library reads the row" \
-    "$(json_field "$OUT" skill)" "alpha"
+check "a read exits 0" "$STATUS" "0"
+check "a read reads the row back" "$(json_field "$OUT" skill)" "alpha"
+check "the row carries a local ISO 8601 stamp with an offset" \
+    "$(printf '%s' "$OUT" | python3 -c '
+import json, re, sys
+row = json.loads(sys.stdin.read())
+print("yes" if re.match(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[+-][0-9]{2}:[0-9]{2}$", row.get("ts", "")) else "no")
+')" "yes"
 
 run resolve --id 1 --fix abc1234
-check "a resolve against the pinned library exits 0" "$STATUS" "0"
-check "the resolved row carries a timestamp" \
-    "$(sqlite3 "$SCRATCH/home/.local/state/skill-log/skills.db" \
-        "select count(*) from invocations where resolved_at <> ''")" "1"
+check "a resolve exits 0" "$STATUS" "0"
+check "a resolve prints the marker it stamped" \
+    "$(printf '%s' "$OUT" | grep -c ' resolved: abc1234')" "1"
+
+run show --json
+check "the resolved row carries the fix" "$(json_field "$OUT" fix)" "abc1234"
+check "the resolved row carries a resolution stamp" \
+    "$(printf '%s' "$OUT" | python3 -c '
+import json, re, sys
+row = json.loads(sys.stdin.read())
+print("yes" if re.match(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[+-][0-9]{2}:[0-9]{2}$", row.get("resolved_at", "")) else "no")
+')" "yes"
+
+# The point of the suite: nothing anywhere said the SQLite was missing.
+# The store's SQLite travels inside the binary, so no run can report a
+# missing or unusable library.
+check "no run reported a SQLite problem" \
+    "$(grep -ci 'sqlite unavailable\|cannot load\|shared object' "$SCRATCH/all-err")" "0"
+
+# The store is a real SQLite file: the schema the tool wrote is there,
+# read through an ordinary SQLite reader.
+DB="$SANDBOX_HOME/.local/state/skill-log/skills.db"
+if command -v sqlite3 >/dev/null 2>&1; then
+    check "the store is a SQLite database" \
+        "$(sqlite3 "$DB" 'pragma journal_mode' 2>/dev/null)" "wal"
+    check "the row is in the invocations table" \
+        "$(sqlite3 "$DB" "select count(*) from invocations where skill = 'alpha'" 2>/dev/null)" "1"
+else
+    printf 'skip sqlite3 is not installed: the store file was not read directly\n'
+fi
+
+# The environment itself: the case is only worth anything if there really
+# is no system SQLite inside it.
+if [ "$ENVIRONMENT" = "bubblewrap" ]; then
+    check "the sandbox root carries no SQLite library" \
+        "$(find "$SANDBOX_ROOT" -name 'libsqlite3*' 2>/dev/null | wc -l | tr -d ' ')" "0"
+    check "the sandbox root carries no library directory" \
+        "$([ -d "$SANDBOX_ROOT/usr/lib" ] && printf yes || printf no)" "no"
+    check "the sandbox root carries no Go toolchain" \
+        "$(find "$SANDBOX_ROOT/usr/bin" -maxdepth 1 \
+            \( -name go -o -name mojo -o -name gcc \) 2>/dev/null | wc -l | tr -d ' ')" "0"
+else
+    printf 'skip bwrap is not installed: the environment cannot rule out a system SQLite\n'
+fi
 
 tally
