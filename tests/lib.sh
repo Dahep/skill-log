@@ -1,14 +1,4 @@
 #!/usr/bin/env bash
-# The shared harness for the test scripts. Sourced, never run.
-#
-#   . "$HERE/lib.sh"
-#
-# One assertion vocabulary for every suite. The three suites had drifted
-# into three copies of `check`, one of them documenting a signature its
-# body did not have, and no suite had a JSON reader that could survive a
-# value the writer escapes. Both live here now.
-#
-# shellcheck shell=bash
 
 PASS=0
 FAIL=0
@@ -49,9 +39,6 @@ check_absent() {
 }
 
 # check_one_line <name> <text>
-#
-# A diagnostic is exactly one line. Counting non-empty lines is the
-# assertion: a message that grew a newline reports two.
 check_one_line() {
     if [ "$(printf '%s\n' "$2" | grep -c .)" = "1" ]; then
         pass "$1"
@@ -60,10 +47,6 @@ check_one_line() {
     fi
 }
 
-# require_tools <tool>...
-#
-# A suite that cannot run must say so and stop, rather than compare the
-# empty output of a missing command against empty.
 require_tools() {
     local tool
     for tool in "$@"; do
@@ -75,20 +58,6 @@ require_tools() {
 }
 
 # sandbox_root <root> <binary>...
-#
-# Build a minimal bubblewrap root that holds the given executables and
-# nothing else: no /usr/lib, no /lib, no ld.so cache, no SQLite, no
-# toolchain.
-#
-# The artifact is statically linked, so it needs none of the host's
-# libraries to run — which is the whole point of the root. A root that
-# carried a copy of /usr/lib would be eleven gigabytes and would put a
-# system SQLite back within the binary's reach, which is exactly what
-# these cases exist to rule out.
-#
-# No helper binary is copied in: the host's own tools are dynamically
-# linked and would not run in a root without libraries, so the cases read
-# the root from the outside instead.
 sandbox_root() {
     local root="$1"
     shift
@@ -105,14 +74,6 @@ sandbox_root() {
 }
 
 # sandbox_run <root> <scratch-home> <args...>
-#
-# Run a command in the sandbox root: read-only, no network, no
-# privileges, and a writable scratch home bound over /tmp so a store can
-# be written.
-#
-# The store environment is cleared: an XDG_STATE_HOME inherited from the
-# developer's machine would point the store outside the sandbox, and the
-# case would prove nothing about the sandbox at all.
 sandbox_run() {
     local root="$1" home="$2"
     shift 2
@@ -125,11 +86,6 @@ sandbox_run() {
         "$@"
 }
 
-# json_field <json> <key>: one top-level string field.
-#
-# Read with a real JSON parser, not `sed`. A `sed` expression cannot
-# survive the writer's own escaping: a skill named `a"b` comes back
-# mangled from one, so the test would be weaker than the code it checks.
 json_field() {
     printf '%s' "$1" | python3 -c '
 import json, sys
@@ -154,10 +110,6 @@ print(problems[0] if problems else "")
 '
 }
 
-# json_array <json> <key>: one top-level array of strings, comma-joined.
-#
-# Read through a real parser, so an item carrying a quote or a comma is
-# still the item the writer emitted.
 json_array() {
     printf '%s' "$1" | python3 -c '
 import json, sys
@@ -170,10 +122,6 @@ print(",".join(str(item) for item in value))
 ' "$2"
 }
 
-# json_number <json> <key>: one top-level numeric field, as %g.
-#
-# Numbers are read through a real parser too, and printed in the same
-# compact form every case expects: 1.5, 0, 1.33.
 json_number() {
     printf '%s' "$1" | python3 -c '
 import json, sys
@@ -194,13 +142,6 @@ print(" ".join(sorted(json.loads(sys.stdin.read()).keys())))
 '
 }
 
-# hold_lock <db> <ready-file> <seconds>: a second process that holds the
-# store's write lock for a while, so a case can prove that a write
-# behind a real lock is retried (and that an exhausted budget fails
-# quietly). The transaction is never committed while the lock is held.
-#
-# The lock is held for real: a reader that arrives behind it has to
-# wait, which is what the case asserts.
 hold_lock() {
     python3 - "$1" "$2" "$3" <<'PY'
 import sqlite3
@@ -221,13 +162,6 @@ db.close()
 PY
 }
 
-# hold_lock_until <db> <ready-file> <release-file>: a second process that
-# holds the store's write lock until the release file appears.
-#
-# A timer is a race: the holder's own start-up time eats into the window
-# the case means, and a slow machine can hold the lock for less time than
-# the case needs. A release file makes the window exact — the lock is
-# there until the case says it may go.
 hold_lock_until() {
     python3 - "$1" "$2" "$3" <<'PY'
 import os
@@ -243,8 +177,6 @@ db.execute(
 )
 with open(sys.argv[2], "w", encoding="utf-8") as handle:
     handle.write("ready")
-# The hold ends when the release file appears, and after a minute anyway,
-# so a case that never releases it does not leave the holder running.
 deadline = time.time() + 60
 while not os.path.exists(sys.argv[3]) and time.time() < deadline:
     time.sleep(0.05)
@@ -253,17 +185,6 @@ db.close()
 PY
 }
 
-# wait_for <file>: wait for a readiness file, up to thirty seconds.
-#
-# The handshake a case needs when it depends on another process being
-# ready: the writer says it is, and the case waits for that, instead of
-# sleeping and hoping.
-#
-# The wait fails the case when the handshake never arrives. A case that
-# proceeded without its lock would prove nothing — and would fail later,
-# somewhere else, for a reason that has nothing to do with the lock. The
-# thirty seconds are the holder's own timeout, so a slow machine waits
-# for the holder rather than for the clock.
 wait_for() {
     local n=0
     while [ ! -f "$1" ] && [ "$n" -lt 300 ]; do

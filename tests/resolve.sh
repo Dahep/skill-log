@@ -1,12 +1,6 @@
 #!/usr/bin/env bash
-# The resolve test: the manual stamp, against the built artifact.
-#
-#   tests/resolve.sh
-#
-# It exercises the escape hatch: one row, one commit, one timestamp. The
-# cases are the four promises — the stamp lands, the same call changes
-# nothing, a dry run writes nothing, and an unknown id or a missing store
-# is named. The store is built through `add`; `sqlite3` only inspects it.
+# Resolve suite: verifies manual resolution and store-lock behavior against the built artifact.
+# Run: tests/resolve.sh
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -83,7 +77,6 @@ check "the timestamp is ISO 8601 with an offset" \
 check "the other row is untouched" \
     "$(sqlite3 "$DB" 'select fix from invocations where id = 2')" ""
 
-# A second identical call changes nothing, including the first stamp's time.
 FIRST_STAMP="$(sqlite3 "$DB" 'select resolved_at from invocations where id = 1')"
 run resolve --id 1 --fix abc1234
 check "a repeated resolve exits 0" "$STATUS" "0"
@@ -93,7 +86,6 @@ check "a repeated resolve keeps the first timestamp" \
     "$(sqlite3 "$DB" 'select resolved_at from invocations where id = 1')" \
     "$FIRST_STAMP"
 
-# A different commit is a correction, not a repeat.
 run resolve --id 1 --fix def5678
 check "a different commit resolves again" "$OUT" "boxA#1 resolved: def5678"
 check "a different commit is written" \
@@ -116,7 +108,6 @@ check "a dry run leaves the timestamp alone" \
 check "a dry run does not change the store file" \
     "$(md5sum <"$DB")" "$BEFORE_SUM"
 
-# A dry run of a repeat previews the stored answer, not a new one.
 run resolve --id 1 --fix def5678 --dry-run
 check "a dry run of a repeat says already resolved" "$OUT" \
     "boxA#1 already resolved: def5678"
@@ -202,7 +193,6 @@ run resolve --id 1 --fix abc --nope
 check "an unknown flag exits 2" "$STATUS" "2"
 check_one_line "an unknown flag is one line" "$ERR"
 
-# A flag's value is taken as written: `--fix -h` is the commit `-h`.
 run resolve --id 1 --fix -h
 check "a --fix value spelled -h is a value" "$STATUS" "0"
 check "a --fix value spelled -h is written" \
@@ -212,8 +202,6 @@ check "a help flag after a value still asks for help" "$STATUS" "0"
 check "the help block is the verb's usage" \
     "$(printf '%s\n' "$OUT" | grep -c '^usage:$')" "1"
 
-# An existing but table-less store is an empty log: the id is unknown,
-# not a query against tables that do not exist.
 : >"$SCRATCH/tableless.db"
 run resolve --id 1 --fix abc --db "$SCRATCH/tableless.db"
 check "a table-less store names the unknown id" "$STATUS" "1"
@@ -221,11 +209,6 @@ check "a table-less store does not fail on the missing tables" "$ERR" \
     "skill-log: no invocation 1 in $SCRATCH/tableless.db"
 
 # ------------------------------------------------------------------ races
-#
-# Six identical resolves of one row run at once. The read that decides
-# "already resolved" happens inside the write transaction, so exactly one
-# of them stamps and the rest see that stamp: one `changed`, one
-# timestamp, six successes.
 run add --skill parallel --machine boxA
 check "the race fixture row is written" "$STATUS" "0"
 RACE_ID="$(sqlite3 "$DB" 'select max(id) from invocations')"
@@ -245,17 +228,12 @@ check "concurrent resolves agree on one timestamp" \
     "1"
 
 # ---------------------------------------------------------- a locked store
-#
-# A lock is a lock on the write path too. The store classifies the
-# failure and the CLI renders it, so the answer is the store's own named
-# refusal and never a SQLite message (SPEC §3).
 LOCKDIR="$SCRATCH/locked"
 mkdir -p "$LOCKDIR"
 LOCK_DB="$LOCKDIR/skills.db"
 run add --skill lock-holder --db "$LOCK_DB"
 check "the locked fixture is written" "$STATUS" "0"
 
-# A second process holds the write lock for longer than the budget.
 hold_lock "$LOCK_DB" "$SCRATCH/lock-ready" 12 &
 HOLDER=$!
 wait_for "$SCRATCH/lock-ready"
@@ -269,16 +247,6 @@ check_one_line "the locked store's refusal is one line" "$ERR"
 kill "$HOLDER" 2>/dev/null
 wait "$HOLDER" 2>/dev/null
 
-# A lock that is released inside the budget is waited for, not refused.
-# The write path retries a locked store the way it retries a busy
-# statement: the lock costs milliseconds, and the command must not fail
-# over it.
-#
-# The hold is released by the case, not by a clock: the write starts
-# while the lock is held, and the lock goes only once the write is
-# waiting for it. The lock has to outlive SQLite's own two-second busy
-# timeout — otherwise the driver waits it out and the store's own retry
-# is never reached.
 SHORT_LOCK="$SCRATCH/short-lock"
 mkdir -p "$SHORT_LOCK"
 SHORT_DB="$SHORT_LOCK/skills.db"
@@ -287,8 +255,6 @@ check "the short-lock fixture is written" "$STATUS" "0"
 hold_lock_until "$SHORT_DB" "$SCRATCH/short-lock-ready" "$SCRATCH/short-lock-go" &
 SHORT_HOLDER=$!
 wait_for "$SCRATCH/short-lock-ready"
-# The write runs in the background: the lock goes only once the write is
-# waiting for it, so the case's window is exact.
 "$BIN" resolve --id 1 --fix a1b2c3d --db "$SHORT_DB" \
     >"$SCRATCH/short-lock.out" 2>"$SCRATCH/short-lock.err" &
 SHORT_WRITE=$!

@@ -1,20 +1,6 @@
 #!/usr/bin/env bash
-# The release workflow test: the shape of the release pipeline.
-#
-#   tests/release.sh
-#
-# The workflow is the one place where a version read from a git tag
-# reaches a shell. A tag is a name a machine's owner chose, and a name
-# that reaches `run:` as shell source is executed: a tag named
-# `v$(id)` runs a command. So the version must reach the shell through
-# the environment, never through the interpolated text of a `run:`
-# block, and its grammar must be checked before anything uses it.
-#
-# The third-party actions are pinned to commit SHAs for the same
-# reason: a tag is a name somebody else can move.
-#
-# This is a test of the workflow file, which is the artifact here: the
-# release pipeline has no other seam.
+# Release suite: verifies workflow pinning and safe version interpolation.
+# Run: tests/release.sh
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -30,21 +16,6 @@ if [ ! -f "$WORKFLOW" ]; then
     exit 1
 fi
 
-# The lines of the workflow that are the body of a `run:` block: the
-# shell source a GitHub expression would be interpolated into.
-#
-# A `run:` is shell source in every shape the workflow file uses:
-#
-#   run: |            a block, whose body is the following lines
-#   run: >            a block, folded the same way
-#   run: |-           a block, with the trailing newline stripped
-#   run: some command  a one-liner
-#
-# The block body ends at the next key of the same mapping — a line that
-# starts with a key and a colon at the step's indentation — or at the
-# end of the file. Every shape contributes its shell source, so a
-# `run:` body that carries an expression cannot hide behind a block
-# scalar marker.
 run_lines() {
     awk '
         # A `run:` with a block scalar or a one-line body: the shell
@@ -66,13 +37,8 @@ run_lines() {
     ' "$1"
 }
 
-# The shell source that carries a GitHub expression. An expression
-# there is text the shell parses, so a value the workflow did not
-# write becomes shell source.
-#
-# The pattern is a literal: a GitHub expression, written as text.
-# shellcheck disable=SC2016  # the expression is the text being looked for
 interpolated_in() {
+    # shellcheck disable=SC2016  # the expression is literal text
     run_lines "$1" | grep -nF '${{' || true
 }
 
@@ -95,14 +61,6 @@ check_contains "the version reaches the package step through the environment" \
 check_contains "the workflow validates the version grammar" \
     "$(cat "$WORKFLOW")" "v[0-9]*.[0-9]*.[0-9]*"
 
-# The third-party actions are pinned to commit SHAs: a tag is a name
-# somebody else can move.
-#
-# A `uses:` line carries a trailing comment in this workflow
-# (`uses: actions/checkout@<sha>  # v4`), so the ref is the first
-# whitespace-delimited word after the `@` — the comment is not part of
-# the pin. Only a full 40-hex commit SHA passes; a tag, a branch or a
-# short SHA is reported.
 unpinned_uses() {
     awk '
         {
@@ -141,15 +99,6 @@ check_contains "the checkout action is pinned" \
     "$(cat "$WORKFLOW")" "actions/checkout@"
 
 # ------------------------------------------------- the guards can fail
-#
-# A guard that cannot fail is not a guard. Both detectors are fed a
-# synthetic workflow that carries the defect they look for, and each
-# must report it: the interpolation detector on an expression inside a
-# `run:` body, and the pin detector on a tag-pinned action.
-#
-# The synthetic text is a heredoc, so the case exercises the same
-# parsing path the real workflow goes through. The real checks above
-# are not weakened by it: they still read the real workflow file.
 
 rm -rf "$SCRATCH"
 mkdir -p "$SCRATCH"

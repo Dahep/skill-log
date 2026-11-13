@@ -1,23 +1,6 @@
 #!/usr/bin/env bash
-# The smoke test for the release-shaped artifact.
-#
-#   tests/smoke.sh
-#
-# It runs the built dist/ artifact in two environments:
-#
-#   1. plain — the artifact as staged, on this machine
-#   2. sandbox — a bubblewrap root with no system SQLite anywhere, so the
-#      SQLite that travels inside the binary is the only possible source
-#
-# The artifact is one statically linked executable: there is no lib/ beside
-# it, no rpath, and no shared object to resolve. The sandbox is still the
-# decisive environment: without it, a dynamically linked build would find
-# the distro's SQLite and the failure path would never run.
-#
-# bwrap is used rather than a container: no daemon, no cgroup namespace,
-# no privileges, and the desktop's live session cgroups are never touched.
-# When bwrap is missing the sandbox checks are skipped, and the plain
-# checks still run, so a developer without bwrap still gets signal.
+# Smoke suite: verifies the release artifact directly and in a sandbox.
+# Run: tests/smoke.sh
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -35,35 +18,17 @@ require_artifact() {
             "$DIST" >&2
         exit 1
     fi
-    # The release ships one executable and nothing beside it: a lib/
-    # directory in dist/ means the build picked up something it must not.
     if [ -d "$DIST/lib" ]; then
         printf 'smoke.sh: %s/lib must not be staged; the artifact is one static binary\n' \
             "$DIST" >&2
         exit 1
     fi
-    # The reference area is never shipped: the archive stages only the
-    # binary. A reference/ in dist/ means the build picked up something
-    # it must not.
-    if [ -e "$DIST/reference" ]; then
-        printf 'smoke.sh: %s/reference must not be staged in the release archive\n' \
-            "$DIST" >&2
-        exit 1
-    fi
 }
 
-# The number of example invocations in a rendered usage block: the lines
-# under the `examples:` heading, not the usage lines above it.
 count_examples() {
     sed -n '/^examples:$/,$p' "$1" | grep -c '^  ' || true
 }
 
-# static_binary <path>: the executable resolves no shared object at run
-# time. ldd says so on a static ELF; where ldd is missing, file says it.
-#
-# ldd exits 1 when it prints "not a dynamic executable": that is the
-# answer, not a failure, so the exit status is dropped and only the text
-# is read.
 static_binary() {
     local report
     if command -v ldd >/dev/null 2>&1; then
@@ -80,9 +45,6 @@ rm -rf "$SCRATCH"
 mkdir -p "$SCRATCH"
 
 # ------------------------------------------------------------ plain run
-#
-# The artifact as staged, run directly. These checks hold whether or not
-# the machine has a system SQLite.
 
 run_plain() {
     # run_plain <args...>: the artifact as staged, output in $SCRATCH/plain.*
@@ -144,9 +106,6 @@ check "plain: an unknown verb names the verb" \
     "$(grep -c '^skill-log: unknown verb: not-a-verb$' "$SCRATCH/plain.err")" "1"
 
 # -------------------------------------------------------- static link proof
-#
-# The executable carries no shared object: the loader has nothing to
-# resolve, so the SQLite inside it is the only SQLite there is.
 
 if static_binary "$DIST/skill-log"; then
     pass "plain: the artifact is a static executable"
@@ -155,16 +114,10 @@ else
 fi
 
 # --------------------------------------------------------------- sandbox
-#
-# A root with no system libraries at all: no SQLite, no loader cache,
-# no toolchain. The executable still runs, because the SQLite travels
-# inside it.
 
 sandbox_available=1
 if ! command -v bwrap >/dev/null 2>&1 ||
     ! bwrap --ro-bind / / --dev /dev --unshare-all true >/dev/null 2>&1; then
-    # A bwrap on the PATH that cannot create a namespace is not a
-    # sandbox: the cases below would run in it and prove nothing.
     sandbox_available=0
 fi
 
@@ -203,13 +156,6 @@ else
     check "sandbox: a write prints nothing on stderr" \
         "$(wc -c < "$SCRATCH/boxadd.err" | tr -d ' ')" "0"
 
-    # The root has no system libraries at all: no SQLite, no loader
-    # cache, no toolchain. The runs above worked because the binary
-    # carries its own.
-    #
-    # The root is read from the outside, where the truth is: the
-    # diagnostics copied into it are dynamically linked and would not
-    # run there anyway, which is the point.
     check "sandbox: the root carries no library directory" \
         "$([ -d "$ROOTFS/usr/lib" ] && printf yes || printf no)" "no"
     check "sandbox: the root carries no loader" \

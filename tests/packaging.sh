@@ -1,36 +1,6 @@
 #!/usr/bin/env bash
-# The packaging test: the release archive installed into a clean
-# container.
-#
-#   tests/packaging.sh
-#   tests/packaging.sh --archive dist/skill-log-v1.0.0-x86_64-unknown-linux-gnu.tar.gz
-#   tests/packaging.sh --image debian:bookworm-slim
-#
-# The archive is unpacked into a container that has no toolchain and no
-# system SQLite. There `--version` and `setup --dry-run` run against a
-# scratch repo, the executable is shown to be statically linked, and a
-# store write succeeds — so the archive carries a working tool, not just
-# a file.
-#
-# The old negative case removed the bundled libsqlite3.so.0 and expected
-# a named failure: it proved the bundled copy was the only source. A
-# static executable has no such source to remove — the SQLite is inside
-# it — so the case that replaces it asserts the stronger structural
-# fact: the archive carries no shared object at all, and the tool still
-# reads and writes its store in a container with no SQLite installed.
-#
-# The default image is debian:bookworm-slim: no toolchain, no system
-# SQLite. Once the image is present the test needs no network (the run
-# is --pull=never); a missing image is pulled once, explicitly. Override
-# the image with --image or SKILL_LOG_PACKAGING_IMAGE. The release
-# workflow runs this same script on ubuntu:22.04.
-#
-# The image carries no git, so `setup --dry-run`'s repo-scoped artifacts
-# are asserted through the named skip ("not a git checkout"); an image
-# with git gets the created-verdict assertions instead.
-#
-# This is not part of scripts/test.sh: it needs docker, so the default
-# gate stays offline and fast. Run it directly, and on CI.
+# Packaging suite: verifies the release archive and its clean-container installation.
+# Run: tests/packaging.sh
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -89,8 +59,6 @@ require_tools docker tar sha256sum
 # ------------------------------------------------------------ the archive
 
 if [ -z "$ARCHIVE" ]; then
-    # The archive scripts/package.sh produces; the name is the release
-    # contract of SPEC.md §8.
     candidates=("$ROOT"/dist/skill-log-*-x86_64-unknown-linux-gnu.tar.gz)
     if [ ! -f "${candidates[0]}" ]; then
         printf 'packaging.sh: no dist/skill-log-*-x86_64-unknown-linux-gnu.tar.gz; run scripts/package.sh first\n' >&2
@@ -108,10 +76,6 @@ fi
     exit 1
 }
 
-# Docker binds a host path into the container, and a relative path is
-# not a host path: docker resolves a relative source against its own
-# working directory and rejects it. The archive is therefore made
-# absolute before it is ever handed to `docker -v`.
 ARCHIVE="$(cd "$(dirname "$ARCHIVE")" && pwd)/$(basename "$ARCHIVE")"
 
 base="$(basename "$ARCHIVE")"
@@ -119,10 +83,6 @@ version="${base#skill-log-}"
 version="${version%-x86_64-unknown-linux-gnu.tar.gz}"
 
 # ------------------------------------------------------- the packed shape
-#
-# Exactly the executable and the licence material a redistributor must
-# carry. reference/ and tests/ are never shipped (§8), and the listing
-# check proves it.
 
 listing="$(tar -tzf "$ARCHIVE" | sort)"
 expected="$(printf '%s\n' \
@@ -136,20 +96,13 @@ expected="$(printf '%s\n' \
 
 check "archive: entries are exactly the executable and the licence material" \
     "$listing" "$expected"
-check_absent "archive: no reference/ tree is shipped" "$listing" "reference/"
 check_absent "archive: no tests/ is shipped" "$listing" "tests/"
 check_absent "archive: no src/ is shipped" "$listing" "src/"
 check_absent "archive: no vendor/ is shipped" "$listing" "vendor/"
 
-# The archive carries no shared object: the executable is statically
-# linked, so there is nothing for a loader to resolve and nothing for a
-# machine to have installed. This is the case that replaced the old
-# "remove the bundled SQLite and watch it fail" negative.
 shared_objects="$(tar -tzf "$ARCHIVE" | grep -cE '\.so([.0-9]*)?$')"
 check "archive: no shared object is shipped" "$shared_objects" "0"
 
-# The digest the release uploads beside the archive. It is part of the
-# artifact pair, so its absence is a failure, not a skip.
 DIGEST="$ARCHIVE.sha256"
 if [ ! -f "$DIGEST" ]; then
     fail "archive: $DIGEST is missing (run scripts/package.sh)"
@@ -175,9 +128,6 @@ mkdir -p "$SCRATCH"
 INNER="$SCRATCH/inner.sh"
 
 cat >"$INNER" <<'INNER'
-#!/usr/bin/env bash
-# The in-container half of the packaging test. Sourced harness, plain
-# environment: this image has no toolchain and no system SQLite.
 set -uo pipefail
 
 # shellcheck disable=SC1091
@@ -212,9 +162,6 @@ check "install: the archive carries the third-party notices" \
     "$([ -f "$PKG/THIRD-PARTY-NOTICES.md" ] && printf yes || printf no)" "yes"
 
 # --------------------------------------------------- the static executable
-#
-# The loader has nothing to resolve: the SQLite travels inside the
-# executable, so the container needs no SQLite of its own.
 if command -v ldd >/dev/null 2>&1; then
     report="$(ldd "$PKG/skill-log" 2>&1 || true)"
     if printf '%s\n' "$report" | grep -qi 'not a dynamic executable'; then
@@ -247,9 +194,6 @@ check "--version: prints nothing on stderr" \
     "$(wc -c <"$SCRATCH/version.err" | tr -d ' ')" "0"
 
 # ------------------------------------------------------ setup --dry-run
-#
-# A scratch repo. With git in the image the hook and report directory
-# show created; without git they are the SPEC's named skip.
 
 mkdir -p "$REPO/skills"
 if command -v git >/dev/null 2>&1; then
@@ -292,11 +236,6 @@ else
 fi
 
 # --------------------------------------------------------- the store works
-#
-# The case the old negative case was built for: the tool reads and
-# writes its store in a container with no SQLite installed. The SQLite
-# travels inside the executable, so this succeeds where a dynamically
-# linked build would have nothing to load.
 
 out="$(HOME="$HOME_DIR" "$PKG/skill-log" add --skill packaged 2>"$SCRATCH/add.err")"
 code=$?
@@ -312,8 +251,6 @@ check "store: a read exits 0" "$code" "0"
 check "store: the read finds the row" \
     "$(printf '%s' "$out" | grep -c '"skill":"packaged"')" "1"
 
-# The store is a real SQLite file, read by an ordinary reader when the
-# image carries one.
 DB="$HOME_DIR/.local/state/skill-log/skills.db"
 if command -v sqlite3 >/dev/null 2>&1; then
     check "store: the store file is a SQLite database" \

@@ -1,83 +1,6 @@
 #!/usr/bin/env bash
-# The parity gate: the reference harness's behaviour, against the installed
-# binary.
-#
-#   tests/parity.sh
-#
-# The reference implementation (the report-era Python CLI and its 25-case
-# bash harness) is kept verbatim under `reference/`. It is the parity
-# ground truth: this suite ports those 25 cases to `dist/skill-log`, with
-# the intentionally changed commands adapted and the case names kept
-# comparable, so a reader can hold the two side by side.
-#
-# The adaptations, and only these:
-#
-#   * the report-era `fix` verb and `.skill-log/fixes/` are now `report`
-#     and `.skill-log/reports/`;
-#   * the opencode adapter is opt-in in 1.0 (`--adapter opencode` or
-#     `SKILL_LOG_ADAPTERS=opencode`), so the reference's default-detect
-#     cases become "adapter off by default -> blank" plus "adapter on ->
-#     filled";
-#   * the store is never inherited or converted in 1.0 (SPEC §3), so the
-#     reference's migration cases become the refusal parity: an older or
-#     foreign file is refused by name, and the tool writes nothing into it;
-#   * the multi-machine `sync` cases are out of scope in 1.0 (SPEC §10) and
-#     are listed as explicit, reasoned skips below;
-#   * the race cases run against the 1.0 single-store writer: a real
-#     second process holds the write lock, the retry budget is bounded, and
-#     a failure is one stderr line.
-#
-# Discipline (SPEC §9): the binary is the only seam. Every case runs the
-# installed artifact as a process against a sandboxed HOME and XDG state,
-# in temporary git repositories, with no network. Nothing imports an
-# internal.
-#
-# The clock: the contract names `SKILL_LOG_NOW` as the one clock
-# injection (SPEC §9, ADR-0003), and the binary honours it: the writer's
-# stamp is the variable's value when it is set, so a case can pin time
-# without touching the store or sleeping. The clock case at the end of
-# this suite proves it; the one case that needs a fixed comparison (case
-# 29, the time guard) also fixes the commit side with a git commit date,
-# because the guard compares the row's own stamp with the commit's time.
-#
-# Coverage the contract names, and where it lives. This map keeps the
-# ticket auditable without duplicating the suites that already prove a
-# rule; every line below is a rule the contract names (SPEC §9), and the
-# "proved by" column names the suite that already holds it down. A rule
-# this suite owns says so.
-#
-#   rule                                        proved by
-#   -----------------------------------------   ----------------------------
-#   store matrix: absent                       parity: case 26, tests/show.sh
-#   store matrix: empty                        parity: case 26, tests/show.sh
-#   store matrix: damaged                      parity: case 26, tests/store.sh
-#   store matrix: foreign                      parity: case 26, tests/store.sh
-#   store matrix: older                        parity: case 26, tests/store.sh
-#   store matrix: newer                        parity: case 26, tests/store.sh
-#   the matrix per verb's policy               parity: case 26
-#   adapter off by default                     parity: case 2, tests/context.sh
-#   flag-over-adapter precedence               parity: case 3, tests/context.sh
-#   repo/worktree inside                       parity: case 31, tests/context.sh
-#   repo/worktree outside                      parity: case 31, tests/context.sh
-#   repo/worktree across linked worktrees      parity: case 31, tests/context.sh
-#   add is not idempotent                      parity: case 30, tests/store.sh
-#   all five document states                   tests/skills.sh
-#   restamp on a differing commit              tests/merged.sh
-#   a foreign marker                           parity: case 20, tests/merged.sh
-#   hidden and malformed marker reports        parity: case 21, tests/merged.sh
-#   report --check without a selector          parity: case 27
-#   uncommitted report edits resolve nothing   parity: case 28
-#   a non-git checkout                         parity: case 23, tests/setup.sh
-#   a missing CLI in the hook                  parity: case 23, tests/setup.sh
-#   an older CLI in the hook                   parity: case 23, tests/setup.sh
-#   a time guard across differing offsets      parity: case 29
-#   a fixed clock uses SKILL_LOG_NOW           parity: case 34, tests/store.sh
-#   the packaging assumptions                  tests/packaging.sh
-#
-# The rules the parity suite owns outright are the reference's own: the
-# refused older store, the adapter's default, the model's precedence, the
-# report artifact, the hidden marker, the hook's promises, and the write
-# contention.
+# Contract suite: verifies store, context, reporting, hook, and contention rules against the built artifact.
+# Run: tests/contract.sh
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -91,29 +14,12 @@ BIN="$DIST/skill-log"
 require_tools git sqlite3 python3
 
 if [ ! -x "$BIN" ]; then
-    printf 'parity.sh: %s is missing; run scripts/build.sh first\n' "$BIN" >&2
+    printf 'contract.sh: %s is missing; run scripts/build.sh first\n' "$BIN" >&2
     exit 1
 fi
 
 # ------------------------------------------------------------- the sandbox
-#
-# The suite refuses to run against the real HOME. The reference's guard is
-# the model: the sandbox lives outside the real home, and the home the
-# binary sees is inside the sandbox. A suite that ran against the real
-# home would write the real store, and a suite that could not tell would
-# not know it had.
-#
-# The guard is a function, so the suite can prove it fires: a case below
-# hands it a sandbox inside the real home and a home outside the sandbox,
-# and both must be refused.
 
-# sandbox_ok <base> <sandbox-home>: the guard's verdict. Zero when the
-# pair is safe: the sandbox is outside the real home, and the home the
-# binary sees is inside the sandbox.
-#
-# The paths are normalized first: a guard that matched a raw prefix
-# would accept `$S/../outside` as "inside $S", which is the opposite of
-# what it claims.
 sandbox_ok() {
     local base home
     base="$(cd "$1" 2>/dev/null && pwd -P)" || return 1
@@ -129,7 +35,7 @@ sandbox_ok() {
 
 REAL_HOME="$HOME"
 if [ -d /tmp/opencode ]; then
-    BASE="$(mktemp -d /tmp/opencode/skill-log-parity-XXXXXX)"
+    BASE="$(mktemp -d /tmp/opencode/skill-log-contract-XXXXXX)"
 else
     BASE="$(mktemp -d)"
 fi
@@ -138,14 +44,12 @@ trap 'rm -rf "$BASE" 2>/dev/null' EXIT
 S="$BASE/stage"
 mkdir -p "$S/home" "$S/db" "$S/repos"
 if ! sandbox_ok "$BASE" "$S/home"; then
-    printf 'parity.sh: refusing: sandbox %s and home %s are not a safe pair\n' \
+    printf 'contract.sh: refusing: sandbox %s and home %s are not a safe pair\n' \
         "$BASE" "$S/home" >&2
     exit 1
 fi
 export HOME="$S/home"
 
-# The binary reads XDG_STATE_HOME before HOME, so a host that sets it
-# would point the sandbox at the real log.
 unset XDG_STATE_HOME XDG_CONFIG_HOME
 unset SKILL_LOG_DB SKILL_LOG_TEMPLATE_DIR
 unset SKILL_LOG_ADAPTERS SKILL_LOG_HARNESS SKILL_LOG_SESSION
@@ -221,8 +125,7 @@ commit_trailers() {
 
 # mkopdb <session-id> <model-json>: a minimal opencode session store
 # ($HOME-managed, so it lands in the sandbox) with the named session and
-# its model JSON in the exact session_v2 shape skill-log reads. The
-# reference's fixture, reused read-only.
+# its model JSON in the exact session_v2 shape skill-log reads.
 mkopdb() {
     mkdir -p "$HOME/.local/share/opencode"
     sqlite3 "$HOME/.local/share/opencode/opencode.db" <<SQL
@@ -231,9 +134,7 @@ INSERT OR REPLACE INTO session_v2 (id, model) VALUES ('$1', '$2');
 SQL
 }
 
-# mkolderdb <path>: a pre-1.0 skill-log store — the reference's v1 shape:
-# the two tables, the old columns. The 1.0 rule refuses it by name and
-# never converts it.
+# mkolderdb <path>: an older store shape that is refused by name.
 mkolderdb() {
     sqlite3 "$1" <<'SQL'
 CREATE TABLE invocations (
@@ -266,16 +167,13 @@ SQL
 H="$(hostname)"
 
 # =========================================================================
-# The reference's cases 1 to 25, ported.
+# Contract cases.
 # =========================================================================
 
-# --- case 1: the migration becomes the refusal parity ---------------------
+# --- case 1: an older store is refused ---------------------
 #
-# The reference ingested new rows into a v1 log. The 1.0 rule is the
-# deliberate change (SPEC §3, §8): the store is never inherited or
-# converted, so an older file is refused by name and the row it carried
-# stays exactly as it was found.
-say "parity: case 1 — an older store is refused, never converted"
+# An older file is refused by name and left exactly as found.
+say "contract: case 1 — an older store is refused, never converted"
 V1DB="$DBT/c1.db"
 mkolderdb "$V1DB"
 BEFORE_SUM="$(md5sum <"$V1DB")"
@@ -299,10 +197,8 @@ check "case 1: the read names the older store" \
 
 # --- case 2: auto-detect from the local opencode store ---------------------
 #
-# The reference detected the model by default. The 1.0 rule is that
-# adapters are opt-in (SPEC §4), so the case is twice: off by default the
-# fields are blank, on the adapter answers.
-say "parity: case 2 — the model comes from the session store, with the adapter on"
+# Adapters are opt-in: fields are blank by default and filled when enabled.
+say "contract: case 2 — the model comes from the session store, with the adapter on"
 C2="$DBT/c2.db"
 mkopdb ses_fixture '{"id": "m-test", "providerID": "prov-x"}'
 OUT="$(OPENCODE_SESSION_ID=ses_fixture "$BIN" add --skill probed-skill \
@@ -329,7 +225,7 @@ check "case 2: an unknown session still fills the harness" \
     "$(json_field "$OUT" harness)" "opencode"
 
 # --- case 3: no local store at all ----------------------------------------
-say "parity: case 3 — the model stays empty when the session is in no local store"
+say "contract: case 3 — the model stays empty when the session is in no local store"
 rm -rf "$HOME/.local/share/opencode"
 OUT="$(OPENCODE_SESSION_ID=ses_remote T3CODE_HOST=fake-api-host \
     T3CODE_PORT=9999 SKILL_LOG_ADAPTERS=opencode "$BIN" add \
@@ -357,10 +253,9 @@ check "case 3: a dry run with --model keeps the same override" \
 
 # --- case 4: read paths on a pre-migration db -----------------------------
 #
-# The reference's reads migrated the writable db on the way. The 1.0 rule
-# refuses it by name instead, and a read never reports "nothing logged"
+# An older file is refused by name, and a read never reports "nothing logged"
 # over a file it could not read.
-say "parity: case 4 — reads of an older store name it, and never read it as empty"
+say "contract: case 4 — reads of an older store name it, and never read it as empty"
 V1R="$DBT/c4.db"
 mkolderdb "$V1R"
 run show --db "$V1R" --json
@@ -384,7 +279,7 @@ check "case 4: the corrupt store's json stream is empty" "$OUT" ""
 check "case 4: the corrupt store's json exit is 1" "$STATUS" "1"
 
 # --- case 5: show/stats surface the column without breaking the shape -----
-say "parity: case 5 — show and stats expose the model without breaking the shape"
+say "contract: case 5 — show and stats expose the model without breaking the shape"
 C4="$DBT/c5.db"
 "$BIN" add --skill s1 --model prov-a/m-1 --db "$C4" >/dev/null
 "$BIN" add --skill s1 --db "$C4" >/dev/null
@@ -410,11 +305,8 @@ check "case 5: the default table keeps the rate column" \
 
 # --- case 6: the parallel first write -------------------------------------
 #
-# The reference forced a schema race with a Python driver. The 1.0 writer
-# creates the store in one transaction and retries a busy write, so the
-# case is the real pair of processes: two writers against a store that
-# does not exist yet.
-say "parity: case 6 — parallel first writes on one store both land"
+# The store is created in one transaction and busy writes are retried.
+say "contract: case 6 — parallel first writes on one store both land"
 C6="$DBT/c6.db"
 "$BIN" add --skill race-a --model prov-p/m-a --db "$C6" >/dev/null &
 RACE_A=$!
@@ -429,7 +321,7 @@ check "case 6: both models landed" \
     "$(sqlite3 "$C6" 'SELECT COUNT(DISTINCT model) FROM invocations')" "2"
 
 # --- case 7: --dry-run writes nothing -------------------------------------
-say "parity: case 7 — a dry run previews and writes nothing"
+say "contract: case 7 — a dry run previews and writes nothing"
 C7="$DBT/c7.db"
 OUT="$("$BIN" add --skill dry --model prov-a/m-dry --dry-run --db "$C7" --json)"
 check "case 7: the preview shows the model" \
@@ -443,7 +335,7 @@ else
 fi
 
 # --- case 8: --parent rides end to end -------------------------------------
-say "parity: case 8 — --parent lands on the row and reads back"
+say "contract: case 8 — --parent lands on the row and reads back"
 C8="$DBT/c8.db"
 OUT="$("$BIN" add --skill research --parent thread_abc123 --db "$C8" --json)"
 check "case 8: add --json echoes the parent" \
@@ -456,9 +348,8 @@ check_contains "case 8: the show table carries the parent cell" \
 
 # --- case 9: a snapshot that carries the model but not the parent ---------
 #
-# The reference read a read-only snapshot it could not migrate. The 1.0
-# rule refuses an older file by name, whatever its permissions.
-say "parity: case 9: an older snapshot is refused, whatever its permissions"
+# An older file is refused by name, whatever its permissions.
+say "contract: case 9: an older snapshot is refused, whatever its permissions"
 C9="$DBT/c9.db"
 mkolderdb "$C9"
 chmod 444 "$C9"
@@ -471,15 +362,10 @@ chmod 644 "$C9"
 
 # --- case 10: a busy write is retried, not lost ---------------------------
 #
-# The reference injected the lock in Python. The 1.0 rule is that the
-# contention is exercised with a real second process (SPEC §9), so the
-# case holds the write lock for real and lets the bounded retry budget do
-# its work.
-say "parity: case 10 — a write survives a real second writer holding the lock"
+# A real second process holds the write lock while the bounded retry budget runs.
+say "contract: case 10 — a write survives a real second writer holding the lock"
 C10="$DBT/c10.db"
 "$BIN" add --skill lock-holder --db "$C10" >/dev/null
-# A second process holds the write lock for a moment. The lock is inside
-# the write budget, so the bounded retry lands the row.
 hold_lock "$C10" "$S/lock-ready" 2 &
 LOCK_PID=$!
 wait_for "$S/lock-ready"
@@ -494,10 +380,8 @@ check "case 10: the lock holder's row is still there" \
 
 # --- case 11: an exhausted retry fails quietly ----------------------------
 #
-# The reference shrank the budget in Python. The 1.0 rule keeps the retry
-# budget bounded, so the case holds the lock for longer than the budget
-# and asserts the contract's failure shape: one stderr line, no row.
-say "parity: case 11 — an exhausted retry fails quietly, with one line"
+# The retry budget is bounded; a longer hold produces one stderr line and no row.
+say "contract: case 11 — an exhausted retry fails quietly, with one line"
 C11="$DBT/c11.db"
 "$BIN" add --skill lock-holder --db "$C11" >/dev/null
 hold_lock "$C11" "$S/lock-ready-11" 120 &
@@ -514,7 +398,7 @@ check "case 11: the failed write landed no row" \
     "$(sqlite3 "$C11" "SELECT COUNT(*) FROM invocations WHERE skill = 'never-landed'")" "0"
 
 # --- case 12: resolve marks a row and the resolved count follows ----------
-say "parity: case 12 — resolve marks a row and the resolved count follows"
+say "contract: case 12 — resolve marks a row and the resolved count follows"
 C12="$DBT/c12.db"
 "$BIN" add --skill resolve-me --problem "p1" --db "$C12" >/dev/null
 OUT="$("$BIN" resolve --id 1 --fix abc1234 --db "$C12" --json)"
@@ -556,27 +440,22 @@ check "case 12: a dry run leaves the row's fix" \
 
 # --- cases 13 to 17: the multi-machine sync cases --------------------------
 #
-# `sync`, an aggregate store, merged copies and owner authority left
-# scope in 1.0 (SPEC §10, ADR-0002). They are listed with their reasons
-# rather than dropped silently, so the gate says what it did not run.
-skip "parity: case 13 — sync merges a remote log" \
-    "multi-machine sync left scope in 1.0 (SPEC §10): no sync verb, no aggregate store, no owner authority"
-skip "parity: case 14 — the pull reads a live WAL" \
-    "multi-machine sync left scope in 1.0 (SPEC §10): there is no remote pull to read a WAL from"
-skip "parity: case 15 — chained merges stay idempotent" \
-    "multi-machine sync left scope in 1.0 (SPEC §10): there is no chain of aggregates to merge"
-skip "parity: case 16 — a damaged log is named by the read paths" \
-    "multi-machine sync left scope in 1.0 (SPEC §10): the case ran against sync's merge path, which does not exist; the damaged-store naming itself is ported in case 4 and the store matrix (case 26)"
-skip "parity: case 17 — the default remote path needs no flag" \
-    "multi-machine sync left scope in 1.0 (SPEC §10): there is no remote and no remote log path"
+# `sync`, an aggregate store, merged copies and owner authority are out of scope.
+skip "contract: case 13 — sync merges a remote log" \
+    "multi-machine sync is out of scope: no sync verb, no aggregate store, no owner authority"
+skip "contract: case 14 — the pull reads a live WAL" \
+    "multi-machine sync is out of scope: there is no remote pull to read a WAL from"
+skip "contract: case 15 — chained merges stay idempotent" \
+    "multi-machine sync is out of scope: there is no chain of aggregates to merge"
+skip "contract: case 16 — a damaged log is named by the read paths" \
+    "multi-machine sync is out of scope: the case ran against sync's merge path, which does not exist; damaged-store naming is covered in case 4 and the store matrix (case 26)"
+skip "contract: case 17 — the default remote path needs no flag" \
+    "multi-machine sync is out of scope: there is no remote and no remote log path"
 
 # --- case 18: a concurrent write's collision retries ----------------------
 #
-# The reference's case was a merge's unique-index collision. The 1.0
-# store has no owner index (SPEC §3), so the case is the write
-# contention itself: several writers against one store, and every row
-# lands exactly once.
-say "parity: case 18 — concurrent writers converge on one store"
+# Several writers against one store all land exactly once.
+say "contract: case 18 — concurrent writers converge on one store"
 C18="$DBT/c18.db"
 for i in 1 2 3 4 5 6; do
     "$BIN" add --skill "collide-$i" --db "$C18" >/dev/null \
@@ -590,7 +469,7 @@ check "case 18: the store kept one row per skill" \
     "$(sqlite3 "$C18" 'SELECT COUNT(DISTINCT skill) FROM invocations')" "6"
 
 # --- case 19: resolve-merged stamps the rows a merged fix names -----------
-say "parity: case 19 — resolve-merged stamps the rows a merged fix names"
+say "contract: case 19 — resolve-merged stamps the rows a merged fix names"
 R19="$(new_repo c19)"
 DB19="$DBT/c19.db"
 "$BIN" add --skill first-fix --db "$DB19" >/dev/null
@@ -610,12 +489,6 @@ OUT="$(cd "$R19" && "$BIN" resolve-merged --db "$DB19" --json 2>/dev/null)"
 check "case 19: re-running stamps nothing" "$(json_array "$OUT" resolved)" ""
 check "case 19: re-running names the rows it left alone" \
     "$(json_array "$OUT" unchanged)" "$H#1,$H#2"
-# A row logged after the commit is an id reused by a rebuilt log, not the
-# row the commit fixed.
-#
-# The commit's time is fixed with a git commit date, so the guard is
-# provable without a sleep and without a clock injection: the row's own
-# stamp (now) is after the commit's time (2020).
 GIT_COMMITTER_DATE="2020-01-01T00:00:00+0000" \
 GIT_AUTHOR_DATE="2020-01-01T00:00:00+0000" \
     git -C "$R19" commit -q --allow-empty \
@@ -661,14 +534,7 @@ check "case 19: a dry run reports the row it would stamp" \
 check "case 19: a dry run leaves the row unresolved" "$(fix_of "$DB19D" 1)" ""
 
 # --- case 20: one machine, one identity -----------------------------------
-#
-# The reference resolved a marker whose host was spelled another way
-# (a short name against an FQDN). The 1.0 rule is that a marker names a
-# machine exactly and a marker naming another machine is foreign
-# (SPEC §2): there is no owner lookup and no cross-machine resolution.
-# The local spelling is this host's name; the differently spelled one is
-# another machine.
-say "parity: case 20 — a marker names its machine exactly"
+say "contract: case 20 — a marker names its machine exactly"
 R20="$(new_repo c20)"
 C20L="$DBT/c20.db"
 "$BIN" add --skill boxed --machine "$H" --db "$C20L" >/dev/null
@@ -693,14 +559,12 @@ check "case 20: the exact spelling resolves" \
     "$(json_array "$OUT" resolved)" "$H#2"
 
 # --- case 21: a marker the last-trailer-block rule hides is reported ------
-say "parity: case 21 — a marker hidden by a later trailer block is reported"
+say "contract: case 21 — a marker hidden by a later trailer block is reported"
 R21="$(new_repo c21)"
 DB21="$DBT/c21.db"
 "$BIN" add --skill hidden-marker --db "$DB21" >/dev/null
 printf y >"$R21/f"
 git -C "$R21" add f
-# The shape a multi-author squash leaves behind: the marker block, then a
-# trailer block GitHub appends after the body.
 git -C "$R21" commit -q -m "skills: fix one thing" \
     -m "Skill-log-Fix: $H#1" -m "Co-authored-by: someone <s@example.com>"
 run_in "$R21" resolve-merged --db "$DB21"
@@ -715,7 +579,7 @@ OUT="$(cd "$R21" && "$BIN" resolve-merged --db "$DB21" --quiet 2>&1)"
 check "case 21: --quiet prints nothing for a hidden marker" "$OUT" ""
 
 # --- case 22: the newest marker wins, and --since cannot smuggle an option
-say "parity: case 22 — the newest marker wins, and --since refuses an option"
+say "contract: case 22 — the newest marker wins, and --since refuses an option"
 R22="$(new_repo c22)"
 DB22="$DBT/c22.db"
 "$BIN" add --skill named-twice --db "$DB22" >/dev/null
@@ -738,7 +602,7 @@ check_contains "case 22: an option-shaped --since says what it needs" "$ERR" \
     "--since needs a revision"
 
 # --- case 23: the hook contract -------------------------------------------
-say "parity: case 23 — the hook is idempotent, keeps a foreign hook, and cannot break a pull"
+say "contract: case 23 — the hook is idempotent, keeps a foreign hook, and cannot break a pull"
 R23="$(new_repo c23)"
 printf base >"$R23/base"
 git -C "$R23" add base
@@ -834,10 +698,8 @@ check_contains "case 23: the non-git checkout skips with a named reason" "$OUT" 
 
 # --- case 24: report writes the repo report artifact ----------------------
 #
-# The reference-era verb was `fix` and the directory was
-# `.skill-log/fixes/`. The 1.0 names are `report` and
-# `.skill-log/reports/`.
-say "parity: case 24 — report writes the repo report file, validated at authoring time"
+# The report artifact and its current location are verified.
+say "contract: case 24 — report writes the repo report file, validated at authoring time"
 R24="$(new_repo c24)"
 DB24="$DBT/c24.db"
 "$BIN" add --skill report-one --db "$DB24" >/dev/null
@@ -882,7 +744,7 @@ else
 fi
 
 # --- case 25: a repo with the report directory resolves from the report ---
-say "parity: case 25 — the report file, not the trailer, drives resolution where it exists"
+say "contract: case 25 — the report file, not the trailer, drives resolution where it exists"
 R25="$(new_repo c25)"
 mkdir -p "$R25/.skill-log/reports"
 : >"$R25/.skill-log/reports/.keep"
@@ -924,14 +786,13 @@ check "case 25: a full scan resolves the report file's row" \
     "$(json_array "$OUT" resolved)" "$H#$IDM"
 
 # =========================================================================
-# The cases the new contract needs.
+# Remaining contract cases.
 # =========================================================================
 
 # --- case 26: the store matrix, per verb's policy -------------------------
 #
-# SPEC §3: the policy, not the verb, decides what an absent, empty,
-# damaged, foreign, older or newer store means.
-say "parity: case 26 — the store matrix, per verb's policy"
+# The policy decides what an absent, empty, damaged, foreign, older or newer store means.
+say "contract: case 26 — the store matrix, per verb's policy"
 MATRIX="$S/matrix"
 mkdir -p "$MATRIX"
 # absent: the path names nothing.
@@ -1074,10 +935,6 @@ for kind in damaged foreign older newer; do
             "$kind store"
         check_one_line "case 26: $verb's $kind refusal is one line" "$ERR"
     done
-    # The two verbs that read a checkout run inside one. The
-    # resolve-merged case needs a trailer-mode checkout: `setup` above
-    # gave $R26 a report directory, and an artifact-mode scan reads the
-    # report files rather than the trailers.
     run_in "$R26" report --id 1 --slug m --db "$MATRIX/$kind.db"
     check "case 26: report refuses a $kind store" "$STATUS" "1"
     check_contains "case 26: report names the $kind store" "$ERR" \
@@ -1099,7 +956,7 @@ for kind in damaged foreign older newer; do
 done
 
 # --- case 27: report --check without a selector ---------------------------
-say "parity: case 27 — report --check needs no selector"
+say "contract: case 27 — report --check needs no selector"
 R27="$(new_repo c27)"
 mkdir -p "$R27/.skill-log/reports"
 : >"$R27/.skill-log/reports/.keep"
@@ -1117,7 +974,7 @@ check "case 27: the check's json carries the path" \
     "$(json_field "$OUT" path)" ".skill-log/reports/main.md"
 
 # --- case 28: uncommitted report edits resolve nothing --------------------
-say "parity: case 28 — uncommitted report edits resolve nothing"
+say "contract: case 28 — uncommitted report edits resolve nothing"
 R28="$(new_repo c28)"
 mkdir -p "$R28/.skill-log/reports"
 : >"$R28/.skill-log/reports/.keep"
@@ -1147,11 +1004,7 @@ run_in "$R28" resolve-merged --db "$DB28" --json
 check "case 28: an uncommitted edit adds no row" "$(fix_of "$DB28" 2)" ""
 
 # --- case 29: the time guard across differing writer offsets --------------
-#
-# The guard compares the row's instant with the commit's time. A row
-# written with one offset and a commit made with another must still
-# compare as instants, not as offset strings.
-say "parity: case 29 — the time guard compares instants, not offset strings"
+say "contract: case 29 — the time guard compares instants, not offset strings"
 R29="$(new_repo c29)"
 DB29="$DBT/c29.db"
 "$BIN" add --skill offset-row --db "$DB29" >/dev/null
@@ -1186,7 +1039,7 @@ check_contains "case 29: a later instant is skipped with its reason" "$ERR" \
     "skipped: logged_after_commit"
 
 # --- case 30: the deliberate non-idempotency of add -----------------------
-say "parity: case 30 — add records occurrences, it does not deduplicate"
+say "contract: case 30 — add records occurrences, it does not deduplicate"
 C30="$DBT/c30.db"
 "$BIN" add --skill twice --db "$C30" >/dev/null
 "$BIN" add --skill twice --db "$C30" >/dev/null
@@ -1195,7 +1048,7 @@ check "case 30: the two rows carry different ids" \
     "$(sqlite3 "$C30" 'SELECT COUNT(DISTINCT id) FROM invocations')" "2"
 
 # --- case 31: the repo and worktree, inside, outside and across a link ----
-say "parity: case 31 — the repo and worktree, inside, outside and across a link"
+say "contract: case 31 — the repo and worktree, inside, outside and across a link"
 R31="$(new_repo c31)"
 git -C "$R31" remote add origin "https://user:secret@example.com/owner/thing.git"
 git -C "$R31" worktree add -q -b linked "$S/repos/c31-linked" 2>/dev/null
@@ -1222,7 +1075,7 @@ check "case 31: outside a checkout the worktree is blank" \
     "$(json_field "$OUT" worktree)" ""
 
 # --- case 32: the machine names the marker --------------------------------
-say "parity: case 32 — a marker is machine#id, and the machine is the hostname"
+say "contract: case 32 — a marker is machine#id, and the machine is the hostname"
 C32="$DBT/c32.db"
 OUT="$("$BIN" add --skill marker --db "$C32")"
 check "case 32: add prints the marker" "$OUT" "$H#1"
@@ -1233,11 +1086,7 @@ check "case 32: the machine is the hostname" \
     "$(json_field "$OUT" machine)" "$H"
 
 # --- case 33: the sandbox guard refuses the real home ---------------------
-#
-# The suite's own guard: it must refuse a sandbox inside the real home,
-# and it must refuse a home outside the sandbox. A suite that could run
-# against the real store would write the real store.
-say "parity: case 33 — the sandbox guard refuses the real home"
+say "contract: case 33 — the sandbox guard refuses the real home"
 if sandbox_ok "$REAL_HOME/inside" "$REAL_HOME/inside/home"; then
     fail "case 33: a sandbox inside the real home is refused"
 else
@@ -1268,7 +1117,7 @@ check "case 33: the row went to the sandbox's store, not the real one" \
 
 printf '\n'
 if [ "$SKIPPED" -gt 0 ]; then
-    printf 'parity.sh: %d reference case(s) skipped as out of scope\n' "$SKIPPED"
+    printf 'contract.sh: %d case(s) skipped as out of scope\n' "$SKIPPED"
 fi
 # The clock injection the contract names: SKILL_LOG_NOW pins the
 # writer's stamp, proved through the CLI rather than by writing the store.

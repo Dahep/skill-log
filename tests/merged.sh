@@ -1,12 +1,4 @@
 #!/usr/bin/env bash
-# The resolve-merged test: resolve the rows a pull landed.
-#
-#   tests/merged.sh
-#
-# The hook's entry point, exercised as a process: commit trailers, a
-# report directory, a bounded range, a reused id, a hidden marker, and
-# the failures that must stay failures. The store is built through `add`;
-# `sqlite3` only inspects it.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -43,7 +35,7 @@ run() {
 }
 
 # This host's spelling. A marker naming it is local; a marker
-# naming any other machine is foreign and is never stamped (SPEC §2).
+# naming any other machine is foreign and is never stamped.
 H="$(hostname)"
 
 # new_repo <name>: an empty git repository under the scratch root.
@@ -91,7 +83,6 @@ check "the timestamp is ISO 8601 with an offset" \
         | grep -cE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[+-][0-9]{2}:[0-9]{2}$')" "1"
 check "the scan is silent on stderr" "$(cat "$SCRATCH/one.err")" ""
 
-# Idempotent: the hook runs after every pull for free.
 (
     cd "$REPO" || exit 1
     "$BIN" resolve-merged --db "$DB" --json >"$SCRATCH/two.json" 2>"$SCRATCH/two.err"
@@ -109,7 +100,6 @@ check "--quiet prints nothing" "$(cat "$SCRATCH/quiet.out")$(cat "$SCRATCH/quiet
 
 # ------------------------------------------------------------- reused ids
 
-# A row logged after the named commit is an id reused by a rebuilt log.
 commit_file "$REPO" "Skill-log-Fix: $H#3"
 sleep 1
 "$BIN" add --skill logged-later --machine "$H" --db "$DB" >/dev/null
@@ -122,7 +112,6 @@ check_contains "a later row is skipped with its reason" \
 check "the guarded row stays unresolved" \
     "$(sqlite3 "$DB" 'select fix from invocations where id = 3')" ""
 
-# The contract's skip tokens, not prose, reach both answers.
 (
     cd "$REPO" || exit 1
     "$BIN" resolve-merged --db "$DB" --dry-run --json >"$SCRATCH/tokens.json" 2>/dev/null
@@ -157,10 +146,6 @@ check "the unknown id's reason is the contract token" \
             if s["row"] == sys.argv[1]))' "$H#99")" \
     "unknown_id"
 
-# SPEC §5.6: hidden and malformed markers are reported with their ids or
-# text in `ignored`, never silently dropped. The malformed text is
-# therefore in the JSON array too, not only on stderr — a `--quiet --json`
-# caller must still learn about it.
 check "a malformed marker is in the ignored array" \
     "$(json_array "$(cat "$SCRATCH/bad.json")" ignored | grep -c '<id>')" "1"
 check "a bare id is in the ignored array" \
@@ -204,12 +189,6 @@ check "the foreign marker's reason is the contract token" \
 check "a foreign marker is never stamped in the answer" \
     "$(json_array "$(cat "$SCRATCH/foreign.json")" resolved)" ""
 
-# A stored row that carries another machine's name does not make that
-# machine this store's own: SPEC §2 says a marker naming another
-# machine is foreign and is never stamped, and the store holds one row
-# per machine only in a consolidated copy. This store is a machine's
-# own store, so the spelling that is not this host's is foreign even
-# when a row happens to carry it.
 REPO_FM="$(new_repo foreign-row)"
 DB_FM="$SCRATCH/foreign-row.db"
 "$BIN" add --skill owned-elsewhere --machine otherbox --db "$DB_FM" >/dev/null
@@ -237,8 +216,6 @@ check "the foreign marker is not in the resolved answer" \
 n="$(date +%s%N)"
 printf '%s' "$n" >"$REPO/file"
 git -C "$REPO" add file
-# The shape a multi-author squash leaves: the marker block, then a later
-# trailer block that hides it from git's trailer parser.
 git -C "$REPO" commit -q \
     -m "skills: name a hidden row" \
     -m "Skill-log-Fix: $H#4" \
@@ -253,9 +230,6 @@ check_contains "the hidden note says why" \
     "$(cat "$SCRATCH/hidden.err")" "not in the commit's last trailer block"
 check "the hidden marker stamped nothing" \
     "$(sqlite3 "$DB" 'select fix from invocations where id = 4')" ""
-# The ignored array carries the hidden marker and the malformed values
-# this repo's earlier commits left behind (SPEC §5.6: one array for
-# both). The hidden one is named by the commit it was buried in.
 check "the JSON names the hidden marker" \
     "$(json_array "$(cat "$SCRATCH/hidden.json")" ignored \
         | grep -c "not in the commit's last trailer block")" "1"
@@ -269,11 +243,6 @@ check "--quiet hides the ignored marker" \
     "$(cat "$SCRATCH/hq.out")$(cat "$SCRATCH/hq.err")" ""
 
 # --------------------------------------------------- partially buried markers
-#
-# Two marker blocks in one body: git's trailer parser returns only the
-# last one, so the earlier one is buried. The buried marker must be
-# reported, not dropped — and it must be reported even when the last
-# block did return a value, which is the case the old scan missed.
 REPO_PB="$(new_repo partial-burial)"
 DB_PB="$SCRATCH/partial-burial.db"
 "$BIN" add --skill buried-row --machine "$H" --db "$DB_PB" >/dev/null
@@ -297,8 +266,6 @@ check "the buried marker is in the ignored array" \
     "$(json_array "$(cat "$SCRATCH/partial.json")" ignored | grep -c "$H#1")" "1"
 check "the last block's marker is not reported as buried" \
     "$(json_array "$(cat "$SCRATCH/partial.json")" ignored | grep -c "$H#2")" "0"
-# The last block's marker still resolves: only the buried one is
-# reported, never stamped.
 check "the last block's marker still resolves" \
     "$(json_array "$(cat "$SCRATCH/partial.json")" resolved)" "$H#2"
 check "the buried marker stamped nothing" \
@@ -326,9 +293,6 @@ check "the row appears once in the answer" \
 
 # --------------------------------------------------- restamp on a new commit
 
-# An amended fix supersedes an earlier one: a row already stamped with a
-# different commit is restamped, and the stamp moves. Idempotency is a
-# second scan of the *same* commit, not a freeze on the first fix.
 REPO7="$(new_repo restamp)"
 DB7="$SCRATCH/restamp.db"
 "$BIN" add --skill amended --machine "$H" --db "$DB7" >/dev/null
@@ -342,7 +306,6 @@ check "the first fix stamps the row" \
     "$(sqlite3 "$DB7" 'select fix from invocations where id = 1')" "$OLDER_FIX"
 RESOLVED_ONE="$(sqlite3 "$DB7" 'select resolved_at from invocations where id = 1')"
 
-# A newer commit naming the same row: the amended fix supersedes.
 sleep 1
 commit_file "$REPO7" "Skill-log-Fix: $H#1"
 NEWER_FIX="$(git -C "$REPO7" rev-parse HEAD)"
@@ -358,7 +321,6 @@ check "resolved_at moves to the restamp" \
     "$([ "$(sqlite3 "$DB7" 'select resolved_at from invocations where id = 1')" \
         != "$RESOLVED_ONE" ] && echo moved || echo frozen)" "moved"
 
-# A same-commit row is unchanged; a re-scan of the newer range is idempotent.
 (
     cd "$REPO7" || exit 1
     "$BIN" resolve-merged --since "$OLDER_FIX" --db "$DB7" --json >"$SCRATCH/restamp3.json"
@@ -388,10 +350,6 @@ check "--since only reads what came after it" \
 check "the marker before --since is left alone" \
     "$(sqlite3 "$DB3" 'select fix from invocations where id = 1')" ""
 
-# Repeated --since options use the last value in argument order. HEAD
-# bounds the scan to nothing, so neither a resolution nor an unchanged
-# answer comes back; the earlier bound would instead find the second
-# commit's already-stamped marker and report it as unchanged.
 (
     cd "$REPO3" || exit 1
     "$BIN" resolve-merged --since "$BASE" --since=HEAD --db "$DB3" --json \
@@ -402,7 +360,6 @@ check "the last --since bounds the scan" \
 check "the earlier --since did not bound the scan" \
     "$(json_array "$(cat "$SCRATCH/since-last.json")" unchanged)" ""
 
-# A range git cannot resolve is a quiet full scan, not a failed pull.
 (
     cd "$REPO3" || exit 1
     "$BIN" resolve-merged --since no-such-revision --db "$DB3" \
@@ -413,7 +370,6 @@ check "the fallback is quiet" "$(cat "$SCRATCH/fallback.err")" ""
 check "the fallback scans the full history" \
     "$(sqlite3 "$DB3" "select fix <> '' from invocations where id = 1")" "1"
 
-# An option-shaped --since would reach git as an option: refuse it.
 (
     cd "$REPO3" || exit 1
     "$BIN" resolve-merged --since=--output=/tmp/opencode/x --db "$DB3" \
@@ -464,7 +420,6 @@ check "a missing store writes no store" \
     "$([ -e "$SCRATCH/no-store/skills.db" ] && echo created || echo absent)" "absent"
 check "a missing store is silent" "$(cat "$SCRATCH/missing.err")" ""
 
-# A table-less file is an empty log, not a schema to create.
 : >"$SCRATCH/tableless.db"
 BEFORE_SUM="$(md5sum <"$SCRATCH/tableless.db")"
 (
@@ -504,7 +459,6 @@ check "a trailer is not read in artifact mode" \
 check_contains "the ignored trailer is named once" \
     "$(cat "$SCRATCH/artifact.err")" "resolves from .skill-log/reports"
 
-# A bounded second scan says nothing: the hook must not narrate a pull.
 (
     cd "$REPO6" || exit 1
     "$BIN" resolve-merged --since "$REPORT_COMMIT" --db "$DB6" \
@@ -513,8 +467,6 @@ check_contains "the ignored trailer is named once" \
 check "a bounded second scan prints nothing" \
     "$(cat "$SCRATCH/repeat.out")$(cat "$SCRATCH/repeat.err")" ""
 
-# A hand-written bad line is reported and never swallowed; the good line
-# still resolves.
 "$BIN" add --skill by-hand --machine "$H" --db "$DB6" >/dev/null
 printf "%s#3\nnot-a-marker\n" "$H" >"$REPO6/.skill-log/reports/bad.md"
 printf 'change\n' >"$REPO6/file"
@@ -530,7 +482,6 @@ check_contains "a malformed report line is reported with its file" \
 check "the good line in the same report still resolves" \
     "$(sqlite3 "$DB6" "select fix <> '' from invocations where id = 3")" "1"
 
-# A full scan reads every report file in the tree.
 "$BIN" add --skill manual --machine "$H" --db "$DB6" >/dev/null
 printf "%s#4\n" "$H" >"$REPO6/.skill-log/reports/manual.md"
 printf 'change\n' >"$REPO6/file"
@@ -544,7 +495,6 @@ git -C "$REPO6" commit -q -m "a manual report"
 check "a full scan reads every report file" \
     "$(json_array "$(cat "$SCRATCH/manual.json")" resolved)" "$H#4"
 
-# The report directory's README is documentation, not a marker report.
 REPO_README="$(new_repo report-readme)"
 mkdir -p "$REPO_README/.skill-log/reports"
 printf '# Reports\n\nThis directory holds machine#id marker files.\n' >"$REPO_README/.skill-log/reports/README.md"
@@ -560,7 +510,6 @@ DB_README="$SCRATCH/report-readme.db"
 check "the report directory README is not a malformed marker" \
     "$(json_array "$(cat "$SCRATCH/report-readme.json")" ignored)" ""
 
-# A full artifact scan reads the committed tree, not the working tree.
 REPO_COMMITTED="$(new_repo report-committed)"
 mkdir -p "$REPO_COMMITTED/.skill-log/reports"
 printf '# Reports\n' >"$REPO_COMMITTED/.skill-log/reports/README.md"
@@ -581,7 +530,6 @@ rm "$REPO_COMMITTED/.skill-log/reports/fix.md"
 check "a committed report is read despite a working-tree deletion" \
     "$(sqlite3 "$DB_COMMITTED" 'select fix from invocations where id = 1')" "$COMMITTED_FIX"
 
-# Equal commit seconds use history order, so the newer commit wins.
 REPO_TIE="$(new_repo equal-seconds)"
 DB_TIE="$SCRATCH/equal-seconds.db"
 SKILL_LOG_NOW='2025-12-31T23:00:00Z' \

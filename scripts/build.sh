@@ -1,21 +1,6 @@
 #!/usr/bin/env bash
-# Build the release-shaped artifact: one static binary.
-#
-#   scripts/build.sh
-#
-# The artifact runs on a machine with no Go toolchain and no system SQLite:
-# the SQLite implementation is pure Go, so there is nothing to bundle beside
-# the executable.
-#
-#   dist/skill-log          the executable
-#
-# The version is baked in at build time from SKILL_LOG_VERSION, else
-# `git describe --tags`, else 0.0.0-dev. It is written into the binary with
-# -ldflags, never into the checkout.
-#
-# Only the Go packages under cmd/ and internal/ are built. The reference/
-# area is the verbatim report-era implementation kept as the parity ground
-# truth: it is never built, never staged and never shipped.
+# Builds the static release artifact at dist/skill-log.
+# Run: scripts/build.sh
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -38,9 +23,7 @@ resolve_version() {
         return
     fi
     local described
-    # `git describe --tags` and nothing else: SPEC §8 names the two
-    # fallbacks (`git describe --tags`, else 0.0.0-dev), and a `-dirty`
-    # suffix is a version the release grammar rejects.
+    # A `-dirty` suffix is a version the release grammar rejects.
     if described="$(git -C "$ROOT" describe --tags 2>/dev/null)" &&
         [ -n "$described" ]; then
         printf '%s' "$described"

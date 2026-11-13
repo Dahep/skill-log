@@ -1,19 +1,6 @@
 #!/usr/bin/env bash
-# The context test: the fields a row carries and where they come from.
-#
-#   tests/context.sh
-#
-# It exercises ADR-0002's precedence chain against the built artifact:
-# the explicit flag, then the field's SKILL_LOG_* variable, then an
-# enabled adapter, then the built-in detection — one field at a time.
-#
-# Everything runs in a sandbox: a temporary HOME, a temporary store, and
-# temporary git repositories. The detection reads the working tree the row
-# names, so the cases run from inside the repository they created, and the
-# cases that care about a *named* worktree pass one.
-#
-# The opencode adapter's session store is a fake one, built with the
-# sqlite3 CLI, so the test never touches the real opencode database.
+# Context suite: verifies context precedence against the built artifact.
+# Run: tests/context.sh
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -38,8 +25,6 @@ mkdir -p "$SCRATCH/home"
 
 HOME_DIR="$SCRATCH/home"
 
-# The sandbox's HOME, so nothing reaches the real opencode store, the
-# real ~/.t3, or the real skill-log store.
 export HOME="$HOME_DIR"
 unset XDG_STATE_HOME SKILL_LOG_DB
 unset SKILL_LOG_ADAPTERS SKILL_LOG_HARNESS SKILL_LOG_SESSION
@@ -125,10 +110,6 @@ check "an ssh remote's credentials never reach the row" \
 check "an ssh remote's basename is the repo" "$(json_field "$OUT" repo)" "thing"
 
 # ------------------------------------------------- a named worktree wins
-#
-# `repo` and `worktree` must describe the same checkout. When the caller
-# names the worktree, the repository comes from *that* tree, not from the
-# process's own directory.
 
 OTHER="$SCRATCH/other-repo"
 make_repo "$OTHER" other
@@ -237,9 +218,6 @@ check "the opencode adapter fills the session" "$(json_field "$OUT" session)" "s
 check "the opencode adapter renders the model as provider/id" \
     "$(json_field "$OUT" model)" "opencode/kimi-k3"
 
-# The model resolves after the session (SPEC §4). A session named by the
-# flag is the session the row carries, so the model is that session's
-# model — and not the model of whatever session the environment names.
 OUT="$(HOME="$OC_HOME" OPENCODE_SESSION_ID=ses_other SKILL_LOG_ADAPTERS=opencode \
     "$BIN" add --skill adapters --dry-run --json --session ses_flag)"
 check "a named session is the session the row carries" \
@@ -271,15 +249,11 @@ OUT="$(HOME="$OC_HOME" OPENCODE_SESSION_ID=ses_nested \
 check "the model reader takes the top-level id" \
     "$(json_field "$OUT" model)" "p/real"
 
-# An escape this reader cannot decode is refused rather than mangled:
-# the value falls back to the raw text, which is what the reference does
-# for a shape it cannot parse.
 OUT="$(HOME="$OC_HOME" OPENCODE_SESSION_ID=ses_escaped \
     "$BIN" add --skill adapters --dry-run --json --adapter opencode)"
 check "an undecodable escape falls back to the raw value" \
     "$(json_field "$OUT" model)" '{"id":"\u0061","providerID":"p"}'
 
-# A value that is not that shape is passed through unchanged.
 OUT="$(HOME="$OC_HOME" OPENCODE_SESSION_ID=ses_bare \
     "$BIN" add --skill adapters --dry-run --json --adapter opencode)"
 check "a bare model value is passed through" "$(json_field "$OUT" model)" "kimi-k3"
@@ -289,7 +263,6 @@ OUT="$(HOME="$OC_HOME" OPENCODE_SESSION_ID=ses_test \
     "$BIN" add --skill adapters --dry-run --json --adapter opencode)"
 check "--adapter opencode enables the adapter" "$(json_field "$OUT" harness)" "opencode"
 
-# The flag takes a comma-separated list, and may be repeated.
 OUT="$(HOME="$OC_HOME" OPENCODE_SESSION_ID=ses_test \
     "$BIN" add --skill adapters --dry-run --json --adapter opencode,t3)"
 check "--adapter takes a comma-separated list" "$(json_field "$OUT" harness)" "opencode"
@@ -297,7 +270,6 @@ OUT="$(HOME="$OC_HOME" OPENCODE_SESSION_ID=ses_test \
     "$BIN" add --skill adapters --dry-run --json --adapter opencode --adapter t3)"
 check "--adapter may be repeated" "$(json_field "$OUT" harness)" "opencode"
 
-# The machine is always detected: there is no SKILL_LOG_MACHINE.
 OUT="$(SKILL_LOG_MACHINE=not-the-machine \
     "$BIN" add --skill adapters --dry-run --json)"
 check "SKILL_LOG_MACHINE does not fill the machine" \
@@ -305,8 +277,6 @@ check "SKILL_LOG_MACHINE does not fill the machine" \
 OUT="$("$BIN" add --skill adapters --dry-run --json --machine named)"
 check "--machine names the machine" "$(json_field "$OUT" machine)" "named"
 
-# The machine namespaces every marker (`machine#id`), so a value that
-# cannot appear in one is refused at the boundary.
 run add --skill machine --dry-run --machine 'box#extra'
 check "a machine with a marker separator is a usage error" "$STATUS" "2"
 check_one_line "a machine with a marker separator is one line" "$ERR"
@@ -317,23 +287,19 @@ run add --skill machine --dry-run --machine "$(printf 'box\nname')"
 check "a machine with a newline is a usage error" "$STATUS" "2"
 check_one_line "a machine with a newline is one line" "$ERR"
 
-# The flag beats the adapter's value.
 OUT="$(HOME="$OC_HOME" OPENCODE_SESSION_ID=ses_test \
     "$BIN" add --skill adapters --dry-run --json --adapter opencode \
     --model flag/model)"
 check "--model beats the adapter" "$(json_field "$OUT" model)" "flag/model"
 
-# The variable beats the adapter's value.
 OUT="$(HOME="$OC_HOME" OPENCODE_SESSION_ID=ses_test SKILL_LOG_MODEL=env/model \
     "$BIN" add --skill adapters --dry-run --json --adapter opencode)"
 check "SKILL_LOG_MODEL beats the adapter" "$(json_field "$OUT" model)" "env/model"
 
-# The adapter never sets the parent.
 OUT="$(HOME="$OC_HOME" OPENCODE_SESSION_ID=ses_test SKILL_LOG_ADAPTERS=opencode \
     "$BIN" add --skill adapters --dry-run --json)"
 check "an adapter never sets the parent" "$(json_field "$OUT" parent)" ""
 
-# A missing session store is a blank model, not an error.
 OUT="$(HOME="$SCRATCH/no-store-home" OPENCODE_SESSION_ID=ses_test \
     SKILL_LOG_ADAPTERS=opencode \
     "$BIN" add --skill adapters --dry-run --json)"
@@ -341,7 +307,6 @@ check "a missing session store is a blank model" "$(json_field "$OUT" model)" ""
 check "a missing session store still fills the harness" \
     "$(json_field "$OUT" harness)" "opencode"
 
-# The t3 adapter fills the project from the worktree's path.
 T3_HOME="$SCRATCH/t3"
 mkdir -p "$T3_HOME/worktrees/myproject/sub"
 OUT="$(T3CODE_HOME="$T3_HOME" "$BIN" add --skill adapters --dry-run --json \
@@ -349,7 +314,6 @@ OUT="$(T3CODE_HOME="$T3_HOME" "$BIN" add --skill adapters --dry-run --json \
 check "the t3 adapter fills the project" "$(json_field "$OUT" project)" "myproject"
 check "the t3 adapter never invents a thread id" "$(json_field "$OUT" t3_thread)" ""
 
-# Without T3CODE_HOME, the T3 home is `$HOME/.t3`.
 FALLBACK_HOME="$SCRATCH/t3fallback-home"
 mkdir -p "$FALLBACK_HOME/.t3/worktrees/fallback/sub"
 OUT="$(HOME="$FALLBACK_HOME" T3CODE_HOME="" \
@@ -358,17 +322,14 @@ OUT="$(HOME="$FALLBACK_HOME" T3CODE_HOME="" \
 check "the t3 adapter falls back to HOME/.t3" \
     "$(json_field "$OUT" project)" "fallback"
 
-# Outside T3 there is no project.
 OUT="$(T3CODE_HOME="$T3_HOME" "$BIN" add --skill adapters --dry-run --json \
     --adapter t3 --worktree "$OUTSIDE")"
 check "the t3 adapter leaves the project empty outside T3" \
     "$(json_field "$OUT" project)" ""
 
-# An unknown adapter is ignored rather than fatal.
 run add --skill adapters --dry-run --json --adapter no-such-adapter
 check "an unknown adapter is ignored" "$STATUS" "0"
 
-# An unknown flag is a usage error, and it is one line.
 run add --skill adapters --no-such-flag
 check "an unknown flag exits 2" "$STATUS" "2"
 check_one_line "an unknown flag is one stderr line" "$ERR"
@@ -387,12 +348,6 @@ OUT="$("$BIN" add --skill stdin --dry-run --json --problem - \
 check "--problem - reads the text from a file" "$(json_problem "$OUT")" \
     "the problem from a file"
 
-# On a terminal there is nothing to read, and the command must not wait.
-#
-# The redirect lives inside the `script` command string: `script` runs
-# the command on a pty, and a pty is one stream, so a redirect outside
-# the string would capture the pty itself rather than the command's
-# stderr.
 if command -v script >/dev/null 2>&1; then
     script -qec "$BIN add --skill stdin --dry-run --problem - 2>$SCRATCH/tty.err" \
         /dev/null >"$SCRATCH/tty.out"
@@ -424,8 +379,6 @@ check "the row carries the machine" \
 
 # --------------------------------------------------------------- json
 
-# The writer escapes; the reader here parses. A value carrying a quote
-# round-trips, which a `sed` field reader cannot do.
 OUT="$("$BIN" add --skill 'a"b' --dry-run --json)"
 check "an escaped quote round-trips through the JSON" \
     "$(json_field "$OUT" skill)" 'a"b'
