@@ -1,5 +1,4 @@
-// Package template resolves the usage-log templates, their provenance state,
-// and the path of the running binary.
+// Package template resolves the usage-log templates, their provenance state, and the binary path.
 package template
 
 import (
@@ -26,8 +25,7 @@ type Template struct {
 	Moved   bool
 }
 
-// ResolveDir returns the effective template directory: flag, environment, user
-// directory. The shipped defaults are the per-file fallback.
+// ResolveDir returns the effective template directory: flag, environment, user directory.
 func ResolveDir(flag string) string {
 	if strings.TrimSpace(flag) != "" {
 		return strings.TrimSpace(flag)
@@ -74,6 +72,8 @@ func Load(name, templateDir string) (Template, error) {
 }
 
 // SeededPath is where the seeded-from record for name lives.
+//
+// The record lives under the state directory, never under the user config dir.
 func SeededPath(name string) string {
 	return joinPath(joinPath(settings.StateDir(), seededDirName), name)
 }
@@ -126,9 +126,7 @@ func findInPath(program string) string {
 			continue
 		}
 		candidate := entry + "/" + program
-		// A directory named like the program can appear earlier on PATH;
-		// the shell skips it, and so does this lookup. The command must be
-		// a regular file that can actually run.
+		// A directory named like the program can appear earlier on PATH.
 		if format.IsRegularFile(candidate) && format.IsExecutable(candidate) {
 			return candidate
 		}
