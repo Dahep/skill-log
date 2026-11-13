@@ -93,8 +93,10 @@ the SQLite C amalgamation to Go, with no cgo and no C toolchain.
   writer were all obligations. In Go the clock (`time`), the hostname
   (`os.Hostname`) and the process runner (`os/exec`) are standard-library
   calls, and the JSON writer stays hand-written for the reason it always was:
-  the tool writes JSON and never parses it, and `encoding/json` would
-  HTML-escape characters the tool's own output is allowed to carry.
+  `encoding/json` would HTML-escape characters the tool's own output is
+  allowed to carry. The port reads exactly one JSON value — opencode's stored
+  model — through a targeted scanner that keeps the reference's documented
+  fallback, passing an unparseable value through raw rather than mangling it.
 
 - **The store contract does not move.** ADR-0002's refusal taxonomy is a
   value carried by the store layer, not a word re-derived from an error
