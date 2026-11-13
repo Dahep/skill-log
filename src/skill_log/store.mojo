@@ -1442,6 +1442,42 @@ struct WriteResult(Movable):
         self.refusal = Refusal()
 
 
+# The busy-retry budget, owned by one place. A write that meets a lock
+# asks this whether it may try again, and the answer is the same for
+# every write: the deadline is the same, the sleep is the same, and the
+# failure that outlives the budget is named as the lock it was.
+struct BusyBudget:
+    """The wall-clock budget a write spends on a lock.
+
+    The deadline is the moment the budget runs out. `retry` answers
+    whether the attempt may be made again, and waits for the shorter of
+    the sleep and the time left.
+    """
+
+    var deadline: Float64
+
+    def __init__(out self):
+        self.deadline = now_seconds() + WRITE_BUDGET_SECONDS
+
+    def remaining(self) -> Float64:
+        """The seconds left in the budget."""
+        return self.deadline - now_seconds()
+
+    def retry(self) -> Bool:
+        """True when there is budget left for another attempt.
+
+        Waits for the shorter of the sleep and the time left, so the
+        budget is never overshot by more than the sleep itself.
+        """
+        var left = self.remaining()
+        if left <= 0:
+            # The budget is spent. The failure is a lock, and the store
+            # names it as one.
+            return False
+        sleep(min(Float64(WRITE_RETRY_SLEEP), left))
+        return True
+
+
 def write_invocation(
     path: String, mut row: Invocation, mut problems: List[String]
 ) raises -> WriteResult:
@@ -1460,11 +1496,13 @@ def write_invocation(
     stamped here, from the same connection and inside the same
     transaction, so the row carries the moment it was written.
     """
-    var deadline = now_seconds() + WRITE_BUDGET_SECONDS
+    var result = WriteResult()
+    var budget = BusyBudget()
 
     while True:
         try:
-            return write_attempt(path, row, problems)
+            result = write_attempt(path, row, problems)
+            return result^
         except e:
             var message = String(e)
             var detail = strip_path(message, path)
@@ -1472,12 +1510,10 @@ def write_invocation(
                 # Not a lock: the store classifies it and the named
                 # failure is what leaves this function.
                 raise_write_failure(path, message)
-            var remaining = deadline - now_seconds()
-            if remaining <= 0:
+            if not budget.retry():
                 # The budget is spent. The failure is a lock, and the
                 # store names it as one.
                 raise_write_failure(path, message)
-            sleep(min(Float64(WRITE_RETRY_SLEEP), remaining))
 
 
 def write_attempt(
@@ -1622,7 +1658,7 @@ def resolve_row(
         result.changed = True
         return result^
 
-    var deadline = now_seconds() + WRITE_BUDGET_SECONDS
+    var budget = BusyBudget()
     while True:
         try:
             return stamp_attempt(path, id, fix)
@@ -1633,12 +1669,10 @@ def resolve_row(
                 # Not a lock: the store classifies it and the named
                 # failure is what leaves this function.
                 raise_write_failure(path, message)
-            var remaining = deadline - now_seconds()
-            if remaining <= 0:
+            if not budget.retry():
                 # The budget is spent. The failure is a lock, and the
                 # store names it as one.
                 raise_write_failure(path, message)
-            sleep(min(Float64(WRITE_RETRY_SLEEP), remaining))
 
 
 def stamp_attempt(path: String, id: Int, fix: String) raises -> ResolvedRow:
@@ -1980,7 +2014,7 @@ def resolve_merged_rows(
     if dry_run or len(preview.stamped) == 0:
         return preview^
 
-    var deadline = now_seconds() + WRITE_BUDGET_SECONDS
+    var budget = BusyBudget()
     while True:
         try:
             return merged_write_attempt(path, located, local_host)
@@ -1991,12 +2025,10 @@ def resolve_merged_rows(
                 # Not a lock: the store classifies it and the named
                 # failure is what leaves this function.
                 raise_write_failure(path, message)
-            var remaining = deadline - now_seconds()
-            if remaining <= 0:
+            if not budget.retry():
                 # The budget is spent. The failure is a lock, and the
                 # store names it as one.
                 raise_write_failure(path, message)
-            sleep(min(Float64(WRITE_RETRY_SLEEP), remaining))
 
 
 def merged_write_attempt(
