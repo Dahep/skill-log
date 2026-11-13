@@ -1,9 +1,8 @@
 # skill-log — specification
 
 **Status:** normative, 1.0. This file is the single source of truth for what
-skill-log does. It replaces the contract that lived in issues #1 and #3, both
-of which are closed as historical records. How the documents divide, and how
-each changes, is defined in `AGENTS.md` §Specification.
+skill-log does. How the documents divide, and how each changes, is defined in
+`AGENTS.md` §Specification.
 
 | Document | Answers |
 |---|---|
@@ -125,10 +124,6 @@ Timestamps keep the writer's offset for display and ordering by their
 normalized instant for comparison. `resolve-merged` compares a row's instant
 against the named commit's time; comparing the offset strings instead would
 mis-stamp across offsets.
-
-`origin_id` and the unique `(machine, origin_id)` index do not exist in 1.0.
-They existed to make multi-machine merging idempotent, and merging left scope
-(see [ADR-0002](docs/adr/0002-explicit-harness-context.md)).
 
 ### Creation, refusal and reads
 
@@ -517,7 +512,7 @@ never touches a user copy: the state directory records the hash of the shipped
 default each copy was seeded from, and `audit` and `setup --check` name it and
 print the two commands that adopt it (`skills template seed --force`, then
 `skills adopt`). Only a human runs that, and only to discard their own wording.
-The binary carries no list of historical defaults.
+The binary carries no list of previous defaults.
 
 ### The fence
 
@@ -623,7 +618,7 @@ session decides how the log gets read. Neither changes the other's contract.
   The executable is built with `CGO_ENABLED=0`, so it carries no dynamic
   dependency at all: no `lib/` directory, no rpath and no runtime libraries.
   The archive holds the binary and the licence and notice files, and
-  nothing else — never `reference/`, `tests/` or the source tree.
+  nothing else — never the tests or the source tree.
 
 - **Versioning**: semantic versioning, release tag `vX.Y.Z`; `--version` is
   baked in at build time from the tag with
@@ -647,12 +642,10 @@ session decides how the log gets read. Neither changes the other's contract.
   JSON and never parses it); marker and report parsing; the resolution plan.
   The clock, the hostname, the process runner and the SQLite driver are
   standard-library or module calls, not obligations.
-  [ADR-0004](docs/adr/0004-go-binary-and-pure-go-sqlite.md) records why.
+  [ADR-0001](docs/adr/0001-go-binary-and-sqlite.md) records why.
 
 ### Migration
 
-- The Python implementation stays the reference until the Go binary passes
-  the parity harness (§9).
 - The store is not inherited: 1.0 creates its own on first write. Moving a
   machine's existing rows is a machine-setup task
   ([Dahep/dotfiles#225](https://github.com/Dahep/dotfiles/issues/225)), not a
@@ -692,9 +685,6 @@ session decides how the log gets read. Neither changes the other's contract.
   and assert the artifact is statically linked — the loader has no dynamic
   dependency to resolve, so there is no bundled copy that could be the wrong
   one.
-- **Parity gate**: the reference implementation's harness cases run against
-  the installed binary, with the intentionally changed commands adapted and
-  case names kept comparable, plus the cases the new contract needs.
 - A good test fails when observable behavior changes and passes for any
   internal structure that preserves the contract. No assertions on private
   functions, no timing sleeps except where the contract is second-granular.
