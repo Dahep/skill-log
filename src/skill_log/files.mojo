@@ -2,7 +2,7 @@
 
 from std.ffi import CStringSpan, OwnedDLHandle, RTLD, c_char
 from std.memory import Pointer
-from std.os import stat
+from std.os import remove, stat
 from std.pathlib import Path
 from std.time import monotonic
 
@@ -51,11 +51,7 @@ def temp_name(path: String) raises -> String:
 def unlink_path(path: String):
     """Remove `path`, best effort."""
     try:
-        var lib = OwnedDLHandle("libc.so.6", RTLD.NOW)
-        var unlink_fn = dl_sym[def(Int) thin abi("C") -> Int](lib, "unlink")
-        var buffer = c_string(path)
-        _ = unlink_fn(Int(buffer.unsafe_ptr()))
-        _ = buffer^
+        remove(path)
     except:
         return
 

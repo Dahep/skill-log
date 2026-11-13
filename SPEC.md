@@ -620,7 +620,7 @@ session decides how the log gets read. Neither changes the other's contract.
 
 - **Language**: Mojo 1.2, toolchain pinned as a mise tool (`pypi:mojo@1.2.0`),
   locked in `mise.toml`.
-- **Storage**: SQLite through `ehsanmok/sqlite` v0.2.2 (MIT), vendored as
+- **Storage**: SQLite through `ehsanmok/sqlite` at `07b8d8a` (post-v0.2.2; MIT), vendored as
   `vendor/sqlite/ffi.mojo` + `db.mojo` with the upstream commit and license
   recorded. No ORM layer, no `morph`, no live dependency. Upgrades are a
   deliberate copy-forward.

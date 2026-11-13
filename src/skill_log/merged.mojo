@@ -6,7 +6,7 @@ from skill_log.context import hostname
 from skill_log.detect import shell_quote
 from skill_log.errors import EXIT_FAILURE, EXIT_USAGE, Outcome
 from skill_log.flags import take_declared_value
-from skill_log.git import git_commit, git_output, git_toplevel
+from skill_log.git import git, git_commit, git_toplevel
 from skill_log.json import JsonObject
 from skill_log.markers import parse_marker
 from skill_log.report import REPORT_DIR, TRAILER_KEY
@@ -228,7 +228,7 @@ def scan_trailers(root: String, since: String) -> Scan:
         + ",valueonly)%x00%B%x00"
     )
     var args = "log " + shell_quote(format) + " " + shell_quote(span)
-    var out = git_output(root, args)
+    var out = git(root, args)
 
     var fields = out.split(FIELD)
     var at = 0
@@ -300,7 +300,7 @@ def latest_report_commit(
         + " -- "
         + shell_quote(relative)
     )
-    var out = String(git_output(root, args).strip())
+    var out = String(git(root, args).strip())
     if out == "":
         return ReportFile()
     var fields = out.split(FIELD)
@@ -374,7 +374,7 @@ def report_files(root: String, since: String) raises -> List[ReportFile]:
         + " -- "
         + shell_quote(REPORT_DIR)
     )
-    var listing = git_output(root, args)
+    var listing = git(root, args)
     var prefix = REPORT_DIR + "/"
     for line in listing.split("\n"):
         var relative = String(line.strip())
@@ -393,7 +393,7 @@ def scan_reports(root: String, since: String) raises -> Scan:
     var scan = Scan()
     var files = report_files(root, since)
     for i in range(len(files)):
-        var content = git_output(
+        var content = git(
             root,
             "show " + shell_quote(files[i].commit + ":" + files[i].path),
         )

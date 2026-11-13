@@ -242,6 +242,11 @@ The port has since closed most of the gap:
 - **One settings module** for the XDG paths and the binary-path resolver.
 - **One value-flag declaration per verb**, read by the parser and dispatcher.
 - **One busy-retry budget** for the three writes.
+- **One SQLite image for the read path.** The vendored binding was upgraded to
+  a `main` commit after v0.2.2, which carries `Database(path, flags=...)` over
+  `sqlite3_open_v2`; `opendb.mojo` now opens read-only through it instead of
+  `dlopen`ing SQLite itself and planting a handle, so the handle and the
+  function pointers belong to the same image.
 
 ### Not shipped
 
@@ -254,12 +259,6 @@ The port has since closed most of the gap:
 - **A settings descriptor table.** §4 wants one row per context key emitting
   the flag, the environment name, the help line and the precedence order.
   The value-flag lists are single-sourced; the descriptor is not.
-- **One SQLite image for the read path.** The read-only open in `opendb.mojo`
-  `dlopen`s the library itself and plants the handle in the vendored
-  `Database`, while the binding resolves its own image (and honours
-  `$CONDA_PREFIX`). Latent, not observed: the release ships without a
-  toolchain and without `CONDA_PREFIX`. The fix belongs in the binding:
-  `Database.open_v2(path, flags)`.
 
 ### Why
 

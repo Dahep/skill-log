@@ -1,12 +1,10 @@
 """The writer's context: when it happened, and on which machine."""
 
-from std.ffi import CStringSpan, OwnedDLHandle, RTLD, c_char
-from std.memory import alloc
 from std.os import getenv
+from std.pathlib import Path
 
 from sqlite.db import Database
 
-from skill_log.ffi import dl_sym
 
 comptime CLOCK_OVERRIDE = "SKILL_LOG_NOW"
 
@@ -74,19 +72,12 @@ def hostname() raises -> String:
     nothing can resolve.
     """
     try:
-        var lib = OwnedDLHandle("libc.so.6", RTLD.NOW)
-        var gethostname = dl_sym[def(Int, Int) thin abi("C") -> Int](
-            lib, "gethostname"
-        )
-        var buffer = alloc[c_char](HOSTNAME_SIZE)
-        var rc = gethostname(Int(buffer), HOSTNAME_SIZE)
-        if rc != 0:
-            raise hostname_unavailable()
-        var text = String(
-            StringSlice(unsafe_from_utf8=CStringSpan(unsafe_from_ptr=buffer))
-        )
-        if text == "":
-            raise hostname_unavailable()
-        return text
+        var text = String(String(Path("/proc/sys/kernel/hostname").read_text()).strip())
+        if text != "":
+            return text
     except:
-        raise hostname_unavailable()
+        pass
+    var env = getenv("HOSTNAME", "")
+    if env != "":
+        return env
+    raise hostname_unavailable()

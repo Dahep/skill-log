@@ -45,6 +45,7 @@ from .ffi import (
     SQLITE_INTEGER,
     SQLITE_FLOAT,
     SQLITE_TEXT,
+    SQLITE_BLOB,
     SQLITE_NULL,
 )
 
@@ -102,16 +103,19 @@ struct Transaction(Movable):
     var _handle: Int  # sqlite3 connection handle (non-owning borrow)
     var _done: Bool  # True after commit() or rollback(); silences __deinit__
 
-    def __init__(out self, handle: Int) raises:
+    def __init__(
+        out self, handle: Int, ffi: Sqlite3FFI
+    ) raises:
         """Begin a new transaction on ``handle``.
 
         Args:
             handle: Open ``sqlite3*`` connection handle.
+            ffi: Loaded SQLite entry points (``Database`` passes its own).
 
         Raises:
             Error: If ``BEGIN`` fails (e.g. a transaction is already active).
         """
-        self._ffi = Sqlite3FFI()
+        self._ffi = ffi.copy()
         self._handle = handle
         self._done = False
         self._ffi.exec(handle, "BEGIN")
@@ -223,14 +227,16 @@ struct Row(Movable):
     var _ints: List[Int]
     var _floats: List[Float64]
     var _texts: List[String]
+    var _blobs: List[List[UInt8]]
 
     def __init__(
         out self,
         ncols: Int,
-        types: List[Int],
-        ints: List[Int],
-        floats: List[Float64],
-        texts: List[String],
+        var types: List[Int],
+        var ints: List[Int],
+        var floats: List[Float64],
+        var texts: List[String],
+        var blobs: List[List[UInt8]],
     ):
         """Construct a ``Row`` from pre-read column snapshots.
 
@@ -240,12 +246,14 @@ struct Row(Movable):
             ints:   Per-column integer values (0 for non-integer columns).
             floats: Per-column float values (0.0 for non-float columns).
             texts:  Per-column text values (empty for non-text columns).
+            blobs:  Per-column BLOB values (empty for non-BLOB columns).
         """
         self._ncols = ncols
-        self._types = types.copy()
-        self._ints = ints.copy()
-        self._floats = floats.copy()
-        self._texts = texts.copy()
+        self._types = types^
+        self._ints = ints^
+        self._floats = floats^
+        self._texts = texts^
+        self._blobs = blobs^
 
     def num_cols(self) -> Int:
         """Return the number of columns in this row.
@@ -288,6 +296,17 @@ struct Row(Movable):
         """
         return self._texts[col]
 
+    def blob_val(self, col: Int) -> List[UInt8]:
+        """Return the BLOB value of column ``col``.
+
+        Args:
+            col: 0-based column index.
+
+        Returns:
+            A copy of the bytes (empty if the column is not ``SQLITE_BLOB``).
+        """
+        return self._blobs[col].copy()
+
     def is_null(self, col: Int) -> Bool:
         """Check whether column ``col`` contains SQL NULL.
 
@@ -316,23 +335,39 @@ struct Statement(Movable):
     var _db: Int
     var _handle: Int
 
-    def __init__(out self, db: Int, sql: String) raises:
+    def __init__(
+        out self, db: Int, sql: String, ffi: Sqlite3FFI
+    ) raises:
         """Compile a SQL statement.
 
         Args:
             db:  sqlite3 handle of the owning connection.
             sql: A single SQL statement (no trailing semicolon needed).
+            ffi: Loaded SQLite entry points (``Database`` passes its own).
 
         Raises:
             Error: If the SQL fails to compile.
         """
-        self._ffi = Sqlite3FFI()
+        self._ffi = ffi.copy()
         self._db = db
         self._handle = self._ffi.prepare_v2(db, sql)
 
     def __deinit__(deinit self):
         """Finalize the statement and release its resources."""
         self._ffi.finalize(self._handle)
+
+    def clear_bindings(self) raises:
+        """Set every bound parameter back to NULL.
+
+        ``reset()`` keeps bindings, so call this when a reused statement
+        must not see the previous values.
+
+        Raises:
+            Error: If the call fails.
+        """
+        var rc = self._ffi.clear_bindings(self._handle)
+        if rc != 0:
+            raise Error("sqlite3_clear_bindings failed (rc=" + String(Int(rc)) + ")")
 
     def reset(self) raises:
         """Reset the statement so it can be re-executed.
@@ -382,6 +417,18 @@ struct Statement(Movable):
         """
         self._ffi.bind_text(self._handle, idx, val)
 
+    def bind_blob(self, idx: Int, val: List[UInt8]) raises:
+        """Bind a BLOB value to parameter ``idx``.
+
+        Args:
+            idx: 1-based parameter index.
+            val: Byte buffer (copied by SQLite).
+
+        Raises:
+            Error: On binding failure.
+        """
+        self._ffi.bind_blob(self._handle, idx, val)
+
     def bind_null(self, idx: Int):
         """Bind SQL NULL to parameter ``idx``.
 
@@ -391,6 +438,74 @@ struct Statement(Movable):
         self._ffi.bind_null(self._handle, idx)
 
     # -- execution -----------------------------------------------------------
+
+    def step_row(self) raises -> Bool:
+        """Advance the statement by one step without copying the row.
+
+        Read the current row with ``column_int``, ``column_text`` and the
+        other ``column_*`` accessors until the next ``step_row()``,
+        ``step()`` or ``reset()``.
+
+        Returns:
+            ``True`` when a result row is available, ``False`` when the
+            statement has finished (``SQLITE_DONE``).
+
+        Raises:
+            Error: If ``sqlite3_step`` returns an error code.
+        """
+        var rc = self._ffi.step(self._handle)
+        if rc == SQLITE_ROW:
+            return True
+        if Int(rc) == 101:  # SQLITE_DONE
+            return False
+        raise Error(
+            "sqlite3_step failed (rc="
+            + String(Int(rc))
+            + "): "
+            + self._ffi.errmsg(self._db)
+        )
+
+    def column_count(self) -> Int:
+        """Number of columns in the current row."""
+        return self._ffi.column_count(self._handle)
+
+    def column_type(self, col: Int) -> Int:
+        """SQLite type code of column ``col`` (0-based) in the current row."""
+        return self._ffi.column_type(self._handle, col)
+
+    def column_is_null(self, col: Int) -> Bool:
+        """Whether column ``col`` of the current row is NULL."""
+        return self._ffi.column_type(self._handle, col) == SQLITE_NULL
+
+    def column_int(self, col: Int) -> Int:
+        """Integer value of column ``col`` of the current row."""
+        return self._ffi.column_int(self._handle, col)
+
+    def column_float(self, col: Int) -> Float64:
+        """Float value of column ``col`` of the current row."""
+        return self._ffi.column_double(self._handle, col)
+
+    def column_text(self, col: Int) -> String:
+        """Text value of column ``col`` of the current row."""
+        return self._ffi.column_text(self._handle, col)
+
+    def append_column_text(self, col: Int, mut out: List[UInt8]):
+        """Append the raw UTF-8 bytes of text column ``col`` to ``out``.
+
+        Zero-intermediate-copy alternative to ``column_text`` for callers that
+        build a byte buffer (for example a JSON response): one bulk copy
+        straight from SQLite's row buffer. Appends nothing for SQL NULL.
+        """
+        var addr = self._ffi.column_text_addr(self._handle, col)
+        var n = self._ffi.column_text_len(self._handle, col)
+        if addr == 0 or n == 0:
+            return
+        var p = Pointer[UInt8, MutUntrackedOrigin](unsafe_from_address=addr)
+        out.extend(Span[UInt8, MutUntrackedOrigin](unsafe_ptr=p, length=n))
+
+    def column_blob(self, col: Int) -> List[UInt8]:
+        """BLOB value of column ``col`` of the current row."""
+        return self._ffi.column_blob(self._handle, col)
 
     def step(self) raises -> Optional[Row]:
         """Advance the statement by one step.
@@ -405,13 +520,13 @@ struct Statement(Movable):
         Raises:
             Error: If ``sqlite3_step`` returns an error code.
         """
-        var rc = self._ffi.step(self._handle)
-        if rc == SQLITE_ROW:
+        if self.step_row():
             var ncols = self._ffi.column_count(self._handle)
             var types = List[Int]()
             var ints = List[Int]()
             var floats = List[Float64]()
             var texts = List[String]()
+            var blobs = List[List[UInt8]]()
             for col in range(ncols):
                 var t = self._ffi.column_type(self._handle, col)
                 types.append(t)
@@ -431,15 +546,12 @@ struct Statement(Movable):
                     ints.append(0)
                     floats.append(Float64(0))
                     texts.append(String(""))
-            return Row(ncols, types, ints, floats, texts)
-        if Int(rc) == 101:  # SQLITE_DONE
-            return None
-        raise Error(
-            "sqlite3_step failed (rc="
-            + String(Int(rc))
-            + "): "
-            + self._ffi.errmsg(self._db)
-        )
+                if t == SQLITE_BLOB:
+                    blobs.append(self._ffi.column_blob(self._handle, col))
+                else:
+                    blobs.append(List[UInt8]())
+            return Row(ncols, types^, ints^, floats^, texts^, blobs^)
+        return None
 
 
 # -----------------------------------------------------------------------
@@ -479,6 +591,28 @@ struct Database(Movable):
         """Close the database connection."""
         _ = self._ffi.close(self._handle)
 
+    def __init__(
+        out self, path: String, *, flags: Int, busy_timeout_ms: Int = 0
+    ) raises:
+        """Open a database with explicit ``SQLITE_OPEN_*`` flags.
+
+        Use ``SQLITE_OPEN_READONLY`` for read-only handles, and
+        ``SQLITE_OPEN_NOMUTEX`` only when each connection is used by a
+        single thread.
+
+        Args:
+            path: File-system path to the database, or ``:memory:``.
+            flags: ``SQLITE_OPEN_*`` flags, for example
+                ``SQLITE_OPEN_READWRITE | SQLITE_OPEN_NOMUTEX``.
+            busy_timeout_ms: How long a locked database is retried before
+                ``SQLITE_BUSY`` is returned; 0 fails immediately.
+
+        Raises:
+            Error: If ``sqlite3_open_v2`` fails.
+        """
+        self._ffi = Sqlite3FFI()
+        self._handle = self._ffi.open(path, flags, busy_timeout_ms)
+
     def execute(self, sql: String) raises:
         """Execute one or more SQL statements with no result rows.
 
@@ -505,7 +639,7 @@ struct Database(Movable):
         Raises:
             Error: If the SQL fails to compile.
         """
-        return Statement(self._handle, sql)
+        return Statement(self._handle, sql, self._ffi)
 
     def transaction(self) raises -> Transaction:
         """Begin a new transaction and return an RAII guard.
@@ -528,7 +662,7 @@ struct Database(Movable):
             db.execute("INSERT INTO line_items VALUES (1, 42, 3)")
             tx.commit()   # both rows committed atomically
         """
-        return Transaction(self._handle)
+        return Transaction(self._handle, self._ffi)
 
     def last_error(self) -> String:
         """Return the most recent error message for this connection.

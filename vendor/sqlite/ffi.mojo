@@ -28,6 +28,17 @@ comptime SQLITE_ROW = 100
 comptime SQLITE_DONE = 101
 
 # -----------------------------------------------------------------------
+# sqlite3_open_v2 flags
+# -----------------------------------------------------------------------
+
+comptime SQLITE_OPEN_READONLY = 0x00000001
+comptime SQLITE_OPEN_READWRITE = 0x00000002
+comptime SQLITE_OPEN_CREATE = 0x00000004
+comptime SQLITE_OPEN_URI = 0x00000040
+comptime SQLITE_OPEN_NOMUTEX = 0x00008000
+comptime SQLITE_OPEN_FULLMUTEX = 0x00010000
+
+# -----------------------------------------------------------------------
 # Column type codes
 # -----------------------------------------------------------------------
 
@@ -120,7 +131,7 @@ def _check(rc: Int32, msg: String) raises:
 # -----------------------------------------------------------------------
 
 
-struct Sqlite3FFI(Movable):
+struct Sqlite3FFI(Copyable):
     """Runtime-loaded SQLite FFI: ``dlopen`` + ``dlsym`` for all C entry-points.
 
     Loads ``libsqlite3`` at construction via ``OwnedDLHandle`` and resolves
@@ -129,12 +140,12 @@ struct Sqlite3FFI(Movable):
     all supported platforms), matching the C ABI on x86-64 and arm64 without
     requiring ``Pointer`` type annotations.
 
-    Each ``Database``, ``Statement``, and ``Transaction`` owns one instance.
-    The OS reference-counts the underlying shared library, so multiple
-    concurrent ``OwnedDLHandle`` objects map to a single loaded image.
-    ``RTLD.NODELETE`` ensures ``dlclose`` is a no-op: the library stays
-    resident for the process lifetime even as ``Sqlite3FFI`` instances
-    are created and destroyed per-request.
+    The function pointers are plain addresses, so an instance is cheap to
+    copy.  ``Database`` loads the library once and hands a copy to every
+    ``Statement`` and ``Transaction`` it creates, so ``prepare()`` and
+    ``transaction()`` do no ``dlopen``/``dlsym`` work.  ``RTLD.NODELETE``
+    keeps the library resident for the process lifetime, so the handle
+    used to resolve the symbols does not need to outlive ``__init__``.
 
     Example::
 
@@ -144,10 +155,9 @@ struct Sqlite3FFI(Movable):
         _ = ffi.close(db)
     """
 
-    var _lib: OwnedDLHandle
-
     # -- connection functions ------------------------------------------------
-    var _fn_open: def(Int, Int) thin abi("C") -> Int32
+    var _fn_open: def(Int, Int, Int32, Int) thin abi("C") -> Int32
+    var _fn_busy_timeout: def(Int, Int32) thin abi("C") -> Int32
     var _fn_close: def(Int) thin abi("C") -> Int32
     var _fn_errmsg: def(Int) thin abi("C") -> Int
     var _fn_exec: def(Int, Int, Int, Int, Int) thin abi("C") -> Int32
@@ -156,6 +166,7 @@ struct Sqlite3FFI(Movable):
     var _fn_prepare: def(Int, Int, Int32, Int, Int) thin abi("C") -> Int32
     var _fn_step: def(Int) thin abi("C") -> Int32
     var _fn_reset: def(Int) thin abi("C") -> Int32
+    var _fn_clear_bindings: def(Int) thin abi("C") -> Int32
     var _fn_finalize: def(Int) thin abi("C") -> Int32
 
     # -- parameter binding (1-based index) -----------------------------------
@@ -163,6 +174,7 @@ struct Sqlite3FFI(Movable):
     var _fn_bind_double: def(Int, Int32, Float64) thin abi("C") -> Int32
     var _fn_bind_text: def(Int, Int32, Int, Int32, Int) thin abi("C") -> Int32
     var _fn_bind_null: def(Int, Int32) thin abi("C") -> Int32
+    var _fn_bind_blob: def(Int, Int32, Int, Int32, Int) thin abi("C") -> Int32
 
     # -- column reading (0-based index) --------------------------------------
     var _fn_col_count: def(Int) thin abi("C") -> Int32
@@ -170,6 +182,8 @@ struct Sqlite3FFI(Movable):
     var _fn_col_int64: def(Int, Int32) thin abi("C") -> Int
     var _fn_col_double: def(Int, Int32) thin abi("C") -> Float64
     var _fn_col_text: def(Int, Int32) thin abi("C") -> Int
+    var _fn_col_blob: def(Int, Int32) thin abi("C") -> Int
+    var _fn_col_bytes: def(Int, Int32) thin abi("C") -> Int32
 
     def __init__(out self, lib_path: String = "") raises:
         """Load ``libsqlite3`` and resolve all function pointers.
@@ -189,64 +203,84 @@ struct Sqlite3FFI(Movable):
         # WAL locks, and shared-memory mappings.  This causes "no such
         # table" and SQLITE_CANTOPEN errors on subsequent open() calls.
         # The library stays resident until process exit regardless.
-        self._lib = OwnedDLHandle(path, RTLD.NOW | RTLD.GLOBAL | RTLD.NODELETE)
+        var lib = OwnedDLHandle(path, RTLD.NOW | RTLD.GLOBAL | RTLD.NODELETE)
 
-        self._fn_open = _dl_sym[def(Int, Int) thin abi("C") -> Int32](
-            self._lib, "sqlite3_open"
+        self._fn_open = _dl_sym[
+            def(Int, Int, Int32, Int) thin abi("C") -> Int32
+        ](lib, "sqlite3_open_v2")
+        self._fn_busy_timeout = _dl_sym[def(Int, Int32) thin abi("C") -> Int32](
+            lib, "sqlite3_busy_timeout"
+        )
+        self._fn_clear_bindings = _dl_sym[def(Int) thin abi("C") -> Int32](
+            lib, "sqlite3_clear_bindings"
         )
         self._fn_close = _dl_sym[def(Int) thin abi("C") -> Int32](
-            self._lib, "sqlite3_close"
+            lib, "sqlite3_close"
         )
         self._fn_errmsg = _dl_sym[def(Int) thin abi("C") -> Int](
-            self._lib, "sqlite3_errmsg"
+            lib, "sqlite3_errmsg"
         )
         self._fn_exec = _dl_sym[
             def(Int, Int, Int, Int, Int) thin abi("C") -> Int32
-        ](self._lib, "sqlite3_exec")
+        ](lib, "sqlite3_exec")
         self._fn_prepare = _dl_sym[
             def(Int, Int, Int32, Int, Int) thin abi("C") -> Int32
-        ](self._lib, "sqlite3_prepare_v2")
+        ](lib, "sqlite3_prepare_v2")
         self._fn_step = _dl_sym[def(Int) thin abi("C") -> Int32](
-            self._lib, "sqlite3_step"
+            lib, "sqlite3_step"
         )
         self._fn_reset = _dl_sym[def(Int) thin abi("C") -> Int32](
-            self._lib, "sqlite3_reset"
+            lib, "sqlite3_reset"
         )
         self._fn_finalize = _dl_sym[def(Int) thin abi("C") -> Int32](
-            self._lib, "sqlite3_finalize"
+            lib, "sqlite3_finalize"
         )
         self._fn_bind_int = _dl_sym[
             def(Int, Int32, Int) thin abi("C") -> Int32
-        ](self._lib, "sqlite3_bind_int64")
+        ](lib, "sqlite3_bind_int64")
         self._fn_bind_double = _dl_sym[
             def(Int, Int32, Float64) thin abi("C") -> Int32
-        ](self._lib, "sqlite3_bind_double")
+        ](lib, "sqlite3_bind_double")
         self._fn_bind_text = _dl_sym[
             def(Int, Int32, Int, Int32, Int) thin abi("C") -> Int32
-        ](self._lib, "sqlite3_bind_text")
+        ](lib, "sqlite3_bind_text")
         self._fn_bind_null = _dl_sym[def(Int, Int32) thin abi("C") -> Int32](
-            self._lib, "sqlite3_bind_null"
+            lib, "sqlite3_bind_null"
         )
+        self._fn_bind_blob = _dl_sym[
+            def(Int, Int32, Int, Int32, Int) thin abi("C") -> Int32
+        ](lib, "sqlite3_bind_blob")
         self._fn_col_count = _dl_sym[def(Int) thin abi("C") -> Int32](
-            self._lib, "sqlite3_column_count"
+            lib, "sqlite3_column_count"
         )
         self._fn_col_type = _dl_sym[def(Int, Int32) thin abi("C") -> Int32](
-            self._lib, "sqlite3_column_type"
+            lib, "sqlite3_column_type"
         )
         self._fn_col_int64 = _dl_sym[def(Int, Int32) thin abi("C") -> Int](
-            self._lib, "sqlite3_column_int64"
+            lib, "sqlite3_column_int64"
         )
         self._fn_col_double = _dl_sym[def(Int, Int32) thin abi("C") -> Float64](
-            self._lib, "sqlite3_column_double"
+            lib, "sqlite3_column_double"
         )
         self._fn_col_text = _dl_sym[def(Int, Int32) thin abi("C") -> Int](
-            self._lib, "sqlite3_column_text"
+            lib, "sqlite3_column_text"
+        )
+        self._fn_col_blob = _dl_sym[def(Int, Int32) thin abi("C") -> Int](
+            lib, "sqlite3_column_blob"
+        )
+        self._fn_col_bytes = _dl_sym[def(Int, Int32) thin abi("C") -> Int32](
+            lib, "sqlite3_column_bytes"
         )
 
     # -- connection ----------------------------------------------------------
 
-    def open(self, filename: String) raises -> Int:
-        """Open or create a SQLite database file.
+    def open(
+        self,
+        filename: String,
+        flags: Int = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE,
+        busy_timeout_ms: Int = 0,
+    ) raises -> Int:
+        """Open a SQLite database file with ``sqlite3_open_v2``.
 
         Uses a ``List[Int]`` as the output buffer for the ``sqlite3**``
         argument (same pattern as simdjson FFI for output pointer args).
@@ -258,12 +292,16 @@ struct Sqlite3FFI(Movable):
 
         Args:
             filename: File path or ``:memory:`` for an in-memory database.
+            flags: ``SQLITE_OPEN_*`` flags; the default opens read-write and
+                creates the file, like plain ``sqlite3_open``.
+            busy_timeout_ms: How long a locked database is retried before
+                ``SQLITE_BUSY``; 0 fails immediately.
 
         Returns:
             sqlite3 connection handle as ``Int``.
 
         Raises:
-            Error: If ``sqlite3_open`` returns a non-zero code.
+            Error: If ``sqlite3_open_v2`` returns a non-zero code.
         """
         var n = filename.byte_length()
         var src = filename.unsafe_ptr()
@@ -276,16 +314,25 @@ struct Sqlite3FFI(Movable):
         var rc = self._fn_open(
             Int(buf.unsafe_ptr()),
             Int(db_out.unsafe_ptr()),
+            Int32(flags),
+            0,
         )
         _ = buf^  # keep buf alive past the FFI call
         if Int(rc) != SQLITE_OK:
+            # A handle is returned even on failure; it holds the message
+            # and must be closed.
+            var msg = self.errmsg(db_out[0])
+            _ = self._fn_close(db_out[0])
             raise Error(
-                "sqlite3_open('"
+                "sqlite3_open_v2('"
                 + filename
                 + "') failed (sqlite3 rc="
                 + String(Int(rc))
-                + ")"
+                + "): "
+                + msg
             )
+        if busy_timeout_ms > 0:
+            _ = self._fn_busy_timeout(db_out[0], Int32(busy_timeout_ms))
         return db_out[0]
 
     def close(self, db: Int) abi("C") -> Int32:
@@ -423,6 +470,17 @@ struct Sqlite3FFI(Movable):
         """
         return self._fn_reset(stmt)
 
+    def clear_bindings(self, stmt: Int) abi("C") -> Int32:
+        """Reset every bound parameter of a statement to NULL.
+
+        Args:
+            stmt: sqlite3_stmt handle.
+
+        Returns:
+            SQLite result code.
+        """
+        return self._fn_clear_bindings(stmt)
+
     def finalize(self, stmt: Int):
         """Destroy a prepared statement and free its resources.
 
@@ -486,6 +544,26 @@ struct Sqlite3FFI(Movable):
         )
         _ = v^  # keep v alive past the FFI call
         _check(rc, "sqlite3_bind_text (idx=" + String(idx) + ") failed")
+
+    def bind_blob(self, stmt: Int, idx: Int, val: List[UInt8]) raises:
+        """Bind a BLOB value to a statement parameter (SQLITE_TRANSIENT copy).
+
+        Args:
+            stmt: sqlite3_stmt handle.
+            idx:  Parameter index (1-based).
+            val:  Byte buffer (copied by SQLite).
+
+        Raises:
+            Error: On binding failure.
+        """
+        var v = val.copy()
+        var v_len = Int32(len(v))
+        # SQLITE_TRANSIENT = -1: SQLite copies the bytes immediately.
+        var rc = self._fn_bind_blob(
+            stmt, Int32(idx), Int(v.unsafe_ptr()), v_len, Int(-1)
+        )
+        _ = v^  # keep v alive past the FFI call
+        _check(rc, "sqlite3_bind_blob (idx=" + String(idx) + ") failed")
 
     def bind_null(self, stmt: Int, idx: Int):
         """Bind SQL NULL to a statement parameter.
@@ -558,3 +636,38 @@ struct Sqlite3FFI(Movable):
             string for SQL NULL.
         """
         return _ptr_to_string(self._fn_col_text(stmt, Int32(col)))
+
+    def column_text_addr(self, stmt: Int, col: Int) abi("C") -> Int:
+        """Address of the UTF-8 text of column ``col`` (0 for SQL NULL).
+
+        Valid until the next ``step``/``reset``/``finalize`` on ``stmt``.
+        Call ``column_text_len`` *after* this (SQLite's documented order).
+        """
+        return self._fn_col_text(stmt, Int32(col))
+
+    def column_text_len(self, stmt: Int, col: Int) abi("C") -> Int:
+        """Byte length of the text of column ``col`` (call after ``column_text_addr``).
+        """
+        return Int(self._fn_col_bytes(stmt, Int32(col)))
+
+    def column_blob(self, stmt: Int, col: Int) -> List[UInt8]:
+        """Read a BLOB column value (0-based index).
+
+        Args:
+            stmt: sqlite3_stmt handle.
+            col:  Column index (0-based).
+
+        Returns:
+            An owned copy of the column bytes, or an empty list for a
+            zero-length BLOB or SQL NULL.
+        """
+        # sqlite3_column_blob must be called before sqlite3_column_bytes.
+        var addr = self._fn_col_blob(stmt, Int32(col))
+        var n = Int(self._fn_col_bytes(stmt, Int32(col)))
+        var out = List[UInt8](capacity=n)
+        if addr == 0 or n == 0:
+            return out^
+        var p = Pointer[UInt8, MutUntrackedOrigin](unsafe_from_address=addr)
+        for i in range(n):
+            out.append(p[unsafe_offset=i])
+        return out^

@@ -5,44 +5,21 @@ from std.subprocess import run
 from skill_log.text import shell_quote
 
 
-struct GitResult(Movable):
-    """What one git command produced."""
-
-    var status: Int
-    var stdout: String
-    var stderr: String
-
-    def __init__(out self, stdout: String = "", stderr: String = "", status: Int = -1):
-        self.status = status
-        self.stdout = stdout
-        self.stderr = stderr
-
-    def trimmed(self) -> String:
-        """The stdout without its surrounding whitespace."""
-        return String(self.stdout.strip())
-
-
-def git(dir: String, args: String) -> GitResult:
-    """Run one git command in `dir` and report what it produced."""
+def git(dir: String, args: String) -> String:
+    """Run one git command in `dir`, returning its stdout ("" on failure)."""
     var command = "git "
     if dir != "":
         command += "-C " + shell_quote(dir) + " "
     command += args + " 2>/dev/null"
     try:
-        var out = run(command)
-        return GitResult(String(out), "", -1)
+        return String(run(command))
     except:
-        return GitResult()
-
-
-def git_output(dir: String, args: String) -> String:
-    """The exact stdout of one git command, or an empty string."""
-    return git(dir, args).stdout
+        return ""
 
 
 def git_text(dir: String, args: String) -> String:
     """The trimmed stdout of one git command, or an empty string."""
-    return git(dir, args).trimmed()
+    return String(git(dir, args).strip())
 
 
 def git_toplevel(dir: String) -> String:

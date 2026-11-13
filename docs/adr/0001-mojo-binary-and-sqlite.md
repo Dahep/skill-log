@@ -31,7 +31,7 @@ command.
 
 1. **Language: Mojo 1.2**, toolchain pinned as a mise tool (`pypi:mojo@1.2.0`).
    `mojo build` produces the executable.
-2. **Storage: SQLite, unchanged**, reached through `ehsanmok/sqlite` v0.2.2
+2. **Storage: SQLite, unchanged**, reached through `ehsanmok/sqlite` (vendored at `07b8d8a`)
    (MIT), vendored as `vendor/sqlite/{ffi,db}.mojo`, with the ORM layer and its
    `morph` dependency left out. The store schema, migrations and SQL are the
    ones #1 defines. The SQL stays inside what the bundled library has: the

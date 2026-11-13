@@ -6,9 +6,9 @@
 | | |
 |---|---|
 | URL | `https://github.com/ehsanmok/sqlite.git` |
-| tag | `v0.2.2` |
-| commit | `c5939d362e40cd473fab08cb92e0ab4de0060f25` |
-| commit date | 2026-10-22 |
+| tag | `main`, after `v0.2.2` |
+| commit | `07b8d8a05fb3a673e3a54ae93cd462755686c8dd` |
+| commit date | 2026-11-07 |
 | license | MIT — the upstream text is in `LICENSE` next to this file |
 
 ## What is *not* vendored
@@ -21,6 +21,11 @@
 `__init__.mojo` is **not** copied from upstream: the upstream file imports
 `sqlite.orm`, which is not vendored. The file here is a local trim that
 exposes only `sqlite.db`.
+
+The `main` copy is what v0.2.2 lacked: a `Database(path, flags=...)`
+constructor over `sqlite3_open_v2`, so a read-only open is the binding's own
+business. `opendb.mojo` used to `dlopen` SQLite itself and plant the handle in
+this struct; that seam is gone with the upgrade.
 
 ## Upgrades
 

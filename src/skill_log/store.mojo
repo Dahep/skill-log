@@ -199,7 +199,7 @@ def unopenable_failure(path: String) -> Failure:
 
 def is_unopenable(message: String) -> Bool:
     """True when a SQLite error means the store file could not be opened."""
-    return message.find("sqlite3_open(") != -1 and message.find("rc=14") != -1
+    return message.find("sqlite3_open") != -1 and message.find("rc=14") != -1
 
 
 def strip_path(message: String, path: String) -> String:
