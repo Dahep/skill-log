@@ -5,12 +5,7 @@ from skill_log.errors import Failure, operational_failure
 
 
 def preflight() raises -> Optional[Failure]:
-    """Load the vendored SQLite binding once.
-
-    Returns `None` when the binding is loadable, and the failure to report
-    otherwise. The failure is already named `sqlite unavailable: ...` and
-    carries the operational exit code.
-    """
+    """Load the vendored SQLite binding once."""
     try:
         var db = Database(":memory:")
         _ = db

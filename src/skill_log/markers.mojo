@@ -2,12 +2,7 @@
 
 
 def marker_text(machine: String, id: Int) -> String:
-    """The canonical spelling of a marker: the machine, `#`, the id.
-
-    This is the one place a marker is assembled. Every site that names
-    a row from outside the store calls it, so the grammar is decided
-    once and cannot drift.
-    """
+    """The canonical spelling of a marker: the machine, `#`, the id."""
     return machine + "#" + String(id)
 
 
@@ -27,13 +22,7 @@ struct Marker(Movable):
 
 
 def parse_marker(value: String) -> Optional[Marker]:
-    """The marker `value` names, or `None`.
-
-    The machine is everything before the first `#` and must be non-empty;
-    the id is everything after it and must be a positive decimal. An
-    oversized id is refused rather than wrapped, so nothing can parse
-    into a valid-looking id that names nothing.
-    """
+    """The marker `value` names, or `None`."""
     var text = String(value.strip())
     var cut = text.find("#")
     if cut <= 0 or cut == text.byte_length() - 1:

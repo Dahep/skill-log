@@ -49,29 +49,20 @@ from skill_log.store import (
 from skill_log.templates import REVIEW_NAME, USAGE_LOG_NAME
 from skill_log.version import version
 
-# The ownership marker every generated hook carries, on a line of its
-# own. It is the one thing that says "this tool wrote this file": the
-# marker decides whether a `post-merge` may be replaced or removed, and
-# a file without it is never touched.
+# The ownership marker: it is the one thing that says this tool wrote the file.
 comptime HOOK_MARKER = "# skill-log:post-merge-hook"
 
-# The hook's name inside the repository's common hooks directory.
 comptime HOOK_NAME = "post-merge"
 
-# The mode the generated hook is written with: git runs a hook only when
-# it is executable, so the file carries its execute bits at creation and
-# no umask can narrow them.
+# The hook's mode: git runs a hook only when it is executable, so the file
+# carries its execute bits at creation.
 comptime HOOK_MODE = 493  # 0755
 
-# The artifact names, in the order every output lists them (SPEC §5.10).
 comptime ARTIFACT_STORE = "store"
 comptime ARTIFACT_HOOK = "hook"
 comptime ARTIFACT_REPORT_DIR = "report_dir"
 comptime ARTIFACT_SKILLS = "skills"
 
-# The verdict statuses (SPEC §5.10). `drift` is the one that fails the
-# run: under `--check` it means "not set up", otherwise it means "this
-# run refused to change it".
 comptime STATUS_CREATED = "created"
 comptime STATUS_UPDATED = "updated"
 comptime STATUS_UNCHANGED = "unchanged"
@@ -79,7 +70,6 @@ comptime STATUS_DRIFT = "drift"
 comptime STATUS_SKIPPED = "skipped"
 
 
-# --------------------------------------------------------------- options
 
 
 struct Options(Movable):
@@ -110,11 +100,7 @@ struct Options(Movable):
 
 
 def parse_options(args: List[String]) raises -> Options:
-    """Read `setup`'s flags.
-
-    An unknown flag, a missing value or a contradictory pair is a usage
-    error, raised as a `usage` marker the caller turns into exit 2.
-    """
+    """Read `setup`'s flags."""
     var options = Options()
     var value_flags = setup_value_flags()
     var i = 0
@@ -153,8 +139,6 @@ def parse_options(args: List[String]) raises -> Options:
             raise Error("usage: unknown option: " + arg)
         i += 1
 
-    # Two modes that say opposite things about the hook cannot be one
-    # run. The pair is refused before anything is examined.
     if options.check and options.remove_hook:
         raise Error(
             "usage: --check verifies and --remove-hook removes; pick one"
@@ -167,19 +151,10 @@ def parse_options(args: List[String]) raises -> Options:
     return options^
 
 
-# ------------------------------------------------------------ hook text
 
 
 def hook_script() -> String:
-    """The post-merge hook `setup` writes.
-
-    It resolves the CLI at run time — `command -v skill-log`, then
-    `mise which skill-log` when mise is on `PATH`, then the mise shim
-    under `$HOME`, then nothing (exit 0 silently) — derives the pre-merge
-    position from the reflog, and calls `resolve-merged` quietly. Every
-    failure is swallowed: a pull's exit status is git's alone, and the
-    hook writes nothing at all.
-    """
+    """The post-merge hook `setup` writes."""
     return """\
 #!/bin/sh
 # skill-log:post-merge-hook
@@ -213,13 +188,7 @@ exit 0
 
 
 def has_ownership_marker(text: String) -> Bool:
-    """True when `text` carries the ownership marker at a line start.
-
-    The marker is a comment line, so prose that merely mentions it (at
-    a line start with more words around it) still counts as carrying it —
-    the marker's job is to say who wrote the file, and an edited copy of
-    our own hook is still ours to replace.
-    """
+    """True when `text` carries the ownership marker at a line start."""
     var n = text.byte_length()
     var start = 0
     while start <= n:
@@ -232,15 +201,10 @@ def has_ownership_marker(text: String) -> Bool:
     return False
 
 
-# ------------------------------------------------------------- verdicts
 
 
 struct Verdict(Movable):
-    """One artifact's verdict: its name, what happened, and why.
-
-    This is the whole interface between `setup` and the owners of its
-    artifacts — there is no provisioner type behind it (ADR-0003).
-    """
+    """One artifact's verdict: its name, what happened, and why."""
 
     var artifact: String
     var status: String
@@ -274,15 +238,9 @@ def verdict_json(verdict: Verdict) -> String:
 def store_verdict(path: String, check: Bool, dry_run: Bool) raises -> Verdict:
     """The store's verdict: `create`, or `verify` under `--check`.
 
-    The verdict comes from the store's own path — `verify` for the read
-    and `open_write` for the creation — and never from inspecting SQLite
-    here. A refused store is drift with the refusal's own named message:
-    setup creates a store and never migrates one.
-
-    A creation that *fails* is drift too, and it is classified by the
-    store rather than by this handler: the store's write taxonomy names
-    what went wrong, so a path that cannot be opened reads as a named
-    refusal and never as the engine's own return code (SPEC §3).
+    The verdict comes from the store's own path, never from inspecting
+    SQLite here. A refused store is drift with the refusal's own named
+    message: setup creates a store and never migrates one.
     """
     var found = verify(path)
     if found.ok():
@@ -298,15 +256,10 @@ def store_verdict(path: String, check: Bool, dry_run: Bool) raises -> Verdict:
     try:
         var opened = open_write(path)
         if opened.refusal.refused():
-            # The file appeared between the verdict and the creation, and
-            # it is not a store we may use.
             return Verdict(
                 ARTIFACT_STORE, STATUS_DRIFT, opened.refusal.failure().message
             )
     except e:
-        # The creation failed. The store classifies the failure and names
-        # it, so the verdict carries the store's own message — the
-        # engine's return code never reaches the reader.
         return Verdict(
             ARTIFACT_STORE, STATUS_DRIFT, write_failure(path, String(e)).message
         )
@@ -314,12 +267,7 @@ def store_verdict(path: String, check: Bool, dry_run: Bool) raises -> Verdict:
 
 
 def hook_verdict(common: String, options: Options) raises -> Verdict:
-    """The post-merge hook's verdict in the common hooks directory.
-
-    The hook goes where git runs hooks for every checkout of the
-    repository — `git rev-parse --git-common-dir`/hooks — never a linked
-    worktree's own directory.
-    """
+    """The post-merge hook's verdict in the common hooks directory."""
     if common == "":
         return Verdict(ARTIFACT_HOOK, STATUS_SKIPPED, "not a git checkout")
     if options.remove_hook:
@@ -334,9 +282,6 @@ def hook_verdict(common: String, options: Options) raises -> Verdict:
     if Path(path).is_file():
         var text = read_text(path)
         if not has_ownership_marker(text):
-            # Never overwrite a file this tool did not write: the marker
-            # is the ownership claim, and without it the file is refused
-            # by name.
             return Verdict(
                 ARTIFACT_HOOK,
                 STATUS_DRIFT,
@@ -345,10 +290,6 @@ def hook_verdict(common: String, options: Options) raises -> Verdict:
                 + " carries no ownership marker",
             )
         if text == wanted:
-            # The bytes are right, but git runs a hook only when it is
-            # executable — and it says nothing when it is not, so the
-            # merged reports would stop resolving silently. The
-            # executable bit is part of the install.
             if not is_executable(path):
                 if options.check:
                     return Verdict(
@@ -400,11 +341,7 @@ def hook_path(common: String) -> String:
 
 
 def remove_hook_verdict(path: String, dry_run: Bool) raises -> Verdict:
-    """`--remove-hook`: remove the marked hook, and only that.
-
-    A file without the marker is not ours to remove, so it is left
-    exactly as found and named as skipped. Nothing else is touched.
-    """
+    """`--remove-hook`: remove the marked hook, and only that."""
     if not Path(path).is_file():
         return Verdict(
             ARTIFACT_HOOK, STATUS_UNCHANGED, "no post-merge hook at " + path
@@ -423,13 +360,7 @@ def remove_hook_verdict(path: String, dry_run: Bool) raises -> Verdict:
 
 
 def report_dir_verdict(repo: String, options: Options) raises -> Verdict:
-    """The report directory's verdict.
-
-    The directory is created with its README and keep file and nothing
-    else. A file already present is written by no one: the README is the
-    operator's to edit and the report files are the transport, so both
-    are left byte-for-byte alone and only a missing piece is added.
-    """
+    """The report directory's verdict."""
     if repo == "":
         return Verdict(
             ARTIFACT_REPORT_DIR, STATUS_SKIPPED, "not a git checkout"
@@ -482,14 +413,7 @@ def report_dir_verdict(repo: String, options: Options) raises -> Verdict:
 
 
 def skills_verdict(skills_dir: String, options: Options) raises -> Verdict:
-    """The installed skills' verdict.
-
-    `--skills-dir` installs the two bundled skills and says, per skill,
-    what happened. Without it the artifact is skipped with that named
-    reason. Under `--check` the same per-skill verdicts are computed
-    with every write turned off: anything but this version's exact
-    install is drift. `--dry-run` shows what a real run would change.
-    """
+    """The installed skills' verdict."""
     if String(skills_dir.strip()) == "":
         return Verdict(
             ARTIFACT_SKILLS, STATUS_SKIPPED, "no --skills-dir given"
@@ -500,8 +424,6 @@ def skills_verdict(skills_dir: String, options: Options) raises -> Verdict:
             ARTIFACT_SKILLS, STATUS_SKIPPED, dir + " is not a directory"
         )
 
-    # The effective templates are validated first: a broken one would
-    # silently write blocks no skill can log from.
     var template_dir = resolve_template_dir("")
     var usage: Template
     var review: Template
@@ -522,14 +444,6 @@ def skills_verdict(skills_dir: String, options: Options) raises -> Verdict:
     except e:
         return Verdict(ARTIFACT_SKILLS, STATUS_DRIFT, String(e))
 
-    # Per-skill verdicts, in the order the artifact names them. Each
-    # answer is one install; the aggregate status and detail follow.
-    #
-    # The aggregate is decided from the statuses themselves, never from
-    # the prose: `created` if a skill was created, `updated` if one was
-    # updated, `drift` if one drifted under `--check`, `skipped` if all
-    # were skipped, and `unchanged` otherwise. A run that wrote nothing
-    # says `skipped` — never `updated`.
     var entries = List[SkillInstall]()
     var created = False
     var updated = False
@@ -545,7 +459,6 @@ def skills_verdict(skills_dir: String, options: Options) raises -> Verdict:
             name = REVIEW_SKILL
             wanted = wanted_review
         var entry = installed_skill_action(dir, name, wanted, options)
-        # The status is read before the answer is moved into the list.
         var status = entry.status
         entries.append(entry^)
         if status == STATUS_CREATED:
@@ -563,12 +476,6 @@ def skills_verdict(skills_dir: String, options: Options) raises -> Verdict:
             detail += ", "
         detail += entries[i].text()
 
-    # A shipped default that moved since the user copy was seeded is
-    # named here too (SPEC §7): the installed skills were rendered from
-    # the old default, so the install is behind — and only a human can
-    # decide to discard their own wording. Under `--check` that is
-    # drift, so the check fails; a normal run only says so, because the
-    # install itself is not what is wrong — the default is.
     var moved = moved_default_note(usage, review)
     if moved != "":
         if detail != "":
@@ -584,20 +491,12 @@ def skills_verdict(skills_dir: String, options: Options) raises -> Verdict:
     if updated:
         return Verdict(ARTIFACT_SKILLS, STATUS_UPDATED, detail)
     if skipped:
-        # Every skill was left alone: nothing was written, and the
-        # verdict says so.
         return Verdict(ARTIFACT_SKILLS, STATUS_SKIPPED, detail)
     return Verdict(ARTIFACT_SKILLS, STATUS_UNCHANGED, detail)
 
 
 struct SkillInstall(Movable):
-    """One skill's install answer: its status and the reason for it.
-
-    The status is one of the five the JSON contract names, so the
-    aggregate can be decided from values rather than from prose: the
-    human line is `name:status (reason)` and the reason names the
-    path and why, so an operator can act on the line alone.
-    """
+    """One skill's install answer: its status and the reason for it."""
 
     var name: String
     var status: String
@@ -623,31 +522,8 @@ def installed_skill_action(
 ) raises -> SkillInstall:
     """One skill's install answer, as `name:verdict` with its reason.
 
-    The verdict is one of the five statuses the JSON contract names; the
-    reason names the path and why, so an operator can act on the line
-    alone. The questions, in order:
-
-    1. **Is it there at all?** No file is `created` (or `drift`, under
-       `--check`, naming the path).
-    2. **Is it this version's install?** Byte comparison. A differing
-       copy is left alone and refused — `skipped`, named, with the one
-       flag that overrides — unless `--force` replaces it. Only
-       `skill-log` is distinguished further: it is copied verbatim, so
-       the only thing that can tell a stale install from a hand edit is
-       its version stamp.
-    3. **Does the stamp match?** A missing stamp is a hand-edited copy,
-       refused as above. A stamp naming another version is `stale`:
-       under `--force` the copy is replaced (`updated`, naming both
-       versions), and without it the copy is left alone with the line
-       that says exactly what is installed and what would replace it.
-       A `--force`-replaced copy is never drift — `--check` after the
-       forced update must be green.
-    4. **Under `--check` nothing is written.** A differing copy is drift
-       — "this is not this version's install" — never replaced.
-
-    A vendored copy is skipped entirely: its wording belongs to its
-    upstream, not to this tool. The write is `files.mojo`'s atomic
-    replacement; `--dry-run` reports the same answer and writes nothing.
+    Is it there at all? Is it this version's install? Does the stamp match?
+    Under `--check` nothing is written. A vendored copy is skipped entirely.
     """
     var path = dir + "/" + name + "/SKILL.md"
     if not Path(path).is_file():
@@ -670,10 +546,6 @@ def installed_skill_action(
             name, STATUS_SKIPPED, "vendored; " + path + " is left alone"
         )
 
-    # `skill-log` is copied verbatim, so the only thing that can tell a
-    # stale install from a hand edit is its version stamp. The stamp
-    # reads on every differing copy, `--force` or not: the reason a
-    # `--check` names is the reason the copy differs.
     var stamp = ""
     if name == SKILL_LOG_SKILL:
         stamp = stamp_version(text)
@@ -706,9 +578,6 @@ def installed_skill_action(
                 STATUS_UPDATED,
                 "was installed by " + stamp + ", this is " + version(),
             )
-        # A copy another version installed is left alone: the status is
-        # `skipped` (nothing was written) and the reason names both
-        # versions.
         return SkillInstall(
             name,
             STATUS_SKIPPED,
@@ -734,7 +603,6 @@ def installed_skill_action(
     )
 
 
-# --------------------------------------------------------------- help
 
 
 def setup_usage() -> String:
@@ -796,28 +664,17 @@ def setup_notes() -> String:
            "exit 0."
 
 
-# -------------------------------------------------------------- handler
 
 
 def resolve_repo(flag: String) -> String:
-    """The checkout `setup` works on: `--repo`, else this checkout.
-
-    Either way the answer is the git toplevel — the root the report
-    directory and the hook belong to. An empty answer means no git
-    checkout, and the repo-scoped artifacts are skipped with a named
-    reason rather than failing.
-    """
+    """The checkout `setup` works on: `--repo`, else this checkout."""
     if String(flag.strip()) != "":
         return git_toplevel(expand_home(String(flag.strip())))
     return git_toplevel("")
 
 
 def handle_setup(args: List[String]) raises -> Outcome:
-    """The `setup` handler.
-
-    Returns the text to print on stdout (plus the failure to report), or
-    the failure alone. It never prints and never exits: `main` owns both.
-    """
+    """The `setup` handler."""
     var options: Options
     try:
         options = parse_options(args)
@@ -827,8 +684,6 @@ def handle_setup(args: List[String]) raises -> Outcome:
             return Outcome.fail(String(message[byte=7:]), EXIT_USAGE())
         raise
 
-    # The machine identity the log will use, printed every run: the
-    # hostname spelling is what every marker must match.
     var machine = String("")
     try:
         machine = hostname()
@@ -842,9 +697,6 @@ def handle_setup(args: List[String]) raises -> Outcome:
 
     var path = resolve_db(options.db)
 
-    # The four verdicts, in the order the JSON contract lists them. Each
-    # owner answers for its own artifact; nothing here inspects a
-    # format.
     var verdicts = List[Verdict]()
     verdicts.append(store_verdict(path, options.check, options.dry_run))
     verdicts.append(hook_verdict(common, options))
@@ -862,8 +714,6 @@ def handle_setup(args: List[String]) raises -> Outcome:
         for i in range(len(verdicts)):
             text += "\n" + verdict_line(verdicts[i])
 
-    # Any drift is the run's failure. The first one is the one stderr
-    # line; the artifact lines carry every verdict.
     for i in range(len(verdicts)):
         if verdicts[i].status == STATUS_DRIFT:
             var outcome = Outcome.fail(verdicts[i].detail, EXIT_FAILURE())

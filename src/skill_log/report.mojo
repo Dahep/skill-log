@@ -23,24 +23,14 @@ from skill_log.store import (
 from skill_log.settings import resolve_db
 from skill_log.text import prefixed, sanitize
 
-# The report directory, relative to the checkout's root. Its presence is
-# what puts a checkout in artifact mode; its absence is trailer mode.
 comptime REPORT_DIR = ".skill-log/reports"
 
-# The report directory's README and keep file, which `setup` creates
-# with the directory and never touches again.
 comptime README_NAME = "README.md"
 comptime KEEP_NAME = ".keep"
 
 
 def report_dir_readme() -> String:
-    """The README `setup` writes into a new report directory.
-
-    It is the operator's one-page explanation of the transport, kept
-    beside the format rules in this module so the two cannot disagree.
-    The wording is the 1.0 contract's — `report` and `<slug>.md`, the
-    report-era names retired.
-    """
+    """The README `setup` writes into a new report directory."""
     return """\
 # .skill-log/reports
 
@@ -61,11 +51,8 @@ A repo without this directory still uses the commit-body
 have it, because a squash merge keeps tree content exactly as committed.
 """
 
-# The commit-body trailer a checkout without the report directory uses.
 comptime TRAILER_KEY = "Skill-log-Fix"
 
-# The longest file-name slug. A branch name can be long; a report name
-# does not need to be.
 comptime MAX_SLUG = 80
 
 
@@ -112,11 +99,8 @@ def report_notes() -> String:
 def branch_slug(branch: String) -> String:
     """The report file's name for a branch: lowercase, safe, truncated.
 
-    A branch name may carry `/`, spaces or unicode; a file name may not
-    usefully. Every run of characters outside `[a-z0-9._-]` becomes one
-    `-`, leading and trailing `.`/`-` are dropped, and the result is cut
-    to `MAX_SLUG`. The same rule the reference used, so an existing
-    report keeps its name after the port.
+    Every run of characters outside `[a-z0-9._-]` becomes one `-`, leading
+    and trailing `.`/`-` are dropped, and the result is cut to `MAX_SLUG`.
     """
     var lower = branch.strip().lower()
     var out = String("")
@@ -145,10 +129,7 @@ def branch_slug(branch: String) -> String:
 
 
 def trim_slug(text: String) -> String:
-    """`text` without leading or trailing `.` and `-`.
-
-    The slug's alphabet is ASCII, so a byte walk is the code-point walk.
-    """
+    """`text` without leading or trailing `.` and `-`."""
     var src = text.unsafe_ptr()
     var start = 0
     var stop = text.byte_length()
@@ -165,7 +146,6 @@ def trim_slug(text: String) -> String:
     return String(text[byte=start:stop])
 
 
-# ----------------------------------------------------------------- lists
 
 
 def contains_int(items: List[Int], value: Int) -> Bool:
@@ -177,12 +157,7 @@ def contains_int(items: List[Int], value: Int) -> Bool:
 
 
 def add_sorted(items: List[String], value: String) -> List[String]:
-    """`items` plus `value`, sorted and without a duplicate.
-
-    Insertion rather than `sort`: Mojo 1.2's `List` has no sort and no
-    `std.algorithm` ordering, and these lists are tiny (one marker per
-    resolved row).
-    """
+    """`items` plus `value`, sorted and without a duplicate."""
     var out = List[String]()
     var placed = False
     for i in range(len(items)):
@@ -233,7 +208,6 @@ def first_nine(text: String) -> String:
     return String(text[byte=0:9])
 
 
-# -------------------------------------------------------------- selection
 
 
 struct Options(Movable):
@@ -266,14 +240,7 @@ struct Options(Movable):
 
 
 def parse_options(args: List[String]) raises -> Options:
-    """Read `report`'s flags.
-
-    An unknown flag, a missing or empty value, a malformed id or no
-    selector at all is a usage error, raised as a `usage` marker the
-    caller turns into exit 2. The no-selector error carries an example,
-    because the caller has not told the tool what to select and the
-    answer is how to.
-    """
+    """Read `report`'s flags."""
     var options = Options()
     var value_flags = report_value_flags()
     var i = 0
@@ -346,13 +313,7 @@ def parse_options(args: List[String]) raises -> Options:
 
 
 struct Selection(Movable):
-    """What the selectors found: markers to write, rows already closed,
-    and ids the store does not have.
-
-    `missing` is a failure, not an empty selection: a caller who named an
-    id expects that row in the report, and silently writing four of five
-    markers is worse than refusing.
-    """
+    """What the selectors found: markers to write, rows already closed,"""
 
     var pending: List[String]
     var resolved: List[String]
@@ -378,11 +339,9 @@ def record_row(
 def select_markers(db: Database, options: Options) raises -> Selection:
     """The markers the selectors name, split into pending and resolved.
 
-    `--id` rows are looked up one by one, so a missing id is named even
-    when the other selectors would have excluded it. The other selectors
-    then narrow the named ids the same way they narrow a plain `--run` or
-    `--skill` cut. A query with no id list reads every matching row, with
-    no hidden limit: a report is not a preview.
+    `--id` rows are looked up one by one, so a missing id is named even when
+    the other selectors would have excluded it. A query with no id list
+    reads every matching row, with no hidden limit.
     """
     var selection = Selection()
 
@@ -410,7 +369,6 @@ def select_markers(db: Database, options: Options) raises -> Selection:
     var filters = Filters()
     filters.run = options.run
     filters.skill = options.skill
-    # Zero means every matching row; the report must not cap a selection.
     filters.limit = 0
     var rows = read_invocations(db, filters)
     for i in range(len(rows)):
@@ -418,7 +376,6 @@ def select_markers(db: Database, options: Options) raises -> Selection:
     return selection^
 
 
-# ---------------------------------------------------------------- reports
 
 
 struct ExistingReport(Movable):
@@ -435,10 +392,8 @@ struct ExistingReport(Movable):
 def parse_report(text: String, relative: String) -> ExistingReport:
     """The markers in a report's text, plus any line that is not one.
 
-    A report is tool-owned: every non-blank line is a marker. A line that
-    is not one is reported with its position rather than dropped, because
-    rewriting the file would otherwise delete whatever a person wrote
-    there without a word.
+    A report is tool-owned: every non-blank line is a marker. A line that is
+    not one is reported with its position rather than dropped.
     """
     var report = ExistingReport()
     var lines = text.split("\n")
@@ -468,11 +423,7 @@ def write_json(
     dry_run: Bool,
     trailer: String,
 ) -> String:
-    """The write path's flat JSON object.
-
-    `path` is empty and `trailer` carries the line in trailer mode; the
-    keys are the same in both modes, so a consumer reads one shape.
-    """
+    """The write path's flat JSON object."""
     var out = JsonObject()
     out.put("path", path)
     out.put_strings("markers", markers)
@@ -506,12 +457,7 @@ def nothing_outcome(options: Options, resolved: List[String], notes: String) -> 
 def trailer_outcome(
     pending: List[String], resolved: List[String], notes: String, options: Options
 ) -> Outcome:
-    """Trailer mode: print the line, write nothing.
-
-    The line is the transport here. The note says why nothing was written
-    and where the line belongs, so the caller does not go looking for a
-    file that this checkout does not have.
-    """
+    """Trailer mode: print the line, write nothing."""
     if len(pending) == 0:
         return nothing_outcome(options, resolved, notes)
     var line = TRAILER_KEY + ": " + ", ".join(pending)
@@ -529,7 +475,6 @@ def trailer_outcome(
     return Outcome.ok_notes(line, all_notes)
 
 
-# ----------------------------------------------------------------- checks
 
 
 struct CheckResult(Movable):
@@ -548,13 +493,7 @@ struct CheckResult(Movable):
 def validate_report(
     text: String, relative: String, opened: StoreOpen, have_store: Bool
 ) raises -> CheckResult:
-    """Check every line of a report against the marker grammar and the store.
-
-    A marker this store does not hold is a warning: it names a row on a
-    machine whose store has not been merged here, and that machine will
-    resolve it. An already-resolved row is a warning too. A line that is
-    not a marker is a problem — the merge cannot interpret it.
-    """
+    """Check every line of a report against the marker grammar and the store."""
     var result = CheckResult()
     var lines = text.split("\n")
     for i in range(len(lines)):
@@ -640,8 +579,6 @@ def check_outcome(
             "store unavailable: " + opened.refusal.failure().message
         )
     elif opened.db:
-        # A table-less (or unreadable) store still lets the syntax be
-        # checked: the marker lookup is what it cannot answer.
         try:
             if is_skill_log_store(opened.db.value()):
                 have_store = True
@@ -653,10 +590,6 @@ def check_outcome(
     try:
         text = read_text(path)
     except e:
-        # The report file is not the store. A file that cannot be read
-        # is named as the report — the path and the reason — and the
-        # store's verdict is left alone: a report path may carry any
-        # word, so the store's answer must not be re-derived from it.
         return Outcome.fail(
             "cannot read the report: " + path + ": " + String(e),
             EXIT_FAILURE(),
@@ -664,9 +597,6 @@ def check_outcome(
     try:
         result = validate_report(text, relative, opened, have_store)
     except e:
-        # The store classifies the failure and this handler renders it:
-        # damage is damage, a lock is a lock, and nothing here inspects
-        # a SQLite message (SPEC §3).
         var failure = read_failure(store_path, String(e))
         return Outcome.fail(failure.message, failure.code)
 
@@ -707,15 +637,10 @@ def check_outcome(
     )
 
 
-# --------------------------------------------------------------- handler
 
 
 def handle_report(args: List[String]) raises -> Outcome:
-    """The `report` handler.
-
-    Returns the text to print on stdout (plus any stderr notes), or the
-    failure to report. It never prints and never exits: `main` owns both.
-    """
+    """The `report` handler."""
     var options: Options
     try:
         options = parse_options(args)
@@ -735,8 +660,6 @@ def handle_report(args: List[String]) raises -> Outcome:
     var slug_source = options.slug
     if slug_source == "":
         var branch = git_branch(root)
-        # A detached HEAD is called `HEAD`, which is not a branch name;
-        # an empty answer is "not a repository", which cannot happen here.
         if branch == "HEAD" or branch == "":
             return Outcome.fail(
                 "cannot name the report file (detached HEAD?); pass --slug",
@@ -762,9 +685,6 @@ def handle_report(args: List[String]) raises -> Outcome:
     try:
         opened = open_read(store_path)
     except e:
-        # The store classifies the failure and this handler renders it:
-        # damage is damage, a lock is a lock, and nothing here inspects
-        # a SQLite message (SPEC §3).
         var failure = read_failure(store_path, String(e))
         return Outcome.fail(failure.message, failure.code)
     if opened.refusal.refused():
@@ -779,16 +699,11 @@ def handle_report(args: List[String]) raises -> Outcome:
     var tableless = False
     try:
         var db = opened.db.take()
-        # A store with no tables yet is an empty log: nothing matches,
-        # and every named id is a missing id.
         if is_skill_log_store(db):
             selection = select_markers(db, options)
         else:
             tableless = True
     except e:
-        # The store classifies the failure and this handler renders it:
-        # damage is damage, a lock is a lock, and nothing here inspects
-        # a SQLite message (SPEC §3).
         var failure = read_failure(store_path, String(e))
         return Outcome.fail(failure.message, failure.code)
 
@@ -809,10 +724,6 @@ def handle_report(args: List[String]) raises -> Outcome:
     var resolved = sorted_unique(selection.resolved)
     var notes = resolved_notes(resolved)
 
-    # A report only carries markers that parse back to the same row.
-    # `add` refuses a machine that cannot appear in one, but a row can
-    # predate that check or come from another store; writing it would put
-    # a line in the file no resolver can read.
     for i in range(len(pending)):
         var parsed = parse_marker(pending[i])
         if not parsed or parsed.value().text() != pending[i]:

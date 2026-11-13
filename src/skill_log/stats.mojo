@@ -61,11 +61,7 @@ def by_usage() -> String:
 
 
 def parse_by(value: String) raises -> String:
-    """The grouping column, or a usage error listing the valid keys.
-
-    The list is the store's own allow-list, so a key the query could not
-    group by cannot get past the flag.
-    """
+    """The grouping column, or a usage error listing the valid keys."""
     var key = String(value.strip())
     if not is_group_column(key):
         raise Error("usage: " + by_usage())
@@ -90,12 +86,7 @@ struct Options(Movable):
 
 
 def parse_options(args: List[String]) raises -> Options:
-    """Read `stats`'s flags.
-
-    An unknown flag, a missing value, an empty `--skill` or an unknown
-    `--by` key is a usage error, raised as a `usage` marker the caller
-    turns into exit 2: one line, no read.
-    """
+    """Read `stats`'s flags."""
     var options = Options()
     var value_flags = stats_value_flags()
     var i = 0
@@ -107,7 +98,6 @@ def parse_options(args: List[String]) raises -> Options:
             )
             i += 1
         elif arg == "--by-model":
-            # The rotation alias, kept so an existing call keeps working.
             options.by = "model"
         elif arg == "--skill":
             options.skill = take_declared_value(
@@ -136,10 +126,8 @@ def parse_options(args: List[String]) raises -> Options:
 def ratio_text(problems: Int, invocations: Int) -> String:
     """Problems per invocation, to two decimals, in integer arithmetic.
 
-    Rounding a float here would let the table and the JSON disagree at
-    the last digit on some machine. Hundredths are rounded half up from
-    integers, and the same string feeds both renderings, so the number a
-    reader sees is the number a pipe parses.
+    Rounding a float here would let the table and the JSON disagree at the
+    last digit on some machine. The same string feeds both renderings.
     """
     if invocations <= 0:
         return "0.00"
@@ -171,11 +159,7 @@ def table_headers(column: String) -> List[String]:
 
 
 def cell(group: GroupCount, column: String, at: Int) -> String:
-    """One table cell, by column index.
-
-    The grouping column is the group's key: sanitized, and shortened
-    under the reader's home when the cut is a worktree path.
-    """
+    """One table cell, by column index."""
     if at == 0:
         if column == "worktree":
             return shorten_home(sanitize(group.key))
@@ -224,18 +208,12 @@ def render_table(groups: List[GroupCount], column: String) -> String:
                 line += cell(groups[r], column, c)
             else:
                 line += pad(cell(groups[r], column, c), widths[c])
-        # Empty trailing cells still carry padding from their neighbours;
-        # the right edge is trimmed so no line ends in spaces.
         lines.append(String(line.rstrip()))
     return join_lines(lines)
 
 
 def render_json(groups: List[GroupCount], column: String) -> String:
-    """One flat object per group, one per line, no trailing newline.
-
-    The grouping column is the object's first key, under its own name,
-    so a pipe can tell the cut from the object without being told.
-    """
+    """One flat object per group, one per line, no trailing newline."""
     var lines = List[String]()
     for i in range(len(groups)):
         var out = JsonObject()
@@ -253,11 +231,7 @@ def render_json(groups: List[GroupCount], column: String) -> String:
 
 
 def handle_stats(args: List[String]) raises -> Outcome:
-    """The `stats` handler.
-
-    Returns the text to print on stdout, or the failure to report. It
-    never prints and never exits: `main` owns both.
-    """
+    """The `stats` handler."""
     var options: Options
     try:
         options = parse_options(args)
@@ -273,9 +247,6 @@ def handle_stats(args: List[String]) raises -> Outcome:
     try:
         opened = open_read(path)
     except e:
-        # The store classifies the failure and this handler renders it:
-        # damage is damage, a lock is a lock, and nothing here inspects
-        # a SQLite message (SPEC §3).
         var failure = read_failure(path, String(e))
         return Outcome.fail(failure.message, failure.code)
 
@@ -287,21 +258,14 @@ def handle_stats(args: List[String]) raises -> Outcome:
     if opened.db:
         var db = opened.db.take()
         try:
-            # An existing file with no store tables yet is an empty log,
-            # not a foreign one; only a file that already holds something
-            # else was refused above.
             if is_skill_log_store(db):
                 groups = read_group_counts(db, options.by, options.skill)
         except e:
-            # The store classifies the failure and this handler renders
-            # it: damage is damage, a lock is a lock, and nothing here
-            # inspects a SQLite message (SPEC §3).
             var failure = read_failure(path, String(e))
             return Outcome.fail(failure.message, failure.code)
 
     if len(groups) == 0:
         if options.json:
-            # Nothing at all: an empty JSON-lines stream is empty.
             return Outcome.ok("")
         return Outcome.ok(empty_message(options.skill))
 

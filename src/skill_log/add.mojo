@@ -1,5 +1,4 @@
-"""The `add` verb: one invocation, its problems, and its marker.
-"""
+"""The `add` verb: one invocation, its problems, and its marker."""
 
 from skill_log.adapters import apply_adapters, enabled_adapters
 from skill_log.context import hostname, preview_timestamp
@@ -51,11 +50,7 @@ struct Options(Movable):
 
 
 def add_value_flags() -> List[String]:
-    """The flags that consume the next argument.
-
-    The dispatcher reads the same list to tell `--problem -h` (a problem
-    spelled `-h`) from a help request.
-    """
+    """The flags that consume the next argument."""
     var flags = List[String]()
     flags.append("--skill")
     flags.append("--problem")
@@ -74,13 +69,7 @@ def add_value_flags() -> List[String]:
 
 
 def parse_options(args: List[String]) raises -> Options:
-    """Read `add`'s flags.
-
-    `--problem` is repeatable, `--db` takes a path, and `--adapter` is
-    repeatable and also accepts a comma-separated list. An unknown flag
-    or a missing value is a usage error, raised as a `usage` marker the
-    caller turns into exit 2: one line, no write.
-    """
+    """Read `add`'s flags."""
     var options = Options()
     var value_flags = add_value_flags()
     var i = 0
@@ -162,8 +151,6 @@ def parse_options(args: List[String]) raises -> Options:
     if options.skill.strip() == "":
         raise Error("usage: --skill needs a name")
 
-    # A blank problem carries no friction; it is ignored rather than
-    # written as an empty row.
     var kept = List[String]()
     for i in range(len(options.problems)):
         if String(options.problems[i].strip()) != "":
@@ -178,10 +165,10 @@ def resolve_field(
 ) -> String:
     """One field of the row, by ADR-0002's precedence.
 
-    The explicit flag wins, then the field's `SKILL_LOG_*` variable,
-    then the enabled adapter's value, then the built-in detection. A
-    blank at every level means the field is unknown, and unknown is
-    written as an empty string.
+    The explicit flag wins, then the field's `SKILL_LOG_*` variable, then
+    the enabled adapter's value, then the built-in detection. A blank at
+    every level means the field is unknown, and unknown is written as an
+    empty string.
     """
     if String(flag.strip()) != "":
         return String(flag.strip())
@@ -193,11 +180,7 @@ def resolve_field(
 
 
 def handle_add(args: List[String]) raises -> Outcome:
-    """The `add` handler.
-
-    Returns the text to print on stdout, or the failure to report. It
-    never prints and never exits: `main` owns both.
-    """
+    """The `add` handler."""
     var options: Options
     try:
         options = parse_options(args)
@@ -207,9 +190,8 @@ def handle_add(args: List[String]) raises -> Outcome:
             return Outcome.fail(String(message[byte=7:]), EXIT_USAGE())
         raise
 
-    # `--problem -` reads the text from stdin. On a terminal there is
-    # nothing to read and the command would hang, so it refuses
-    # instead: a hook must never block.
+    # `--problem -` reads the text from stdin; on a terminal it refuses, because
+    # a hook must never block.
     var problems = List[String]()
     for i in range(len(options.problems)):
         var text = String(options.problems[i])
@@ -225,9 +207,6 @@ def handle_add(args: List[String]) raises -> Outcome:
 
     var path = resolve_db(options.db)
 
-    # The worktree comes first: the t3 adapter needs it to find the
-    # project, and the adapter's value sits below the flag and the
-    # variable.
     var detected_worktree = detect_worktree()
     var worktree = resolve_field(
         options.worktree,
@@ -239,8 +218,6 @@ def handle_add(args: List[String]) raises -> Outcome:
     var adapter_names = enabled_adapters(options.adapters)
     var adapter = apply_adapters(adapter_names, worktree)
 
-    # Every field, by the same chain: the flag, then the variable,
-    # then the adapter, then the detection.
     var row = Invocation()
     row.skill = String(options.skill.strip())
     row.harness = resolve_field(
@@ -249,16 +226,12 @@ def handle_add(args: List[String]) raises -> Outcome:
     row.session = resolve_field(
         options.session, env_or_empty("SKILL_LOG_SESSION"), adapter.session, ""
     )
-    # An adapter may not set the parent: it names a run this tool did
-    # not spawn, and no adapter can know it.
     row.parent = resolve_field(
         options.parent, env_or_empty("SKILL_LOG_PARENT"), "", ""
     )
     row.model = resolve_field(
         options.model, env_or_empty("SKILL_LOG_MODEL"), adapter.model, ""
     )
-    # The repository is detected from the worktree the row carries, so
-    # the two fields always describe the same checkout.
     row.repo = resolve_field(
         options.repo,
         env_or_empty("SKILL_LOG_REPO"),
@@ -272,11 +245,6 @@ def handle_add(args: List[String]) raises -> Outcome:
     row.t3_thread = resolve_field(
         options.t3_thread, env_or_empty("SKILL_LOG_T3_THREAD"), "", ""
     )
-    # The machine is always detected: ADR-0002's environment list has
-    # no `SKILL_LOG_MACHINE`, so the flag and the hostname are the only
-    # two sources. A hostname that cannot be read is an error rather
-    # than a blank: the machine namespaces the marker, so a row without
-    # one is a row nothing can resolve.
     if String(options.machine.strip()) != "":
         row.machine = String(options.machine.strip())
     else:
@@ -285,10 +253,8 @@ def handle_add(args: List[String]) raises -> Outcome:
         except e:
             return Outcome.fail(String(e), EXIT_FAILURE())
 
-    # The machine namespaces every marker (`machine#id`). A `#` or a
-    # control character would make the row unnameable — and a newline
-    # would split a report line — so an explicit value that carries one
-    # is refused at the boundary.
+    # The machine namespaces every marker (`machine#id`): a `#` or a control
+    # character would make the row unnameable.
     if row.machine.find("#") != -1 or sanitize(row.machine) != row.machine:
         return Outcome.fail(
             "usage: --machine names a marker; it cannot contain '#'"
@@ -296,17 +262,11 @@ def handle_add(args: List[String]) raises -> Outcome:
             EXIT_USAGE(),
         )
 
-    # The problems are sanitized on the way in as well as on the way
-    # out: a control character in a problem must never reach the store
-    # and come back as two lines.
     var clean = List[String]()
     for i in range(len(problems)):
         clean.append(sanitize(problems[i]))
 
     if options.dry_run:
-        # The row it would write, and nothing on disk. The timestamp is
-        # read through an in-memory database, so a preview never creates
-        # the store.
         row.ts = preview_timestamp()
         row.problems = clean^
         return Outcome.ok(render_row_json(row))
@@ -315,10 +275,6 @@ def handle_add(args: List[String]) raises -> Outcome:
     try:
         result = write_invocation(path, row, clean)
     except e:
-        # A refused store never reaches here: the refusal is a value, and
-        # only a genuine failure to write raises — with the store's own
-        # named message, already classified (SPEC §3). This handler
-        # adds nothing to it.
         return Outcome.fail(String(e), EXIT_FAILURE())
 
     if result.refusal.refused():

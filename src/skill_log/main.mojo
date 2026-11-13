@@ -20,11 +20,7 @@ def command_line_args() -> List[String]:
 
 
 def tail(args: List[String]) -> List[String]:
-    """The arguments after the first one, as an owned list.
-
-    A slice of a `List` is a `Span`, and Mojo 1.2 has no way to spell a
-    `Span`'s origin in a handler signature, so the tail is copied.
-    """
+    """The arguments after the first one, as an owned list."""
     var rest = List[String]()
     for i in range(1, len(args)):
         rest.append(args[i])
@@ -34,37 +30,21 @@ def tail(args: List[String]) -> List[String]:
 def run(args: List[String]) raises -> Outcome:
     """Turn the arguments after the program name into what to print."""
     if len(args) == 0:
-        # No arguments is a usage error: the usage and the examples, exit 2.
         return Outcome.usage_error(top_level_help(build_verbs()))
 
     var name = args[0]
 
     if name == "-h":
-        # `-h` is the short form of `--help`.
         return Outcome.ok(top_level_help(build_verbs()))
 
     var verbs = build_verbs()
 
-    # The verb's index in the table is the handler's index: the two
-    # lists are built in step.
     var index = find_verb(verbs, name)
     if index == -1:
-        # An unknown verb is one named line. The usage block would be
-        # noise on top of it.
         return Outcome.fail("unknown verb: " + name, EXIT_USAGE())
     var handlers = build_handlers()
     var rest = tail(args)
 
-    # `skill-log <verb> --help` prints that verb's own usage and its real
-    # invocations, and exits 0. A token that is a *value* of a
-    # value-taking flag is not a help request: `add --problem -h` records
-    # the problem `-h`, so the scan steps over every flag's value.
-    #
-    # A verb that owns nested help (`skills`) renders its own subcommand
-    # help, so its `--help` is handed to the handler instead of being
-    # answered here. The bare `skill-log skills --help` (no subcommand)
-    # is still the verb's own block: the handler returns it when the
-    # subcommand is absent.
     var nested = verbs[index].nested_help
     var i = 0
     while i < len(rest):
@@ -80,13 +60,9 @@ def run(args: List[String]) raises -> Outcome:
 
 
 def main():
-    # The catch-all. Anything that escapes a handler — a bug, an
-    # unexpected condition — becomes one named stderr line, never a Mojo
-    # runtime banner.
     try:
         var args = command_line_args()
 
-        # The SQLite preflight runs before dispatch, for every invocation.
         var preflight_failure = preflight()
         if preflight_failure:
             fail(preflight_failure.value())
@@ -94,17 +70,11 @@ def main():
         var outcome = run(args)
 
         if outcome.failed:
-            # A validator that was asked for JSON prints its findings on
-            # stdout even when it exits 1: the object is the answer, and
-            # the exit code says the answer is "not valid".
             if outcome.text != "":
                 print(outcome.text, file=stdout)
             if outcome.notes != "":
                 print(outcome.notes, file=stderr)
             if outcome.usage != "":
-                # A usage error prints the usage and the examples on
-                # stderr, so stdout stays empty. The block is the whole
-                # diagnostic; no extra named line is added on top of it.
                 print(outcome.usage, file=stderr)
                 exit(outcome.failure.code)
             fail(outcome.failure)
@@ -112,15 +82,9 @@ def main():
         if outcome.notes != "":
             print(outcome.notes, file=stderr)
 
-        # An empty text is an empty output, not a blank line: a JSON
-        # stream with no rows must stay parseable, and a stray newline
-        # would not be a JSON line.
         if outcome.text != "":
             print(outcome.text, file=stdout)
         exit(EXIT_OK())
     except e:
-        # The catch-all: one line, exit 1, no traceback. The message is
-        # sanitized like every other diagnostic, so a path with a newline
-        # in it cannot become two lines.
         print("skill-log: " + sanitize(String(e)), file=stderr)
         exit(EXIT_FAILURE())

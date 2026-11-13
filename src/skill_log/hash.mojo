@@ -2,14 +2,7 @@
 
 
 def fnv1a64_hex(text: String) -> String:
-    """The FNV-1a 64-bit hash of `text`'s bytes, as 16 lowercase hex
-    digits.
-
-    The hash runs over bytes, not code points: the fence is compared
-    across machines and releases, and a byte-level hash cannot be moved
-    by an encoding detail. The multiplication is the 64-bit wrap-around
-    arithmetic FNV specifies.
-    """
+    """The FNV-1a 64-bit hash of `text`'s bytes, as 16 lowercase hex"""
     var h: UInt64 = 0xcbf29ce484222325
     var base = text.unsafe_ptr()
     var n = text.byte_length()

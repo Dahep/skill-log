@@ -65,12 +65,7 @@ struct Options(Movable):
 
 
 def parse_options(args: List[String]) raises -> Options:
-    """Read `resolve`'s flags.
-
-    `--id` and `--fix` are both required; an unknown flag or a missing
-    value is a usage error, raised as a `usage` marker the caller turns
-    into exit 2.
-    """
+    """Read `resolve`'s flags."""
     var options = Options()
     var value_flags = resolve_value_flags()
     var i = 0
@@ -125,11 +120,7 @@ def render_json(options: Options, row: ResolvedRow) -> String:
 
 
 def handle_resolve(args: List[String]) raises -> Outcome:
-    """The `resolve` handler.
-
-    Returns the text to print on stdout, or the failure to report. It
-    never prints and never exits: `main` owns both.
-    """
+    """The `resolve` handler."""
     var options: Options
     try:
         options = parse_options(args)
@@ -149,8 +140,6 @@ def handle_resolve(args: List[String]) raises -> Outcome:
     try:
         row = resolve_row(path, options.id, options.fix, options.dry_run)
     except e:
-        # The store classifies the failure and raises its named message
-        # (SPEC §3); this handler adds nothing to it.
         return Outcome.fail(String(e), EXIT_FAILURE())
 
     if row.refusal.refused():

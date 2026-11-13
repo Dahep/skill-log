@@ -52,9 +52,6 @@ from skill_log.stats import (
 from skill_log.verb import Verb
 from skill_log.version import version
 
-# The shared signature of every handler. Mojo 1.2 rejects an `alias` for a
-# function type at file scope, so the concrete closure type is taken from
-# `handle_version` below and reused as the element type of the handler list.
 
 
 def handle_version(args: List[String]) raises -> Outcome:
@@ -83,9 +80,6 @@ def build_verbs() raises -> List[Verb]:
     )
     add_examples.append("skill-log add --skill create-skill --dry-run --json")
 
-    # The flags that consume the next argument. The dispatcher reads this
-    # to tell `--problem -h` (a problem spelled `-h`) from a help request.
-    # The list lives with `add`'s own parser, which checks it too.
     verbs.append(
         Verb(
             "add",
@@ -124,8 +118,6 @@ def build_verbs() raises -> List[Verb]:
         )
     )
 
-    # The verb's own text lives with its handler, so the usage a usage
-    # error prints and the usage `--help` prints cannot drift apart.
     verbs.append(
         Verb(
             "show",
@@ -136,7 +128,6 @@ def build_verbs() raises -> List[Verb]:
             show_notes(),
         )
     )
-    # The verb's own text lives with its handler, as show's does.
     verbs.append(
         Verb(
             "stats",
@@ -148,7 +139,6 @@ def build_verbs() raises -> List[Verb]:
         )
     )
 
-    # The authoring verb: the change names the rows it fixes.
     verbs.append(
         Verb(
             "report",
@@ -160,7 +150,6 @@ def build_verbs() raises -> List[Verb]:
         )
     )
 
-    # The manual half of resolution: stamp one row by hand.
     verbs.append(
         Verb(
             "resolve",
@@ -172,7 +161,6 @@ def build_verbs() raises -> List[Verb]:
         )
     )
 
-    # The hook's half: stamp every row a pull's commits name.
     verbs.append(
         Verb(
             "resolve-merged",
@@ -184,7 +172,6 @@ def build_verbs() raises -> List[Verb]:
         )
     )
 
-    # Make a machine and a repo ready: the store, the hook, the reports.
     verbs.append(
         Verb(
             "setup",
@@ -196,7 +183,6 @@ def build_verbs() raises -> List[Verb]:
         )
     )
 
-    # The skills surface: audit, template show/seed/reset, adopt.
     verbs.append(skills_verb())
 
     var version_examples = List[String]()

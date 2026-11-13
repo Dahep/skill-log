@@ -19,17 +19,8 @@ from skill_log.store import (
 from skill_log.settings import resolve_db
 from skill_log.text import prefixed, sanitize
 
-# A field separator for the git log records, and the record separator
-# too. NUL cannot appear in a commit message — git refuses to write one
-# that does — so it cannot be confused with data.
-#
-# The two were once different: the fields were NUL-separated and the
-# records were separated by 0x1e, the ASCII record separator. A commit
-# body may carry 0x1e, so a body holding one split the scan in the wrong
-# place and every marker after it was lost.
-#
-# Every record is therefore four NUL-separated fields: the commit, its
-# epoch, the trailer values, and the body.
+# The record framing: NUL cannot appear in a commit message, so it cannot be
+# confused with data.
 comptime FIELD = "\u0000"
 
 
@@ -87,11 +78,7 @@ struct Options(Movable):
 
 
 def parse_options(args: List[String]) raises -> Options:
-    """Read `resolve-merged`'s flags.
-
-    An unknown flag, a missing value or an option-shaped `--since` is a
-    usage error, raised as a `usage` marker the caller turns into exit 2.
-    """
+    """Read `resolve-merged`'s flags."""
     var options = Options()
     var value_flags = resolve_merged_value_flags()
     var i = 0
@@ -121,23 +108,16 @@ def parse_options(args: List[String]) raises -> Options:
 
     var since = String(options.since.strip())
     if since != "":
-        # A revision reaches a shell command and git's option parser. An
-        # option-shaped value would be read as an option, so it is refused
-        # before either sees it.
         if since.startswith("-") or sanitize(since) != since:
             raise Error("usage: --since needs a revision")
     options.since = since^
     return options^
 
 
-# --------------------------------------------------------------- scanning
 
 
 struct Scan(Movable):
-    """What one pass over history found: markers, bad values, hidden ones.
-
-    `located` is the scan's yield: one `Located` per row the scan named.
-    """
+    """What one pass over history found: markers, bad values, hidden ones."""
 
     var located: List[Located]
     var malformed: List[String]
@@ -166,11 +146,7 @@ def add_marker(
     commit: String,
     epoch: Int,
 ):
-    """Keep the first marker for a row: newest wins, oldest is ignored.
-
-    The scan walks commits newest first, so the first marker it meets is
-    the newest commit that names the row.
-    """
+    """Keep the first marker for a row: newest wins, oldest is ignored."""
     if contains_pair(located, machine, id):
         return
     var marker = Located(machine, id, commit, epoch)
@@ -180,15 +156,9 @@ def add_marker(
 def body_trailer_values(body: String) -> List[String]:
     """Every marker the body's `Skill-log-Fix:` lines carry, in body order.
 
-    The scan is line-based and prefix-based, like the marker grammar
-    itself: a line whose first characters are the key, then a colon,
-    then the value. A prose mention of the key in the middle of a
-    paragraph is not a marker.
-
-    A line may hold several comma-separated markers — the trailer
-    grammar allows it — so the line's value is split into its pieces
-    here. Both sides of the comparison are then one marker each, which
-    is the only way "did the parser return this one?" has an answer.
+    The scan is line-based and prefix-based, like the marker grammar itself.
+    A line may hold several comma-separated markers, so the line's value is
+    split into its pieces here.
     """
     var values = List[String]()
     var key = TRAILER_KEY.lower()
@@ -212,12 +182,7 @@ def body_trailer_values(body: String) -> List[String]:
 
 
 def value_returned(returned: String, value: String) -> Bool:
-    """True when the trailer parser returned `value`.
-
-    The parser returns one line per trailer it read, and a line may
-    hold several comma-separated markers. The comparison is on the
-    pieces, so `boxA#1, boxA#2` counts as returning both.
-    """
+    """True when the trailer parser returned `value`."""
     for line in returned.split("\n"):
         for piece in line.split(","):
             if String(piece.strip()) == value:
@@ -236,11 +201,9 @@ def contains_text(items: List[String], value: String) -> Bool:
 def buried_trailer_values(body: String, returned: String) -> List[String]:
     """The values the body carries that the trailer parser did not see.
 
-    Git's last-trailer-block rule returns the markers of the final
-    block only. A body with two marker blocks — a squash that names one
-    row and a later paragraph that names another — therefore loses the
-    earlier one. Every value in the body the parser did not return is
-    reported, so the scan names what it did not act on.
+    Git's last-trailer-block rule returns the markers of the final block
+    only, so a body with two marker blocks loses the earlier one. Every
+    value the parser did not return is reported, not dropped.
     """
     var buried = List[String]()
     var values = body_trailer_values(body)
@@ -256,9 +219,6 @@ def buried_trailer_values(body: String, returned: String) -> List[String]:
 def scan_trailers(root: String, since: String) -> Scan:
     """Every trailer marker reachable from HEAD, newest commit first."""
     var scan = Scan()
-    # The revision range the scan walks. It is named `span`, not
-    # `range`: a local called `range` shadows the builtin the loop
-    # below needs, and the compiler would call the string.
     var span = "HEAD"
     if since != "":
         span = since + "..HEAD"
@@ -270,11 +230,6 @@ def scan_trailers(root: String, since: String) -> Scan:
     var args = "log " + shell_quote(format) + " " + shell_quote(span)
     var out = git_output(root, args)
 
-    # Every record is four NUL-separated fields — the commit, its epoch,
-    # the trailer values, and the body — and the records follow one
-    # another. The body is the last field, so it carries the newlines
-    # the commit message has, and the next record's commit hash follows
-    # the next NUL.
     var fields = out.split(FIELD)
     var at = 0
     while at + 4 <= len(fields):
@@ -292,9 +247,6 @@ def scan_trailers(root: String, since: String) -> Scan:
         var body = String(fields[at + 3])
         at += 4
 
-        # Every value the body carries that the trailer parser did not
-        # return is buried — a later trailer block hid it. The scan
-        # names it instead of letting it disappear.
         var buried = buried_trailer_values(body, values)
         for i in range(len(buried)):
             scan.hidden.append(
@@ -374,11 +326,7 @@ def contains_index(items: List[Int], value: Int) -> Bool:
 
 
 def newest_first(files: List[ReportFile]) -> List[ReportFile]:
-    """The files by their stamp, newest first.
-
-    Selection rather than a sort: Mojo 1.2's `List` has no ordering, and
-    a scan reads a handful of reports, not a database.
-    """
+    """The files by their stamp, newest first."""
     var order = List[Int]()
     for _ in range(len(files)):
         var best = -1
@@ -401,12 +349,7 @@ def newest_first(files: List[ReportFile]) -> List[ReportFile]:
 
 
 def report_files(root: String, since: String) raises -> List[ReportFile]:
-    """The report files a scan reads: the range's, or the tree's.
-
-    A bounded scan asks git which reports the range added or modified; a
-    full scan lists the directory. The tree is only read when the report
-    directory exists — that is the mode switch `report` uses too.
-    """
+    """The report files a scan reads: the range's, or the tree's."""
     var directory = root + "/" + REPORT_DIR
     if not Path(directory).is_dir():
         return List[ReportFile]()
@@ -446,12 +389,7 @@ def report_files(root: String, since: String) raises -> List[ReportFile]:
 
 
 def scan_reports(root: String, since: String) raises -> Scan:
-    """Markers from the report files this scan reads.
-
-    The marker text is read from the commit that carries the file, not
-    from the working tree: a hook runs after a merge, and the checkout
-    may hold edits that are not part of the pull.
-    """
+    """Markers from the report files this scan reads."""
     var scan = Scan()
     var files = report_files(root, since)
     for i in range(len(files)):
@@ -480,7 +418,6 @@ def scan_reports(root: String, since: String) raises -> Scan:
     return scan^
 
 
-# ---------------------------------------------------------------- answers
 
 
 def skipped_json(items: List[MergedSkip]) -> String:
@@ -498,17 +435,7 @@ def skipped_json(items: List[MergedSkip]) -> String:
 
 
 def ignored_markers(chosen: Scan, hidden: List[String]) -> List[String]:
-    """Every marker the scan did not act on, hidden and malformed alike.
-
-    SPEC §5.6 names one array for both: "hidden and malformed markers
-    are reported with their ids or text in `ignored`, never silently
-    dropped". A malformed value reaches the JSON only through this
-    array, so a `--quiet --json` caller still learns about it — the
-    quiet suppresses the stderr notes, not the report.
-
-    The malformed text comes first: it is the value itself, where the
-    hidden entry carries the commit it was buried in.
-    """
+    """Every marker the scan did not act on, hidden and malformed alike."""
     var items = List[String]()
     for i in range(len(chosen.malformed)):
         items.append(chosen.malformed[i])
@@ -518,11 +445,7 @@ def ignored_markers(chosen: Scan, hidden: List[String]) -> List[String]:
 
 
 def stamped_markers(result: MergedResult) -> List[String]:
-    """The markers of the rows a scan stamped, in order.
-
-    The answer carries markers; the commit that stamped each one
-    travels with it inside the result, for the writer and the summary.
-    """
+    """The markers of the rows a scan stamped, in order."""
     var markers = List[String]()
     for i in range(len(result.stamped)):
         markers.append(result.stamped[i].marker)
@@ -568,15 +491,7 @@ def unique_sorted(items: List[String]) -> List[String]:
 
 
 def summary(result: MergedResult, dry_run: Bool) -> String:
-    """The one stdout line a non-JSON scan prints when it stamped a row.
-
-    Nothing to stamp means nothing to say: the hook's output has to stay
-    trustworthy, so a pull with no markers is silent.
-
-    The commit each row was stamped with travels with the marker in the
-    result, so the summary names it without searching the scan for the
-    marker that matches.
-    """
+    """The one stdout line a non-JSON scan prints when it stamped a row."""
     if len(result.stamped) == 0:
         return ""
     var commits = List[String]()
@@ -638,12 +553,7 @@ def notes_for(
 
 
 def local_hostname() -> String:
-    """This machine's hostname, or empty when it cannot be read.
-
-    Only a row written before `add` always filled the column needs it.
-    Its absence must not stop a hook from resolving the rows that do
-    carry a machine.
-    """
+    """This machine's hostname, or empty when it cannot be read."""
     try:
         return hostname()
     except:
@@ -651,11 +561,7 @@ def local_hostname() -> String:
 
 
 def handle_resolve_merged(args: List[String]) raises -> Outcome:
-    """The `resolve-merged` handler.
-
-    Returns the text to print on stdout (plus any stderr notes), or the
-    failure to report. It never prints and never exits: `main` owns both.
-    """
+    """The `resolve-merged` handler."""
     var options: Options
     try:
         options = parse_options(args)
@@ -671,9 +577,6 @@ def handle_resolve_merged(args: List[String]) raises -> Outcome:
             "resolve-merged runs inside a git checkout", EXIT_FAILURE()
         )
 
-    # Bound the range only when git can resolve the revision. A missing
-    # reflog entry is a hook's normal condition after a fresh clone, so
-    # it falls back to a full scan quietly rather than failing a pull.
     var since = options.since
     if since != "":
         var commit = git_commit(root, since)
@@ -689,15 +592,10 @@ def handle_resolve_merged(args: List[String]) raises -> Outcome:
     var stale_trailer = False
     if artifact:
         chosen = scan_reports(root, since)
-        # A trailer in a repo that resolves from files is stale, not
-        # malformed: say it once, and read only the files.
         stale_trailer = len(trailer_scan.located) > 0
     else:
         chosen = trailer_scan^
 
-    # The markers the scan did not act on: the malformed values it read
-    # and the ones the trailer parse hid. Both are reported in one
-    # array, so `--quiet --json` still says what was dropped.
     var ignored = ignored_markers(chosen, hidden)
 
     var result = MergedResult()
@@ -716,8 +614,6 @@ def handle_resolve_merged(args: List[String]) raises -> Outcome:
                     result,
                     options.quiet,
                 )
-                # The store classifies the failure and raises its named
-                # message (SPEC §3); this handler adds nothing to it.
                 return Outcome.fail_notes(
                     String(e),
                     EXIT_FAILURE(),

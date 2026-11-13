@@ -7,27 +7,17 @@ from sqlite.db import Database
 
 from skill_log.ffi import dl_sym
 
-# `SQLITE_OPEN_READONLY` is 0x01. The other flags are deliberately
-# absent: no `SQLITE_OPEN_CREATE` (the file must already exist), and no
-# `SQLITE_OPEN_READWRITE` (nothing may be written).
 comptime SQLITE_OPEN_READONLY = 0x01
 
 comptime SQLITE_OK = 0
 comptime SQLITE_ROW = 100
 comptime SQLITE_DONE = 101
 
-# The buffer a C string is read into. A model id and a provider id are
-# short; a pathological value is truncated rather than growing without
-# bound.
 comptime TEXT_SIZE = 4096
 
 
 def _c_string(text: String) -> List[UInt8]:
-    """A NUL-terminated copy of `text`.
-
-    The copy is explicit because `String.unsafe_ptr()` is read-only in
-    this Mojo version, so the terminator cannot be written in place.
-    """
+    """A NUL-terminated copy of `text`."""
     var n = text.byte_length()
     var src = text.unsafe_ptr()
     var buf = List[UInt8](capacity=n + 1)
@@ -48,17 +38,9 @@ def _ptr_to_string(addr: Int) -> String:
 def read_only_database(path: String) raises -> Database:
     """A `Database` opened read-only, or a failure naming the path.
 
-    The vendored binding opens read-write: `sqlite3_open` creates a file
-    that is not there and hands back a handle that can write. A read
-    must never create the store, so the handle is opened here instead,
-    with SQLite's own flags: `SQLITE_OPEN_READONLY` and no
-    `SQLITE_OPEN_CREATE`. A file that is not there is a failure, not a
-    new file — the check-then-open window a read-write open leaves open
-    is gone with it.
-
-    The returned `Database` is the vendored struct with the read-only
-    handle in it. The handle the constructor opened is closed first, so
-    the connection that is left is the read-only one and nothing leaks.
+    The vendored binding opens read-write, so a read-only open is reached
+    through SQLite's own flags: a file that is not there is a failure and
+    never a new file.
     """
     var lib = OwnedDLHandle(
         "libsqlite3.so.0", RTLD.NOW | RTLD.GLOBAL | RTLD.NODELETE
@@ -68,8 +50,6 @@ def read_only_database(path: String) raises -> Database:
     )
     var close = dl_sym[def(Int) thin abi("C") -> Int32](lib, "sqlite3_close")
 
-    # The read-only handle first: if the file is not there, nothing has
-    # been opened and nothing has to be closed.
     var db_out = List[Int](capacity=1)
     db_out.append(0)
     var path_buf = _c_string(path)
@@ -81,16 +61,8 @@ def read_only_database(path: String) raises -> Database:
     )
     _ = path_buf^
     if Int(rc) != SQLITE_OK:
-        # The path is quoted, the way every other message that names a
-        # file names it. A path is a filename here, not a word inside a
-        # sentence — and the store's classification reads the message
-        # with the filename fields taken out, so a path that happens to
-        # be a word of the vocabulary cannot be mistaken for one.
         raise Error("cannot open '" + path + "' read-only")
 
-    # The vendored struct, with the handle swapped for the read-only
-    # one. The handle its constructor opened is closed here, so the
-    # connection the struct owns is the read-only one.
     var db = Database(":memory:")
     _ = close(db._handle)
     db._handle = db_out[0]
@@ -100,18 +72,7 @@ def read_only_database(path: String) raises -> Database:
 def read_text_value(
     path: String, sql: String, argument: String
 ) -> String:
-    """One text value from a SQLite file, read-only.
-
-    `path` is opened read-only; `sql` is a single-parameter `SELECT`
-    whose one placeholder is bound to `argument`. An empty string is
-    returned when the file is missing, the schema does not have the
-    table, the row is absent, the value is NULL, or anything at all
-    goes wrong. The caller cannot tell those apart, and does not need
-    to: every one of them means "unknown".
-    """
-    # The whole body is guarded: a missing libsqlite3, an unreadable
-    # file, an unknown symbol — none of them is an error here. The
-    # field is simply unknown.
+    """One text value from a SQLite file, read-only."""
     try:
         return _read_text_value(path, sql, argument)
     except:
@@ -122,10 +83,6 @@ def _read_text_value(
     path: String, sql: String, argument: String
 ) raises -> String:
     """The unguarded body of `read_text_value`."""
-    # The same flags the vendored binding uses: `GLOBAL` so the symbols
-    # resolve against the library this handle owns, and `NODELETE` so
-    # closing it is a no-op and the library stays resident for the
-    # process lifetime.
     var lib = OwnedDLHandle(
         "libsqlite3.so.0", RTLD.NOW | RTLD.GLOBAL | RTLD.NODELETE
     )

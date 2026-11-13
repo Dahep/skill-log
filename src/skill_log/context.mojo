@@ -8,32 +8,14 @@ from sqlite.db import Database
 
 from skill_log.ffi import dl_sym
 
-# The one clock injection (SPEC §9): a test-only stamp that fixes the
-# writer's clock. It is read before SQLite's clock, so a case can prove
-# the time guard through the CLI instead of writing the store directly.
 comptime CLOCK_OVERRIDE = "SKILL_LOG_NOW"
 
-# The query that yields the writer's local wall clock and the offset in
-# seconds, in one row.
-#
-# `strftime('%s','now','localtime')` is the current instant read in local
-# time and then read back as if it were UTC, so the difference between
-# it and `strftime('%s','now')` is the offset: negative west of
-# Greenwich, positive east of it.
-#
-# The epoch seconds come from `strftime('%s', ...)`, not from SQLite's
-# `unixepoch()`: `unixepoch` was added in SQLite 3.38 and the release
-# bundles the pinned 3.37, where it does not exist. `strftime('%s')` is
-# in every SQLite that has `strftime` at all, and it answers the same
-# question.
 comptime CLOCK_SQL = """\
 SELECT
     strftime('%Y-%m-%dT%H:%M:%S','now','localtime'),
     CAST(strftime('%s','now','localtime') AS INTEGER)
         - CAST(strftime('%s','now') AS INTEGER)"""
 
-# The hostname buffer. A hostname longer than this is truncated, which
-# POSIX allows and no real machine reaches.
 comptime HOSTNAME_SIZE = 256
 
 
@@ -58,7 +40,11 @@ def two_digits(value: Int) -> String:
 
 
 def local_timestamp(db: Database) raises -> String:
-    """The writer's local wall clock as ISO 8601 with its offset."""
+    """The writer's local wall clock as ISO 8601 with its offset.
+
+    `SKILL_LOG_NOW`, when set, is the stamp: the test-only clock injection
+    (SPEC §9) is consulted first and returned as written.
+    """
     var pinned = getenv(CLOCK_OVERRIDE, "")
     if pinned != "":
         return pinned
@@ -70,12 +56,7 @@ def local_timestamp(db: Database) raises -> String:
 
 
 def preview_timestamp() raises -> String:
-    """The writer's local wall clock, read without touching the store.
-
-    A `--dry-run` preview must write nothing, so the clock is read
-    through an in-memory database: the clock lives in the SQLite
-    library, not in the file.
-    """
+    """The writer's local wall clock, read without touching the store."""
     var db = Database(":memory:")
     return local_timestamp(db)
 
@@ -88,9 +69,10 @@ def hostname_unavailable() -> Error:
 def hostname() raises -> String:
     """This machine's hostname.
 
-        A hostname that cannot be read is an error, not an empty string:
-        the machine namespaces the store's markers, so a row without one
-        is a row nothing can resolve."""
+    A hostname that cannot be read is an error, not an empty string: the
+    machine namespaces the store's markers, so a row without one is a row
+    nothing can resolve.
+    """
     try:
         var lib = OwnedDLHandle("libc.so.6", RTLD.NOW)
         var gethostname = dl_sym[def(Int, Int) thin abi("C") -> Int](

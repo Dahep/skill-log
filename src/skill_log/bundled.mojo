@@ -1,42 +1,11 @@
-"""The two bundled skills `setup --skills-dir` installs.
-
-The tool ships its own documentation, as skills an agent reads:
-
-1. **`skill-log`** — read and report. The body below is embedded in the
-   binary (the build only compiles `src/skill_log/`, so it is a Mojo
-   string constant, not a resource file) and installed verbatim, plus
-   one version-stamp line. The stamp names the `--version` value that
-   wrote the copy and is the copied skill's only provenance: the body
-   has no fence of its own, and the stamp is what `setup --check` reads
-   to tell a stale install from a differing one.
-2. **`skill-friction-review`** — the review session. Not a constant: it
-   is the effective `skill-friction-review.md` template with `<command>`
-   substituted, followed by the usage-log block rendered for
-   `skill-friction-review`. Customising it means editing the template,
-   not the installed file.
-
-Both documents end with their own usage-log block — the fenced block
-`document` renders from the effective `usage-log.md` template — so a
-fresh install audits `ok` and the skills log their own runs like every
-other skill. The body says a reader never calls `add`; that means a read
-never writes a row as a side effect, not that the skill is exempt from
-its own usage log.
-
-The body is deliberately harness-neutral: it names no agent product.
-It teaches `show`, `stats`, `show --json` for pipes, the model and
-machine cuts, the `machine#id` marker grammar, the `report` / `resolve`
-/ `resolve-merged` flow, and the deliberate non-idempotency of `add`.
-"""
+"""The two bundled skills `setup --skills-dir` installs."""
 
 from skill_log.document import append, render, substitute
 from skill_log.version import version
 
-# The two installed skills, as the directories `--skills-dir` holds.
 comptime SKILL_LOG_SKILL = "skill-log"
 comptime REVIEW_SKILL = "skill-friction-review"
 
-# The version stamp, on a line of its own. It is a comment: invisible in
-# rendered markdown, and it never touches the usage-log fence.
 comptime STAMP_OPEN = "<!-- skill-log:installed version="
 comptime STAMP_CLOSE = " -->"
 
@@ -159,14 +128,7 @@ def stamp_line() -> String:
 
 
 def stamp_version(document: String) -> String:
-    """The version the stamp in `document` names, or "" when there is
-    no stamp line.
-
-    The scan is line-based on purpose — the stamp is one comment line at
-    a line start, and prose that merely mentions it is not a stamp. A
-    stamp line that is cut short names nothing, which the caller reports
-    the same as a missing stamp.
-    """
+    """The version the stamp in `document` names, or "" when there is"""
     var n = document.byte_length()
     var at = 0
     while at <= n:
@@ -184,13 +146,7 @@ def stamp_version(document: String) -> String:
 
 
 def skill_log_document(usage_template: String, command: String) raises -> String:
-    """The installed `skill-log` document: body, stamp, usage-log block.
-
-    The body goes in verbatim — no placeholder is substituted into it —
-    and the block is `document`'s render of the effective usage-log
-    template for name `skill-log`, so `skills audit` classifies a fresh
-    install `ok` and the skill's own runs log under its own name.
-    """
+    """The installed `skill-log` document: body, stamp, usage-log block."""
     var rendered = render(usage_template, SKILL_LOG_SKILL, command)
     return append(skill_log_body() + "\n" + stamp_line(), rendered.text)
 
@@ -198,9 +154,7 @@ def skill_log_document(usage_template: String, command: String) raises -> String
 def review_document(
     review_template: String, usage_template: String, command: String
 ) raises -> String:
-    """The installed `skill-friction-review` document: the review
-    template rendered with the resolved binary path, followed by the
-    usage-log block rendered for `skill-friction-review`."""
+    """The installed `skill-friction-review` document: the review"""
     var body = substitute(review_template, REVIEW_SKILL, command)
     var rendered = render(usage_template, REVIEW_SKILL, command)
     return append(body, rendered.text)

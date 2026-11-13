@@ -36,31 +36,17 @@ from skill_log.templates import (
 )
 from skill_log.verb import Verb, find_verb
 
-# The relative path of the seeded-from record inside the state dir. One
-# file per template name, so each copy's provenance is its own.
 comptime SEEDED_DIR = "seeded-from"
 
-# The two files `seed` writes and `reset` deletes.
 comptime USAGE_LOG_FILE = "usage-log.md"
 comptime REVIEW_FILE = "skill-friction-review.md"
 
-# The five actions `adopt` reports, exactly the SPEC §5.10 vocabulary.
 comptime ACTION_APPENDED = "appended"
 comptime ACTION_REWRITTEN = "rewritten"
 comptime ACTION_UNCHANGED = "unchanged"
 comptime ACTION_REFUSED = "refused"
 comptime ACTION_SKIPPED = "skipped"
 
-# The actions `template seed` and `template reset` report, exactly the
-# SPEC §5.10 vocabulary. One action per template, so a caller reads a
-# value and never matches prose:
-#
-#   seeded      — the shipped default was copied into the user directory
-#   would_seed  — a dry run: the copy would be written, and nothing was
-#   refused     — a copy is already there and `--force` was not given
-#   deleted     — the user copy was removed
-#   would_delete— a dry run: the copy would be removed, and nothing was
-#   absent      — there was no user copy to remove
 comptime TEMPLATE_ACTION_SEEDED = "seeded"
 comptime TEMPLATE_ACTION_WOULD_SEED = "would_seed"
 comptime TEMPLATE_ACTION_REFUSED = "refused"
@@ -69,22 +55,15 @@ comptime TEMPLATE_ACTION_WOULD_DELETE = "would_delete"
 comptime TEMPLATE_ACTION_ABSENT = "absent"
 
 
-# --------------------------------------------------------------- paths
 
 
 def seeded_path(name: String) -> String:
-    """Where the seeded-from record for template `name` lives (XDG
-    state)."""
+    """Where the seeded-from record for template `name` lives (XDG"""
     return xdg_state_dir() + "/" + SEEDED_DIR + "/" + name
 
 
 def read_seeded(name: String) -> String:
-    """The seeded-from hash of the user's `name` copy, or "".
-
-    The record is a single line: the hash of the shipped default the
-    copy was seeded from. A missing record means the copy predates the
-    record (or was never seeded here) — reported as unknown, not moved.
-    """
+    """The seeded-from hash of the user's `name` copy, or ""."""
     var path = seeded_path(name)
     if not Path(path).is_file():
         return ""
@@ -110,7 +89,6 @@ def clear_seeded(name: String) raises:
         remove(path)
 
 
-# ----------------------------------------------------- template loading
 
 
 struct Template(Movable):
@@ -134,11 +112,9 @@ def load_template(name: String, template_dir: String) raises -> Template:
     """The effective template `name`, resolved over the shipped default.
 
     The source is the first of the chain that has the file: the resolved
-    directory, then the shipped default embedded in the binary. The hash
-    is of the effective bytes. `moved` is set when the file came from the
-    user directory and the shipped default's hash differs from the
-    seeded-from hash on record — that is the "the shipped default moved
-    since this copy was seeded" report.
+    directory, then the shipped default embedded in the binary. `moved` is
+    set when the file came from the user directory and the shipped default's
+    hash differs from the seeded-from hash on record.
     """
     var out = Template()
     out.name = name
@@ -154,10 +130,6 @@ def load_template(name: String, template_dir: String) raises -> Template:
         out.source = "shipped"
     out.hash = fnv1a64_hex(out.content)
 
-    # A user copy's provenance: compare the shipped default's current
-    # hash to the hash the copy was seeded from. Only a user copy has a
-    # seeded-from record to compare against; a shipped default cannot
-    # have "moved" from itself.
     if out.source != "shipped":
         var seeded = read_seeded(name)
         if seeded != "":
@@ -169,13 +141,8 @@ def load_template(name: String, template_dir: String) raises -> Template:
 def moved_default_note(usage: Template, review: Template) -> String:
     """The one line that names a moved shipped default, or "".
 
-    SPEC §7: a shipped default that moved since the user copy was
-    seeded is named, with the two commands that adopt it — seed the new
-    default over the old copy, then re-render every block. Only a human
-    runs those, and only to discard their own wording.
-
-    The line is one line, because the failure it belongs to gets
-    exactly one stderr line (SPEC §2).
+    SPEC §7: a shipped default that moved since the user copy was seeded is
+    named, with the two commands that adopt it. Only a human runs those.
     """
     if not usage.moved and not review.moved:
         return ""
@@ -187,41 +154,24 @@ def moved_default_note(usage: Template, review: Template) -> String:
 
 
 def moved_suffix(moved: String) -> String:
-    """The moved-default clause to append to another message, or "".
-
-    The failure gets exactly one stderr line (SPEC §2), so a moved
-    default that rides along with another failure is a clause of that
-    line, not a line of its own.
-    """
+    """The moved-default clause to append to another message, or ""."""
     if moved == "":
         return ""
     return "; " + moved
 
 
 def validate_effective(name: String, template: Template) raises:
-    """Refuse a template whose placeholders are wrong, by name.
-
-    This is the boundary guard SPEC §7 names: a usage-log template that
-    lost its `<name>` or its `<command> add` invocation would silently
-    stop every skill from logging, so it is refused before it renders.
-    """
+    """Refuse a template whose placeholders are wrong, by name."""
     try:
         validate_template(name, template.content)
     except e:
         raise Error(String(e))
 
 
-# ----------------------------------------------------------- dir listing
 
 
 def skill_dirs(dir: String) raises -> List[String]:
-    """The skill subdirectories of `dir`: those holding a `SKILL.md`.
-
-    A skill is a subdirectory of `--dir` with a `SKILL.md` in it. The
-    names come back sorted so the report is deterministic. A directory
-    that does not exist is an empty list; the caller decides what an
-    empty answer means (audit refuses one).
-    """
+    """The skill subdirectories of `dir`: those holding a `SKILL.md`."""
     var out = List[String]()
     if not Path(dir).is_dir():
         return out^
@@ -234,8 +184,6 @@ def skill_dirs(dir: String) raises -> List[String]:
         var sub = dir + "/" + name
         if Path(sub).is_dir() and Path(sub + "/SKILL.md").is_file():
             names.append(name)
-    # Sort: Mojo has no sort for a List of String in this toolchain's
-    # surface, so the insertion sort is explicit and stable.
     for i in range(1, len(names)):
         var key = names[i]
         var j = i - 1
@@ -246,7 +194,6 @@ def skill_dirs(dir: String) raises -> List[String]:
     return names^
 
 
-# ------------------------------------------------------------- auditing
 
 
 struct SkillState(Movable):
@@ -270,21 +217,14 @@ def audit_skill(
 ) raises -> SkillState:
     """One skill's state, from its `SKILL.md`.
 
-    The current render is the one this skill would get now: the
-    template rendered for *this* skill's name and the resolved binary
-    path. A block that names a different skill or a different binary
-    is an older render, and the skill is `stale` — not `ok`.
-
-    The name is the skill's frontmatter `name:`, else the directory
-    name it is called by everywhere else: the same name `adopt` renders
-    for.
+    The current render is the one this skill would get now: the template
+    rendered for *this* skill's name and the resolved binary path. A block
+    that names a different skill or a different binary is `stale`.
     """
     var result = SkillState()
     result.skill = name
     result.path = dir + "/" + name
     var doc_path = result.path + "/SKILL.md"
-    # The read either succeeds or raises, so `text` is always the file's
-    # bytes below; the initial value only satisfies definite assignment.
     var text = String("")
     try:
         text = Path(doc_path).read_text()
@@ -294,9 +234,6 @@ def audit_skill(
     if skill_name == "":
         skill_name = name
     var rendered = render(template.content, skill_name, command)
-    # The document module owns the classification; the audit only names
-    # the skill it came from. `is_vendored` short-circuits inside
-    # `classify`, which is where the vendor stamp is decided.
     result.state = classify(
         text,
         rendered.template_hash,
@@ -306,7 +243,6 @@ def audit_skill(
     return result^
 
 
-# ---------------------------------------------------------- adopting
 
 
 struct Adopted(Movable):
@@ -334,16 +270,10 @@ def adopt_skill(
 ) raises -> Adopted:
     """Make one skill's document conform, and say what happened.
 
-    The state is the document's state *before* the run (the same answer
-    `audit` gives), and the action is what this run did with it:
     `missing` is appended to, `stale` rewritten, `edited` rewritten only
     with `--force` and otherwise refused, `ok` is left `unchanged`, and
-    `vendored` is `skipped` entirely.
-
-    The write is the `document` module's splice — `append` or `rewrite`
-    — through `files.mojo`'s atomic replacement, so no byte outside the
-    fence can change and no half-written file is ever visible. A dry
-    run reports the same actions and writes nothing.
+    `vendored` is `skipped` entirely. The write is the `document` module's
+    splice, so no byte outside the fence can change.
     """
     var result = Adopted()
     result.skill = name
@@ -355,8 +285,6 @@ def adopt_skill(
     except e:
         raise Error("cannot read " + doc_path + ": " + String(e))
 
-    # The rendered block names the skill: `name:` from its frontmatter,
-    # else the directory name it is called by everywhere else.
     var skill_name = frontmatter_name(text)
     if skill_name == "":
         skill_name = name
@@ -394,8 +322,7 @@ def adopt_skill(
 
 
 def adopt_json_line(item: Adopted) -> String:
-    """One adopt object, exactly `skill`, `path`, `state`, `action`
-    (SPEC §5.10)."""
+    """One adopt object, exactly `skill`, `path`, `state`, `action`"""
     var out = JsonObject()
     out.put("skill", item.skill)
     out.put("path", item.path)
@@ -409,7 +336,6 @@ def adopt_text_line(item: Adopted) -> String:
     return item.action + "  " + item.state + "  " + item.skill + "  " + item.path
 
 
-# ------------------------------------------------------- JSON and text
 
 
 def audit_json_line(item: SkillState) -> String:
@@ -439,12 +365,7 @@ def template_json(t: Template) -> String:
 
 
 struct TemplateAction(Movable):
-    """One template's outcome under `seed` or `reset`.
-
-    The path is the file the action is about, and the action is one of
-    the fixed tokens above. The human line is prose; the JSON carries
-    the two values.
-    """
+    """One template's outcome under `seed` or `reset`."""
 
     var path: String
     var action: String
@@ -466,7 +387,6 @@ def template_action_json(item: TemplateAction) -> String:
     return out.render()
 
 
-# ---------------------------------------------------------- subcommand
 
 
 struct SkillsOptions(Movable):
@@ -489,13 +409,7 @@ struct SkillsOptions(Movable):
 
 
 def parse_skills_options(args: List[String]) raises -> SkillsOptions:
-    """Read `skills`'s subcommand and its flags.
-
-    The first positional is the subcommand (`audit`, `template`, `adopt`);
-    `template` takes a second positional (`show`, `seed`, `reset`). An
-    unknown flag or a missing value is a usage error, raised as a
-    `usage:` marker the caller turns into exit 2.
-    """
+    """Read `skills`'s subcommand and its flags."""
     var options = SkillsOptions()
     var value_flags = skills_value_flags()
     var i = 0
@@ -538,7 +452,6 @@ def parse_skills_options(args: List[String]) raises -> SkillsOptions:
     return options^
 
 
-# ------------------------------------------------------------- handlers
 
 
 def skills_usage() -> String:
@@ -594,10 +507,6 @@ def skills_notes() -> String:
            "`skill-log skills adopt --help` for the write."
 
 
-# The sub-verbs of `skills`, and the sub-verbs of `template`, as one
-# table. The help renderer reads them like any other verb, so a
-# subcommand's block is the common block and there is no second
-# renderer to keep in step.
 def skills_subverbs() -> List[Verb]:
     """The verb table for `skills` and the levels below it."""
     var verbs = List[Verb]()
@@ -761,12 +670,7 @@ def skills_subverbs() -> List[Verb]:
 
 
 def skills_verb() -> Verb:
-    """The `skills` verb itself, with its sub-verbs in the table.
-
-    The verb's own text lives here, with its handler, so the usage a
-    usage error prints and the usage `--help` prints are the same text
-    — one source, two readers.
-    """
+    """The `skills` verb itself, with its sub-verbs in the table."""
     return Verb(
         "skills",
         "audit and adopt a skills directory and manage the usage-log templates",
@@ -780,22 +684,7 @@ def skills_verb() -> Verb:
 
 
 def handle_skills(args: List[String]) raises -> Outcome:
-    """The `skills` handler: dispatch on the subcommand.
-
-    Returns the text to print on stdout, or the failure to report. It
-    never prints and never exits: `main` owns both.
-
-    A `--help` or `-h` anywhere in the call is a request for the
-    subcommand's own help: `skills audit --help` prints the audit block,
-    `skills template show --help` the show block, and `skills --help`
-    the whole verb block. The subcommand is read from the first
-    positional, so the help target is known before flags are parsed.
-    """
-    # Find the subcommand and whether help was asked for, without
-    # parsing values: a bare scan, so `--dir --help` still treats
-    # `--help` as a value of `--dir` only when it follows it. The verb's
-    # value flags are the ones the dispatcher already knows, so the same
-    # step-over rule applies here.
+    """The `skills` handler: dispatch on the subcommand."""
     var wants_help = False
     var positionals = List[String]()
     var value_flags = skills_value_flags()
@@ -849,15 +738,11 @@ def handle_skills(args: List[String]) raises -> Outcome:
 
 
 def handle_audit(options: SkillsOptions) raises -> Outcome:
-    """`skills audit`: one line per skill, exit 1 on anything but
-    ok/vendored, and writes nothing."""
+    """`skills audit`: one line per skill, exit 1 on anything but"""
     if String(options.dir.strip()) == "":
         return Outcome.fail("usage: skills audit needs --dir <dir>", EXIT_USAGE())
     var dir = String(options.dir.strip())
 
-    # The current render is what the fence is compared against. The
-    # effective template is validated first: a broken template must not
-    # silently mark every skill stale.
     var template_dir = resolve_template_dir(options.template_dir)
     var template: Template
     var review: Template
@@ -868,15 +753,8 @@ def handle_audit(options: SkillsOptions) raises -> Outcome:
     except e:
         return Outcome.fail(String(e), EXIT_FAILURE())
 
-    # A shipped default that moved since the user copy was seeded is
-    # named here too (SPEC §7): the blocks are rendered from the old
-    # default, so the whole directory is behind — and only a human can
-    # decide to discard their own wording.
     var moved = moved_default_note(template, review)
 
-    # The resolved binary path is the other half of the current render:
-    # the block names it, so a binary that moved makes every block an
-    # older render.
     var command = resolved_command()
     var names = skill_dirs(dir)
     if len(names) == 0:
@@ -903,17 +781,12 @@ def handle_audit(options: SkillsOptions) raises -> Outcome:
         text += lines[i]
 
     if dirty:
-        # The findings are the answer and go to stdout even when the
-        # exit code says "not clean"; the summary is the one stderr line
-        # the failure is allowed.
         var outcome = Outcome.fail(
             "some skills need adoption" + moved_suffix(moved), EXIT_FAILURE()
         )
         outcome.text = text
         return outcome^
     if moved != "":
-        # A moved default is its own failure: the directory may be
-        # clean, and it is still behind the shipped default.
         var outcome = Outcome.fail(moved, EXIT_FAILURE())
         outcome.text = text
         return outcome^
@@ -921,19 +794,11 @@ def handle_audit(options: SkillsOptions) raises -> Outcome:
 
 
 def handle_adopt(options: SkillsOptions) raises -> Outcome:
-    """`skills adopt`: make every skill in `--dir` conform.
-
-    One line (or object) per skill, exit 0 when the directory ends
-    conformant, exit 1 when any skill is refused — an `edited` block
-    left untouched because `--force` was not given. `--dry-run` prints
-    the same answer and writes nothing.
-    """
+    """`skills adopt`: make every skill in `--dir` conform."""
     if String(options.dir.strip()) == "":
         return Outcome.fail("usage: skills adopt needs --dir <dir>", EXIT_USAGE())
     var dir = String(options.dir.strip())
 
-    # The effective template is validated first: rendering from a broken
-    # template would write blocks no skill can log from.
     var template_dir = resolve_template_dir(options.template_dir)
     var template: Template
     try:
@@ -979,9 +844,6 @@ def handle_adopt(options: SkillsOptions) raises -> Outcome:
         text += lines[i]
 
     if refused:
-        # The report is the answer and goes to stdout even when the exit
-        # code says "not conformant"; the summary is the one stderr line
-        # the failure is allowed.
         var outcome = Outcome.fail(
             "some skills were refused (an edited block is rewritten"
             " only with --force)",
@@ -993,8 +855,7 @@ def handle_adopt(options: SkillsOptions) raises -> Outcome:
 
 
 def handle_template_show(options: SkillsOptions) raises -> Outcome:
-    """`skills template show`: both effective templates, their source,
-    hashes, and whether the shipped default has moved."""
+    """`skills template show`: both effective templates, their source,"""
     var template_dir = resolve_template_dir(options.template_dir)
     var usage: Template
     var review: Template
@@ -1034,13 +895,7 @@ def handle_template_show(options: SkillsOptions) raises -> Outcome:
 
 
 def handle_template_seed(options: SkillsOptions) raises -> Outcome:
-    """`skills template seed`: copy the shipped defaults into the user
-    directory, refusing an existing copy without `--force`.
-
-    One action per template. The action is a fixed token, so the JSON
-    carries the same fact the human line does; `--dry-run` previews the
-    same shape and writes nothing.
-    """
+    """`skills template seed`: copy the shipped defaults into the user"""
     var dir = default_template_dir()
     var names = template_names()
     var actions = List[TemplateAction]()
@@ -1091,12 +946,7 @@ def handle_template_seed(options: SkillsOptions) raises -> Outcome:
 
 
 def handle_template_reset(options: SkillsOptions) raises -> Outcome:
-    """`skills template reset`: delete the user copies back to the
-    shipped defaults, refusing while copies exist without `--force`.
-
-    One action per template, with the same fixed tokens `seed` uses: a
-    copy that is not there is `absent`, not a deletion.
-    """
+    """`skills template reset`: delete the user copies back to the"""
     var dir = default_template_dir()
     var names = template_names()
     var actions = List[TemplateAction]()

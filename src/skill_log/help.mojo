@@ -4,26 +4,19 @@ from skill_log.verb import Verb
 
 
 def render_verb(verb: Verb) -> String:
-    """The usage block for one verb: its summary, its usage line, its
-    notes, and two to four real invocations."""
+    """The usage block for one verb: its summary, its usage line, its"""
     var text = verb.path + " — " + verb.summary + "\n"
     text += "\nusage:\n  " + verb.usage + "\n"
     if verb.notes != "":
         text += "\n" + verb.notes + "\n"
     text += "\nexamples:\n"
-    # Indexed, not iterated: a `List` of non-Copyable elements cannot be
-    # walked with `for`.
     for i in range(len(verb.examples)):
         text += "  " + verb.examples[i] + "\n"
     return text
 
 
 def render_verb_list(verbs: List[Verb]) -> String:
-    """The list of verbs: one line per verb, name and summary.
-
-    The same list the top-level usage prints, so a verb lists its
-    sub-verbs the way the tool lists everything else.
-    """
+    """The list of verbs: one line per verb, name and summary."""
     var text = String("")
     for i in range(len(verbs)):
         text += "  " + verbs[i].name + "  " + verbs[i].summary + "\n"
@@ -31,13 +24,7 @@ def render_verb_list(verbs: List[Verb]) -> String:
 
 
 def top_level_help(verbs: List[Verb]) -> String:
-    """The top-level usage: what the tool is, how to call it, and the
-    verbs it knows.
-
-    The verb list is one line per verb, not one example each: the
-    per-verb invocations live in the verb's own `--help`, which is
-    where a caller looks for them.
-    """
+    """The top-level usage: what the tool is, how to call it, and the"""
     var text = "skill-log — record agent-skill invocations and the friction they produced\n"
     text += "\nusage:\n"
     text += "  skill-log <verb> [options]\n"

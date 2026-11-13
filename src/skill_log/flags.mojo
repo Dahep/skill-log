@@ -4,11 +4,7 @@
 def take_value(
     args: List[String], at: Int, flag: String, what: String
 ) raises -> String:
-    """The value of `flag`, which sits at `at + 1`.
-
-    Raises a `usage:` error when the flag is the last argument. The
-    caller turns the marker into exit 2.
-    """
+    """The value of `flag`, which sits at `at + 1`."""
     var next = at + 1
     if next >= len(args):
         raise Error("usage: " + flag + " needs " + what)
@@ -22,11 +18,7 @@ def take_declared_value(
     what: String,
     value_flags: List[String],
 ) raises -> String:
-    """The value of `flag`, which the verb must have declared.
-
-        The check is here, at the one place every verb reads a value, so a
-        flag the parser handles but the declaration does not name is caught
-        at once."""
+    """The value of `flag`, which the verb must have declared."""
     if not takes_value(value_flags, flag):
         raise Error("usage: " + flag + " is not a value flag")
     return take_value(args, at, flag, what)
@@ -41,12 +33,7 @@ def takes_value(flags: List[String], flag: String) -> Bool:
 
 
 def parse_positive(value: String, message: String) raises -> Int:
-    """A positive decimal number, or a usage error carrying `message`.
-
-    Digits only: a sign, a space or a fraction is not an invocation id.
-    The cap is checked while the digits are consumed, so an oversized
-    number cannot wrap into the valid range.
-    """
+    """A positive decimal number, or a usage error carrying `message`."""
     var text = String(value.strip())
     if text == "":
         raise Error("usage: " + message)

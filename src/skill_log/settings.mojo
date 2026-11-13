@@ -6,22 +6,15 @@ from std.sys import argv
 
 from skill_log.files import resolve_path
 
-# The directory the tool's own files live under, inside the XDG state
-# and config directories.
 comptime STATE_DIR_NAME = "skill-log"
 
-# The file name of the store, inside the XDG state directory.
 comptime STORE_FILE_NAME = "skills.db"
 
 
-# --------------------------------------------------------------- xdg paths
 
 
 def xdg_state_home() -> String:
-    """The XDG state directory, per the XDG rules.
-
-    `XDG_STATE_HOME` first, else `$HOME/.local/state`.
-    """
+    """The XDG state directory, per the XDG rules."""
     var xdg = getenv("XDG_STATE_HOME", "")
     if xdg != "":
         return xdg
@@ -29,10 +22,7 @@ def xdg_state_home() -> String:
 
 
 def xdg_config_home() -> String:
-    """The XDG config directory, per the XDG rules.
-
-    `XDG_CONFIG_HOME` first, else `$HOME/.config`.
-    """
+    """The XDG config directory, per the XDG rules."""
     var xdg = getenv("XDG_CONFIG_HOME", "")
     if xdg == "":
         xdg = getenv("HOME", "") + "/.config"
@@ -40,32 +30,19 @@ def xdg_config_home() -> String:
 
 
 def xdg_state_dir() -> String:
-    """The skill-log state directory, per the XDG rules.
-
-    The store lives beside this in `skills.db`; the seeded-from record
-    lives in `seeded-from/` here.
-    """
+    """The skill-log state directory, per the XDG rules."""
     return xdg_state_home() + "/" + STATE_DIR_NAME
 
 
 def xdg_config_dir() -> String:
-    """The user template directory, per the XDG rules.
-
-    `XDG_CONFIG_HOME` first, else `$HOME/.config`. The templates are
-    the `skill-log/templates/` directory inside it.
-    """
+    """The user template directory, per the XDG rules."""
     return xdg_config_home() + "/" + STATE_DIR_NAME + "/templates"
 
 
-# --------------------------------------------------------------- the store
 
 
 def expand_home(path: String) -> String:
-    """Expand a leading `~` to the user's home.
-
-    `~` alone is the home directory; `~/x` is `x` inside it. A path
-    that does not start with `~` is returned unchanged.
-    """
+    """Expand a leading `~` to the user's home."""
     if not path.startswith("~"):
         return path
     var home = getenv("HOME", "")
@@ -79,20 +56,12 @@ def expand_home(path: String) -> String:
 
 
 def default_db() -> String:
-    """The store path when nothing overrides it.
-
-    The XDG state directory, per the rules above. The directory is
-    never created here: a read must not change the machine.
-    """
+    """The store path when nothing overrides it."""
     return xdg_state_dir() + "/" + STORE_FILE_NAME
 
 
 def resolve_db(flag: String) -> String:
-    """The store path: `--db` first, then `SKILL_LOG_DB`, then the default.
-
-    An empty `--db` means the flag was not given, so the environment
-    variable gets its turn.
-    """
+    """The store path: `--db` first, then `SKILL_LOG_DB`, then the default."""
     if flag != "":
         return expand_home(flag)
     var env = getenv("SKILL_LOG_DB", "")
@@ -101,7 +70,6 @@ def resolve_db(flag: String) -> String:
     return default_db()
 
 
-# -------------------------------------------------------------- templates
 
 
 def default_template_dir() -> String:
@@ -110,13 +78,7 @@ def default_template_dir() -> String:
 
 
 def resolve_template_dir(flag: String) -> String:
-    """The effective template directory, by the spec's chain.
-
-    `--template-dir` first, then `SKILL_LOG_TEMPLATE_DIR`, then the user
-    config directory. The shipped defaults are a separate fallback: a
-    directory that does not contain a given template name falls through
-    to the shipped default for that name.
-    """
+    """The effective template directory, by the spec's chain."""
     if String(flag.strip()) != "":
         return String(flag.strip())
     var env = getenv("SKILL_LOG_TEMPLATE_DIR", "")
@@ -125,18 +87,10 @@ def resolve_template_dir(flag: String) -> String:
     return default_template_dir()
 
 
-# ----------------------------------------------------------- the binary
 
 
 def find_in_path(program: String) -> String:
-    """`program` as the first executable name on `PATH`, or unchanged.
-
-    The shell's own first-match rule, for when the tool is invoked by
-    bare name: `PATH` is walked left to right and the first entry that
-    holds the file wins. A name `PATH` does not carry comes back as it
-    went in — the caller still resolves it, and still falls back to the
-    given name.
-    """
+    """`program` as the first executable name on `PATH`, or unchanged."""
     var path = getenv("PATH", "")
     var start = 0
     var n = path.byte_length()
@@ -156,11 +110,8 @@ def find_in_path(program: String) -> String:
 def resolved_command() -> String:
     """The path of this binary, resolved: `<command>`'s value.
 
-    "The resolved binary path" is one answer no matter how the tool was
-    invoked: a bare name is looked up on `PATH`, and whatever is found —
-    or given — is resolved to one absolute, symlink-free path by
-    `resolve_path`. A name the filesystem cannot resolve (a deleted
-    binary, say) is used as it was given rather than dropped.
+    The resolved path is what the rendered block names, so a binary that
+    moved makes every block an older render.
     """
     var all = argv()
     var program = String(all[0])

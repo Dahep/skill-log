@@ -8,7 +8,6 @@ from std.time import monotonic
 
 from skill_log.ffi import dl_sym
 
-# `open(2)` flags and mode, as the Linux ABI numbers them.
 comptime O_WRONLY = 1
 comptime O_CREAT = 64
 comptime O_EXCL = 128
@@ -16,11 +15,7 @@ comptime FILE_MODE = 384  # 0600
 
 
 def read_text(path: String) raises -> String:
-    """The file's text, or an error naming what could not be read.
-
-    The caller checks existence first; a file that vanished between the
-    check and the read is a real failure here, not an empty report.
-    """
+    """The file's text, or an error naming what could not be read."""
     return Path(path).read_text()
 
 
@@ -54,11 +49,7 @@ def temp_name(path: String) raises -> String:
 
 
 def unlink_path(path: String):
-    """Remove `path`, best effort.
-
-    Cleanup after a failed write must not replace the failure the caller
-    is about to report, so nothing here raises.
-    """
+    """Remove `path`, best effort."""
     try:
         var lib = OwnedDLHandle("libc.so.6", RTLD.NOW)
         var unlink_fn = dl_sym[def(Int) thin abi("C") -> Int](lib, "unlink")
@@ -85,10 +76,7 @@ def rename_path(from_path: String, to_path: String) raises:
 
 
 def resolve_path(path: String) -> String:
-    """`path` as one absolute, symlink-resolved path, or "".
-
-        Nothing raises: resolution is best-effort, and a name the
-        filesystem cannot resolve is still a usable command."""
+    """`path` as one absolute, symlink-resolved path, or ""."""
     try:
         var lib = OwnedDLHandle("libc.so.6", RTLD.NOW)
         var realpath_fn = dl_sym[def(Int, Int) thin abi("C") -> Int](
@@ -118,9 +106,10 @@ def write_text(path: String, text: String) raises:
 def is_executable(path: String) -> Bool:
     """True when the *owner* of `path` may execute it.
 
-        The owner's bit is the one that matters, not "somebody's": git runs
-        the hook as the user who pulled, and the installer wrote the file
-        as that user."""
+    The owner's bit is the one that matters, not "somebody's": git runs the
+    hook as the user who pulled, and the installer wrote the file as that
+    user. A file that cannot be stat'ed is not executable.
+    """
     try:
         var info = stat(path)
         return (info.st_mode & 0o100) != 0
@@ -129,14 +118,7 @@ def is_executable(path: String) -> Bool:
 
 
 def set_executable(path: String) raises:
-    """Give `path` the owner's execute bit, leaving its other bits alone.
-
-    `chmod` with the owner's execute bit added to the file's own mode:
-    the hook keeps the permissions it had and gains the bit git needs.
-    The owner's bit is the one that is added — the others are left as
-    they are, because the installer owns the file and the owner's bit
-    is the one the run needs.
-    """
+    """Give `path` the owner's execute bit, leaving its other bits alone."""
     var lib = OwnedDLHandle("libc.so.6", RTLD.NOW)
     var chmod_fn = dl_sym[def(Int, Int) thin abi("C") -> Int](lib, "chmod")
     var info = stat(path)
@@ -151,11 +133,12 @@ def set_executable(path: String) raises:
 def write_text_mode(path: String, text: String, mode: Int) raises:
     """Replace `path` with `text`, atomically, at exactly `mode`.
 
-        The temporary lives beside the target — a rename across filesystems
-        is a copy, not an atomic swap — and is created with `O_EXCL`, so a
-        file already at that name is never followed. The mode is set on the
-        descriptor before the rename, so the replacement is never visible at
-        the wrong permissions."""
+    The temporary lives beside the target — a rename across filesystems is a
+    copy, not an atomic swap — and is created with `O_EXCL`, so a file
+    already at that name is never followed. The mode is set on the
+    descriptor before the rename, so the replacement is never visible at the
+    wrong permissions.
+    """
     var lib = OwnedDLHandle("libc.so.6", RTLD.NOW)
     var open_fn = dl_sym[def(Int, Int, Int) thin abi("C") -> Int](lib, "open")
     var write_fn = dl_sym[def(Int, Int, Int) thin abi("C") -> Int](

@@ -1,6 +1,5 @@
 """The two shipped default templates, embedded in the binary."""
 
-# The template names, in the order every command lists them.
 comptime USAGE_LOG_NAME = "usage-log.md"
 comptime REVIEW_NAME = "skill-friction-review.md"
 
@@ -53,8 +52,7 @@ the skill's work outranks its own reporting."""
 
 
 def shipped_review() -> String:
-    """The shipped `skill-friction-review.md`, as it is embedded in the
-    binary."""
+    """The shipped `skill-friction-review.md`, as it is embedded in the"""
     return """\
 # Skill friction review
 
@@ -85,12 +83,7 @@ which is the one thing no query can answer."""
 
 
 def shipped_template(name: String) raises -> String:
-    """The shipped default called `name`.
-
-    An unknown name is an error rather than an empty string: every
-    caller names one of the two, and a silent empty default would render
-    an empty block.
-    """
+    """The shipped default called `name`."""
     if name == USAGE_LOG_NAME:
         return shipped_usage_log()
     if name == REVIEW_NAME:

@@ -17,9 +17,6 @@ from skill_log.settings import resolve_db
 from skill_log.table import join_lines, pad, shorten_home
 from skill_log.text import sanitize
 
-# The ends of the `--last` range. The upper bound keeps one call from
-# pulling the whole log into memory; the lower bound is one, because
-# zero rows is not a question anyone asks of a log.
 comptime LAST_MIN = 1
 comptime LAST_MAX = 500
 
@@ -73,12 +70,7 @@ def show_notes() -> String:
 
 
 struct Options(Movable):
-    """The flags `show` accepts.
-
-    `given_*` records which filters the caller named, so an empty value
-    can be told from an absent flag: `--skill ""` is a mistake, while
-    no `--skill` at all is simply no filter.
-    """
+    """The flags `show` accepts."""
 
     var skill: String
     var machine: String
@@ -119,8 +111,6 @@ def parse_last(text: String) raises -> Int:
         var code = Int(c)
         if code < 48 or code > 57:
             raise Error("usage: " + last_range_message())
-    # The cap is checked as the digits are consumed, so a number with
-    # more digits than an Int holds cannot wrap into the valid range.
     var value = 0
     for c in text.codepoints():
         value = value * 10 + (Int(c) - 48)
@@ -139,8 +129,7 @@ def parse_options(args: List[String]) raises -> Options:
     """Read `show`'s flags.
 
     An unknown flag, a missing value or an empty filter value is a usage
-    error, raised as a `usage` marker the caller turns into exit 2: one
-    line, the examples, and nothing read.
+    error, raised as a `usage` marker the caller turns into exit 2.
     """
     var options = Options()
     var value_flags = show_value_flags()
@@ -195,9 +184,6 @@ def parse_options(args: List[String]) raises -> Options:
             raise Error("usage: unknown option: " + arg)
         i += 1
 
-    # An empty filter value selects nothing, which is never what the
-    # caller meant: `--skill ""` is a mistake, not a filter. It is a
-    # usage error rather than a silently empty result.
     if options.given_skill and String(options.skill.strip()) == "":
         raise Error("usage: --skill needs a name")
     if options.given_machine and String(options.machine.strip()) == "":
@@ -213,13 +199,7 @@ def parse_options(args: List[String]) raises -> Options:
 
 
 def empty_message(filters: Filters) -> String:
-    """What the table prints when nothing matched.
-
-    The plain case names the log. A filtered case names every filter
-    that was given, so a reader who asked for one harness and got
-    nothing learns that the harness was the reason — and not that the
-    log is empty, which it is not.
-    """
+    """What the table prints when nothing matched."""
     var parts = List[String]()
     if filters.skill != "":
         parts.append("--skill " + sanitize(filters.skill))
@@ -233,7 +213,6 @@ def empty_message(filters: Filters) -> String:
         parts.append("--run " + sanitize(filters.run))
 
     if len(parts) == 0:
-        # No filter was given, so the log itself is empty.
         return "no invocations logged yet"
 
     var out = "no invocations match "
@@ -244,12 +223,6 @@ def empty_message(filters: Filters) -> String:
     return out
 
 
-# The table's columns, in the order they are printed. Each one is the
-# row's own field, rendered for a person.
-#
-# A function rather than a constant: a `comptime` array of strings
-# cannot be materialized at run time on this toolchain, and the table
-# walks the headers at run time.
 def table_headers() -> List[String]:
     """The table's column names, in the order they are printed."""
     var headers = List[String]()
@@ -271,13 +244,7 @@ def table_headers() -> List[String]:
 
 
 def cell(row: Invocation, column: String) -> String:
-    """One table cell: the row's field, rendered for a person.
-
-    Every field is sanitized the way the store sanitizes it, so a
-    control character can never split a row into two lines or inject a
-    terminal escape. The worktree is shortened under the home
-    directory; the rest are printed as they are.
-    """
+    """One table cell: the row's field, rendered for a person."""
     if column == "inv":
         return String(row.id)
     if column == "ts":
@@ -310,11 +277,7 @@ def cell(row: Invocation, column: String) -> String:
 
 
 def table_widths(rows: List[Invocation]) -> List[Int]:
-    """The width of every column: the widest cell in it, header included.
-
-    The header sets the floor, so a column of empty values still has a
-    name over it.
-    """
+    """The width of every column: the widest cell in it, header included."""
     var headers = table_headers()
     var widths = List[Int]()
     for i in range(len(headers)):
@@ -328,13 +291,7 @@ def table_widths(rows: List[Invocation]) -> List[Int]:
 
 
 def render_table(rows: List[Invocation]) -> String:
-    """The table for a person: a header row, one line per invocation, and
-    each problem indented under its invocation.
-
-    The lines are joined by newlines and the last one carries none:
-    `main` prints the text, so a trailing newline would leave a blank
-    line behind.
-    """
+    """The table for a person: a header row, one line per invocation, and"""
     var headers = table_headers()
     var widths = table_widths(rows)
     var lines = List[String]()
@@ -358,8 +315,6 @@ def render_table(rows: List[Invocation]) -> String:
                 line += cell(rows[r], headers[c])
             else:
                 line += pad(cell(rows[r], headers[c]), widths[c])
-        # Empty columns in the middle of the row still pad, so the right
-        # edge is trimmed: trailing spaces are noise no reader needs.
         lines.append(String(line.rstrip()))
         for p in range(len(rows[r].problems)):
             lines.append(
@@ -370,21 +325,13 @@ def render_table(rows: List[Invocation]) -> String:
 
 
 def handle_show(args: List[String]) raises -> Outcome:
-    """The `show` handler.
-
-    Returns the text to print on stdout, or the failure to report. It
-    never prints and never exits: `main` owns both.
-    """
+    """The `show` handler."""
     var options: Options
     try:
         options = parse_options(args)
     except e:
         var message = String(e)
         if message.startswith("usage: "):
-            # One named line, and exit 2: the line says what is wrong
-            # with the call and what to write instead. The full usage
-            # block is one `show --help` away, and the same shape every
-            # verb's usage error has.
             return Outcome.fail(String(message[byte=7:]), EXIT_USAGE())
         raise
 
@@ -403,9 +350,6 @@ def handle_show(args: List[String]) raises -> Outcome:
     try:
         opened = open_read(path)
     except e:
-        # The store classifies the failure and this handler renders it:
-        # damage is damage, a lock is a lock, and nothing here inspects
-        # a SQLite message (SPEC §3).
         var failure = read_failure(path, String(e))
         return Outcome.fail(failure.message, failure.code)
 
@@ -417,23 +361,14 @@ def handle_show(args: List[String]) raises -> Outcome:
     if opened.db:
         var db = opened.db.take()
         try:
-            # An existing file with no store tables yet (a fresh, empty
-            # SQLite file) is an empty log, not a foreign one: the store
-            # layer accepts it, and only a file that already holds
-            # something else was refused above.
             if is_skill_log_store(db):
                 rows = read_invocations(db, filters)
         except e:
-            # The store classifies the failure and this handler renders
-            # it: damage is damage, a lock is a lock, and nothing here
-            # inspects a SQLite message (SPEC §3).
             var failure = read_failure(path, String(e))
             return Outcome.fail(failure.message, failure.code)
 
     if len(rows) == 0:
         if options.json:
-            # The JSON stream stays parseable: an empty result prints
-            # nothing at all, not an empty object.
             return Outcome.ok("")
         return Outcome.ok(empty_message(filters))
 

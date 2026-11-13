@@ -1,5 +1,4 @@
-"""The store: where it lives, what it holds, and when it is refused.
-"""
+"""The store: where it lives, what it holds, and when it is refused."""
 
 from std.ffi import OwnedDLHandle, RTLD
 from std.os import makedirs
@@ -15,24 +14,12 @@ from skill_log.opendb import read_only_database
 from skill_log.settings import expand_home, resolve_db
 from skill_log.text import sanitize
 
-# The schema version this binary writes and understands. A store stamped
-# higher is refused: an older CLI must not touch a newer store.
 comptime SCHEMA_VERSION = 1
 
-# The invocation table's columns, exactly as ADR-0002 defines them. This
-# list is the schema: the DDL, the column-name allow-list, the SELECT
-# lists and the JSON key order are all built from it, so a column added
-# to the schema cannot be missing from one of them.
-#
-# Every text column is `NOT NULL DEFAULT ''`, so empty means "unknown or
-# not applicable" and the SQL layer stays free of NULL semantics.
+# The column list is the schema: the DDL, the allow-list, the SELECT lists
+# and the JSON key order are all built from it.
 struct ColumnDef:
-    """One column: its name, its SQL type, and its default.
-
-    `default` is empty for a column that has none — `id` and `ts` are
-    written by the engine and by the writer, not by the schema. A column
-    without a default and without `not_null` is the engine's own `id`.
-    """
+    """One column: its name, its SQL type, and its default."""
 
     var name: String
     var sql_type: String
@@ -82,9 +69,7 @@ def invocation_columns() -> List[ColumnDef]:
 
 
 def invocation_ddl() -> String:
-    """The `CREATE TABLE` for the invocations table, built from the
-    column list.
-    """
+    """The `CREATE TABLE` for the invocations table, built from the"""
     var columns = invocation_columns()
     var body = String("")
     for i in range(len(columns)):
@@ -94,8 +79,6 @@ def invocation_ddl() -> String:
     return "CREATE TABLE IF NOT EXISTS invocations (\n" + body + "\n)"
 
 
-# One problem per finding, keyed by (invocation, ordinal), cascading with
-# its invocation.
 comptime PROBLEM_DDL = """\
 CREATE TABLE IF NOT EXISTS problems (
     invocation_id INTEGER NOT NULL REFERENCES invocations(id) ON DELETE CASCADE,
@@ -104,9 +87,6 @@ CREATE TABLE IF NOT EXISTS problems (
     PRIMARY KEY (invocation_id, ordinal)
 )"""
 
-# The columns a store must carry to be a 1.0 skill-log store. A file that
-# carries the two tables but lacks one of these is the pre-ADR-0002 store:
-# it is an *older* store, named and refused, never converted.
 def store_column_names() -> List[String]:
     """Every invocations column the 1.0 schema has."""
     var names = List[String]()
@@ -116,9 +96,6 @@ def store_column_names() -> List[String]:
     return names^
 
 
-# The SELECT list every read of an invocation row uses, built from the
-# column list. The order is the schema's own order, so a row's fields
-# land in the same order the columns are declared.
 def invocation_select_list() -> String:
     """The column list a `SELECT` of an invocation row names."""
     var names = List[String]()
@@ -128,9 +105,6 @@ def invocation_select_list() -> String:
     return ", ".join(names)
 
 
-# The `INSERT` that writes an invocation row, built from the column
-# list. The `id` is the engine's, so it is left out of the column list
-# and the placeholders: the write names every other column, in order.
 def invocation_insert_sql() -> String:
     """The `INSERT INTO invocations` statement, built from the columns."""
     var names = List[String]()
@@ -147,47 +121,29 @@ def invocation_insert_sql() -> String:
         + ", ".join(marks) + ")"
     )
 
-# The write budget, ported from the reference. Concurrent skill runs log
-# at once; SQLite's journal-mode conversion and BEGIN can report
-# BUSY/LOCKED without honoring the connection busy timeout. The whole
-# attempt is retried inside a small wall-clock budget with a short
-# per-attempt busy timeout, so a genuinely stuck lock costs a few seconds
-# rather than the connect timeout per attempt.
+# The write budget: a whole attempt is retried, because a lock is retryable
+# and a refusal is not.
 comptime WRITE_BUDGET_SECONDS = 5.0
 comptime WRITE_RETRY_SLEEP = 0.1
 comptime WRITE_CONNECT_TIMEOUT = 2
 
-# The busy timeout every connection carries, in milliseconds. The write
-# path uses the short one; a read may wait longer.
 comptime READ_BUSY_TIMEOUT = 5000
 comptime WRITE_BUSY_TIMEOUT = WRITE_CONNECT_TIMEOUT * 1000
 
-# --------------------------------------------------------------- paths
 
 
 def parent_dir(path: String) -> String:
-    """The directory that holds `path`.
-
-    `Path` has no `parent()` in Mojo 1.2, so the split is done here: the
-    last separator wins, and a path with no separator has no parent
-    directory to create.
-    """
+    """The directory that holds `path`."""
     var cut = path.rfind("/")
     if cut <= 0:
         return ""
     return String(path[byte=0:cut])
 
 
-# --------------------------------------------------------------- refusals
 
 
 def is_corruption(message: String) -> Bool:
-    """True when a SQLite error means the file is not a usable store.
-
-    Not SQLite at all, a malformed page, or an encrypted file. Each is
-    damage or a wrong file, and both must be named rather than degraded
-    into "no invocations logged yet".
-    """
+    """True when a SQLite error means the file is not a usable store."""
     var text = message.lower()
     return (
         text.find("not a database") != -1
@@ -226,13 +182,7 @@ def read_only_failure(path: String) -> Failure:
 
 
 def is_read_only(message: String) -> Bool:
-    """True when a SQLite error means the file could not be written.
-
-    SQLite says the same thing in two wordings — "attempt to write a
-    readonly database" and "attempt to write a read-only database" — and
-    only the wording that names the file's writability counts. A disk
-    error is not one of them.
-    """
+    """True when a SQLite error means the file could not be written."""
     var text = message.lower()
     return (
         text.find("readonly database") != -1
@@ -248,24 +198,16 @@ def unopenable_failure(path: String) -> Failure:
 
 
 def is_unopenable(message: String) -> Bool:
-    """True when a SQLite error means the store file could not be opened.
-
-    The binding reports an open that failed as its own call with the
-    engine's return code, and `SQLITE_CANTOPEN` (14) is the code for
-    "the file could not be opened". The code is engine wording, not the
-    caller's path, so classifying on it is safe: a path cannot choose
-    the answer by carrying the number.
-    """
+    """True when a SQLite error means the store file could not be opened."""
     return message.find("sqlite3_open(") != -1 and message.find("rc=14") != -1
 
 
 def strip_path(message: String, path: String) -> String:
     """`message` with the store's own path removed.
 
-    The binding puts the path it was given into its own wording, so a
-    message carries the caller's path — and a path can contain any word
-    the taxonomy uses. The classification is made on what the binding
-    appended *after* the path, never on the path itself.
+    The binding puts the path it was given into its own wording, and a path
+    can contain any word the taxonomy uses, so the classification is made
+    on what the binding appended *after* the path, never on the path.
     """
     if path == "":
         return message
@@ -291,12 +233,7 @@ def strip_field(message: String, field: String) -> String:
 
 
 def read_failure(path: String, message: String) -> Failure:
-    """The named failure for a SQLite error on the read path.
-
-    The store classifies the error and the handler renders the answer:
-    a handler never inspects a SQLite message itself (SPEC §3). The
-    classification is made on the message *without* the caller's path.
-    """
+    """The named failure for a SQLite error on the read path."""
     var detail = strip_path(message, path)
     if is_corruption(detail):
         return damaged_failure(path)
@@ -310,9 +247,9 @@ def read_failure(path: String, message: String) -> Failure:
 def write_failure(path: String, message: String) -> Failure:
     """The named failure for a SQLite error on the write path.
 
-    The same taxonomy the read path has (SPEC §3), because a write
-    meets the same facts. The named ones do not carry SQLite's wording,
-    so a caller never has to read it to learn what happened.
+    The same taxonomy the read path has (SPEC §3). The named ones do not
+    carry SQLite's wording, so a caller never has to read it to learn what
+    happened.
     """
     var detail = strip_path(message, path)
     if is_corruption(detail):
@@ -352,14 +289,8 @@ def version_failure(path: String, found: Int) -> Failure:
     )
 
 
-# The refusal kinds, one value per named refusal. A caller compares the
-# kind; it never reads the prose back to find out which one it got.
-#
-# A lock is deliberately *not* one of them: a refusal is final, and a
-# lock is retryable. The write path retries a busy failure inside its
-# budget and names it as a lock only when the budget is spent
-# (`write_failure`), so the refusal kinds stay the ones that end the
-# conversation.
+# The refusal kinds: a lock is deliberately not one of them, because a refusal
+# is final and a lock is retryable.
 comptime REFUSAL_NONE = 0
 comptime REFUSAL_DAMAGED = 1
 comptime REFUSAL_FOREIGN = 2
@@ -371,12 +302,8 @@ struct Refusal(Movable):
     """A store that was refused, and why.
 
     The kind is a value rather than a word inside a message: a path the
-    caller named can contain any word at all, so a scheme that
-    re-derived the kind from the message text would let the path decide
-    which refusal the tool reports.
-
-    `found` is the version a newer store carries, and zero for every
-    other kind.
+    caller named can contain any word at all, so a scheme that re-derived
+    the kind from the message text would let the path decide the refusal.
     """
 
     var kind: Int
@@ -407,7 +334,6 @@ struct Refusal(Movable):
         return operational_failure("cannot use the store: " + self.path)
 
 
-# --------------------------------------------------------------- schema
 
 
 def table_exists(db: Database, name: String) raises -> Bool:
@@ -503,20 +429,11 @@ def stamp_version(db: Database) raises:
     db.execute("PRAGMA user_version=" + String(SCHEMA_VERSION))
 
 
-# `SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE`: without it, closing the last
-# connection to a WAL store checkpoints its WAL frames into the database
-# file and removes the sidecars. That is a write, and a read must not
-# write. The option exists in SQLite 3.32+; the bundled library has it.
 comptime SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE = 1006
 
 
 def disable_close_checkpoint(db: Database):
-    """Ask SQLite not to checkpoint this store when the read closes.
-
-    Best-effort: an older SQLite without the option still reads — it may
-    checkpoint on close, which moves committed rows within the store
-    rather than changing them.
-    """
+    """Ask SQLite not to checkpoint this store when the read closes."""
     try:
         var lib = OwnedDLHandle(
             "libsqlite3.so.0", RTLD.NOW | RTLD.GLOBAL | RTLD.NODELETE
@@ -530,13 +447,7 @@ def disable_close_checkpoint(db: Database):
 
 
 def apply_read_pragmas(db: Database, busy_timeout: Int) raises:
-    """The connection settings a read carries.
-
-    Foreign keys so a cascading delete is never silently ignored, a busy
-    timeout so a read behind a writer waits. `journal_mode` is
-    deliberately absent: switching a file to WAL rewrites its header, and
-    a read must not change the machine.
-    """
+    """The connection settings a read carries."""
     db.execute("PRAGMA foreign_keys=ON")
     db.execute("PRAGMA busy_timeout=" + String(busy_timeout))
 
@@ -547,7 +458,6 @@ def apply_write_pragmas(db: Database, busy_timeout: Int) raises:
     apply_read_pragmas(db, busy_timeout)
 
 
-# --------------------------------------------------------------- opening
 
 
 def user_table_count(db: Database) raises -> Int:
@@ -563,12 +473,7 @@ def user_table_count(db: Database) raises -> Int:
 
 
 struct StoreOpen(Movable):
-    """What opening a store produced: the connection, or the refusal.
-
-    `db` is `None` either because the file does not exist (a read that
-    never creates) or because the open was refused; `refusal.refused()`
-    tells the two apart.
-    """
+    """What opening a store produced: the connection, or the refusal."""
 
     var db: Optional[Database]
     var refusal: Refusal
@@ -579,14 +484,7 @@ struct StoreOpen(Movable):
 
 
 def schema_refusal(db: Database, existed: Bool, path: String) raises -> Refusal:
-    """What, if anything, is wrong with this file's schema.
-
-    A refusal is an answer about the file, so it is returned rather than
-    raised: the caller turns it into the named line, and nothing else in
-    the write path has to recognise an error. A file with no tables at
-    all is not a refusal — it is a store waiting to be initialised — and
-    only an *existing* file that already holds something else is foreign.
-    """
+    """What, if anything, is wrong with this file's schema."""
     try:
         if is_older_store(db):
             return Refusal(REFUSAL_OLDER, "", 0)
@@ -595,10 +493,6 @@ def schema_refusal(db: Database, existed: Bool, path: String) raises -> Refusal:
         if not ours and existed and (
             user_table_count(db) > 0 or user_version(db) != 0
         ):
-            # A concurrent `add` may have committed the schema between
-            # those two queries. Ask once more before calling the file
-            # foreign: the answer "foreign" is final, and a store that
-            # another writer just initialised is not foreign at all.
             ours = is_skill_log_store(db)
             if not ours:
                 return Refusal(REFUSAL_FOREIGN, "", 0)
@@ -617,16 +511,10 @@ def schema_refusal(db: Database, existed: Bool, path: String) raises -> Refusal:
 def open_read(path: String) raises -> StoreOpen:
     """Open an existing store for reading.
 
-    `db` is `None` when the file does not exist: a read never creates
-    the state directory, the file, or an empty database. A file that
-    exists but is not a usable store is refused by name; nothing is
-    written to it, not even its journal mode.
-
-    The vendored binding opens read-write (it exposes no open flags), so
-    a file deleted between the `is_file` check and the open would be
-    recreated. The read path opens the store read-only instead — the
-    seam is `opendb.mojo`'s — so a file that is not there is a failure
-    and never a new file.
+    `db` is `None` when the file does not exist: a read never creates the
+    state directory, the file, or an empty database. The vendored binding
+    opens read-write, so the read path opens the store read-only instead —
+    a file that is not there is a failure and never a new file.
     """
     var opened = StoreOpen()
     if not Path(path).is_file():
@@ -634,20 +522,10 @@ def open_read(path: String) raises -> StoreOpen:
 
     var db = read_only_database(path)
 
-    # Before the first read, and before any refusal can return: closing
-    # this connection must not checkpoint a WAL into the file, refused or
-    # not.
     disable_close_checkpoint(db)
 
-    # The busy timeout is connection state, not file state, so it comes
-    # before the schema check: a read that arrives while another process
-    # holds the write lock must wait for it, not fail with "database is
-    # locked" from the very first `sqlite_master` query. The rest of the
-    # pragmas stay after the check, so a refused file is not touched.
     db.execute("PRAGMA busy_timeout=" + String(READ_BUSY_TIMEOUT))
 
-    # The schema check comes before the version check: a file that is
-    # not a skill-log store is foreign whatever its stamp says.
     var refusal = schema_refusal(db, True, path)
     if refusal.refused():
         refusal.path = path
@@ -655,23 +533,13 @@ def open_read(path: String) raises -> StoreOpen:
         return opened^
 
     apply_read_pragmas(db, READ_BUSY_TIMEOUT)
-    # And no statement on this connection may write: a read path that
-    # grew a write would fail loudly instead of changing the store. This
-    # is set here, never in `apply_read_pragmas`, which the write path
-    # also runs.
     db.execute("PRAGMA query_only=ON")
     opened.db = db^
     return opened^
 
 
 def open_write(path: String) raises -> StoreOpen:
-    """Open the store for writing, creating it when it does not exist.
-
-    The state directory and the file are created here, and only here: a
-    write is the one thing that may bring a store into being. What this
-    file *is* — ours, older, foreign, damaged, newer — is decided before
-    anything is written to it.
-    """
+    """Open the store for writing, creating it when it does not exist."""
     var opened = StoreOpen()
     var existed = Path(path).is_file()
 
@@ -684,10 +552,6 @@ def open_write(path: String) raises -> StoreOpen:
 
     var db = Database(path)
 
-    # The busy timeout comes before the schema check for the same reason
-    # it does on the read path: a lock held by another writer must make
-    # this attempt wait, not turn a usable store into a refusal. A
-    # refusal is final, so it may only follow a read that waited.
     db.execute("PRAGMA busy_timeout=" + String(WRITE_BUSY_TIMEOUT))
 
     var refusal = schema_refusal(db, existed, path)
@@ -697,11 +561,6 @@ def open_write(path: String) raises -> StoreOpen:
         return opened^
 
     if not is_skill_log_store(db):
-        # Both tables, one transaction. Two auto-committed `CREATE`s
-        # would leave a window in which a concurrent `add` sees a store
-        # with one table and refuses it as foreign, and a failure on the
-        # second statement would leave that half-built store behind for
-        # good.
         try:
             var tx = db.transaction()
             db.execute(invocation_ddl())
@@ -712,11 +571,6 @@ def open_write(path: String) raises -> StoreOpen:
 
     apply_write_pragmas(db, WRITE_BUSY_TIMEOUT)
 
-    # Stamping the version is the first write to the file. Another
-    # writer holding the lock makes it fail, and the failure must
-    # *raise*: a lock is retryable, and a refusal is terminal, so
-    # turning a busy error into a refusal here would end the write
-    # path's retry budget before it began (SPEC §3).
     stamp_version(db)
     opened.db = db^
     return opened^
@@ -738,12 +592,7 @@ struct Verify(Movable):
 
 
 def verify(path: String) raises -> Verify:
-    """The store's verdict under the `verify` policy.
-
-    A read that answers instead of failing: a missing file is `absent`,
-    a file this tool refuses is that named refusal, and only a store the
-    read accepts is `ok`. Nothing is created and nothing is written.
-    """
+    """The store's verdict under the `verify` policy."""
     var result = Verify()
     var opened = open_read(path)
     if opened.refusal.refused():
@@ -757,16 +606,10 @@ def verify(path: String) raises -> Verify:
     return result^
 
 
-# --------------------------------------------------------------- reading
 
 
 struct Invocation(Movable):
-    """One invocation row, as the store holds it.
-
-    The columns themselves live in `invocation_columns`, and the row's
-    fields are read and written through that list, so the struct and the
-    schema cannot drift apart.
-    """
+    """One invocation row, as the store holds it."""
 
     var id: Int
     var ts: String
@@ -802,12 +645,7 @@ struct Invocation(Movable):
         self.problems = List[String]()
 
     def marker(self) -> String:
-        """The row's marker: `machine#id`.
-
-        A row that has not been written has no id yet, so it has no
-        marker either: the `--dry-run` preview must not claim a row that
-        does not exist.
-        """
+        """The row's marker: `machine#id`."""
         if self.id == 0:
             return ""
         return marker_text(self.machine, self.id)
@@ -872,8 +710,6 @@ struct Invocation(Movable):
             self.resolved_at = value
 
 
-# The columns of an invocation row that carry text, in the schema's
-# order. The `id` is a number, so it is not one of these.
 def invocation_text_columns() -> List[ColumnDef]:
     """Every text column of the invocations table, in order."""
     var columns = List[ColumnDef]()
@@ -897,11 +733,7 @@ def read_invocation_row(row: Row) raises -> Invocation:
 
 
 def read_invocation(db: Database, id: Int) raises -> Optional[Invocation]:
-    """Read one invocation row and its problems.
-
-    The problems are read in ordinal order and sanitized on the way out,
-    so one problem is one line whatever the writer stored.
-    """
+    """Read one invocation row and its problems."""
     var stmt = db.prepare(
         "SELECT " + invocation_select_list()
         + " FROM invocations WHERE id = ?"
@@ -926,21 +758,10 @@ def read_invocation(db: Database, id: Int) raises -> Optional[Invocation]:
     return invocation^
 
 
-# The number of rows a read returns when the caller does not say. The
-# reference's default, and enough to see the recent shape of the log
-# without filling a terminal.
 comptime DEFAULT_LIMIT = 20
 
-# The filters one read carries. Every field is a string, and an empty
-# string means "this filter is not given": the value is matched exactly
-# when it is there, and ignored when it is not.
 struct Filters(Movable):
-    """What one read of the store selects.
-
-    The fields are the store's own column names, except `run`, which
-    names a run rather than a column: it matches a row's `session`, its
-    `t3_thread` or its `parent` (ADR-0002 §6).
-    """
+    """What one read of the store selects."""
 
     var skill: String
     var machine: String
@@ -961,11 +782,7 @@ struct Filters(Movable):
 
 
 def filter_clause(filters: Filters) -> String:
-    """The `WHERE` clause the filters ask for, without the keyword.
-
-    Empty when no filter is given, so the query has no `WHERE` at all.
-    Each filter is a bound parameter, never text spliced into the SQL.
-    """
+    """The `WHERE` clause the filters ask for, without the keyword."""
     var clauses = List[String]()
     if filters.skill != "":
         clauses.append("skill = ?")
@@ -976,8 +793,6 @@ def filter_clause(filters: Filters) -> String:
     if filters.repo != "":
         clauses.append("repo = ?")
     if filters.run != "":
-        # ADR-0002 §6: `--run <id>` names a run, and a row names that run
-        # in its session, its T3 thread or its parent.
         clauses.append("(session = ? OR t3_thread = ? OR parent = ?)")
     if filters.unresolved:
         clauses.append("fix = ''")
@@ -1003,8 +818,6 @@ def filter_parameters(filters: Filters) -> List[String]:
     if filters.repo != "":
         marks.append(filters.repo)
     if filters.run != "":
-        # The run filter binds three placeholders: one each for the
-        # session, the T3 thread and the parent.
         marks.append(filters.run)
         marks.append(filters.run)
         marks.append(filters.run)
@@ -1012,23 +825,10 @@ def filter_parameters(filters: Filters) -> List[String]:
 
 
 def read_invocations(db: Database, filters: Filters) raises -> List[Invocation]:
-    """Read the invocation rows the filters select, newest first.
-
-    The ordering is `datetime(ts) DESC, id DESC`: `datetime()` normalizes
-    each row's ISO stamp (rows carry their writer's own UTC offset) so the
-    rows sort by when the run happened, not by when it was written. The id
-    breaks a tie between two rows of the same instant, so the order is
-    total and stable.
-
-    `filters.limit` of zero means every matching row: `show` always asks
-    for 1..500, and `report` must not cap a selection it is stamping.
-    """
+    """Read the invocation rows the filters select, newest first."""
     var clause = filter_clause(filters)
     var marks = filter_parameters(filters)
 
-    # A limit of zero means "every matching row": `report` selects the
-    # rows a change fixes and must not silently drop the tail of a large
-    # selection. `show` always passes 1..500.
     var limit = " LIMIT ?"
     if filters.limit <= 0:
         limit = ""
@@ -1039,8 +839,6 @@ def read_invocations(db: Database, filters: Filters) raises -> List[Invocation]:
         + " ORDER BY datetime(ts) DESC, id DESC" + limit
     )
 
-    # The filter values bind first, in the clause's order, and the limit
-    # binds last.
     for i in range(len(marks)):
         stmt.bind_text(i + 1, marks[i])
     if filters.limit > 0:
@@ -1069,15 +867,10 @@ def read_invocations(db: Database, filters: Filters) raises -> List[Invocation]:
     return rows^
 
 
-# -------------------------------------------------------------- counting
 
 
 def group_columns() -> List[String]:
-    """The columns a count may be grouped by, default first.
-
-    `skill` leads because friction is per skill before it is per anything
-    else, and it is what a bare `stats` reports.
-    """
+    """The columns a count may be grouped by, default first."""
     var columns = List[String]()
     columns.append("skill")
     columns.append("harness")
@@ -1090,11 +883,7 @@ def group_columns() -> List[String]:
 
 
 def is_group_column(name: String) -> Bool:
-    """True when `name` is one of the columns `stats` may group by.
-
-    The one allow-list: no caller can put a column name into the SQL
-    text without having been through this check.
-    """
+    """True when `name` is one of the columns `stats` may group by."""
     var columns = group_columns()
     for i in range(len(columns)):
         if columns[i] == name:
@@ -1105,11 +894,10 @@ def is_group_column(name: String) -> Bool:
 struct GroupCount(Movable):
     """One line of the stats table: a group's key and its four counts.
 
-    `with_problems` counts invocations that have at least one problem,
-    and `problems` counts problem rows. They differ by design: the rate's
+    `with_problems` counts invocations that have at least one problem, and
+    `problems` counts problem rows. They differ by design: the rate's
     denominator is invocations, so a run with two findings is one run and
-    two problems, and a group's friction is not inflated by how many
-    findings one run happened to produce.
+    two problems.
     """
 
     var key: String
@@ -1131,9 +919,9 @@ def read_group_counts(
 ) raises -> List[GroupCount]:
     """Count the invocations and problems per value of `column`.
 
-    `COUNT(DISTINCT i.id)` is the denominator and the only honest count:
-    the LEFT JOIN produces one line per problem, so `COUNT(*)` would
-    count problems and `COUNT(DISTINCT i.id)` counts runs.
+    `COUNT(DISTINCT i.id)` is the denominator and the only honest count: the
+    LEFT JOIN produces one line per problem, so `COUNT(*)` would count
+    problems and `COUNT(DISTINCT i.id)` counts runs.
     """
     if not is_group_column(column):
         raise Error("not a groupable column: " + column)
@@ -1172,7 +960,6 @@ def read_group_counts(
     return groups^
 
 
-# --------------------------------------------------------------- writing
 
 
 def is_busy(message: String) -> Bool:
@@ -1187,11 +974,7 @@ def now_seconds() -> Float64:
 
 
 struct WriteResult(Movable):
-    """What a write produced: the new row's id, or the refusal.
-
-    One or the other, never both: `refusal.refused()` false means `id`
-    names the row that was committed.
-    """
+    """What a write produced: the new row's id, or the refusal."""
 
     var id: Int
     var refusal: Refusal
@@ -1201,10 +984,6 @@ struct WriteResult(Movable):
         self.refusal = Refusal()
 
 
-# The busy-retry budget, owned by one place. A write that meets a lock
-# asks this whether it may try again, and the answer is the same for
-# every write: the deadline is the same, the sleep is the same, and the
-# failure that outlives the budget is named as the lock it was.
 struct BusyBudget:
     """The wall-clock budget a write spends on a lock."""
 
@@ -1218,15 +997,9 @@ struct BusyBudget:
         return self.deadline - now_seconds()
 
     def retry(self) -> Bool:
-        """True when there is budget left for another attempt.
-
-        Waits for the shorter of the sleep and the time left, so the
-        budget is never overshot by more than the sleep itself.
-        """
+        """True when there is budget left for another attempt."""
         var left = self.remaining()
         if left <= 0:
-            # The budget is spent. The failure is a lock, and the store
-            # names it as one.
             return False
         sleep(min(Float64(WRITE_RETRY_SLEEP), left))
         return True
@@ -1238,17 +1011,9 @@ def write_invocation(
     """Write one invocation and its problems, atomically.
 
     One transaction covers the invocation row and every problem row: a
-    failed write leaves nothing behind. A BUSY/LOCKED failure is retried
-    as a whole attempt inside the write budget, because a concurrent
-    skill run holding the lock costs milliseconds, not the command.
-
-    A refused store is not an exception: the result carries the refusal,
-    and the caller reports it by name. Only a genuine SQLite failure
-    raises.
-
-    The returned id is the row's local id. The row's timestamp is
-    stamped here, from the same connection and inside the same
-    transaction, so the row carries the moment it was written.
+    failed write leaves nothing behind. A BUSY/LOCKED failure is retried as
+    a whole attempt inside the write budget, because a concurrent skill run
+    holding the lock costs milliseconds, not the command.
     """
     var result = WriteResult()
     var budget = BusyBudget()
@@ -1261,24 +1026,15 @@ def write_invocation(
             var message = String(e)
             var detail = strip_path(message, path)
             if not is_busy(detail):
-                # Not a lock: the store classifies it and the named
-                # failure is what leaves this function.
                 raise_write_failure(path, message)
             if not budget.retry():
-                # The budget is spent. The failure is a lock, and the
-                # store names it as one.
                 raise_write_failure(path, message)
 
 
 def write_attempt(
     path: String, mut row: Invocation, mut problems: List[String]
 ) raises -> WriteResult:
-    """One write attempt: open, insert, insert, commit.
-
-    The transaction guard rolls back when an insert fails, so a partial
-    write is impossible. The invocation row is inserted first and its
-    id is read back inside the same transaction.
-    """
+    """One write attempt: open, insert, insert, commit."""
     var result = WriteResult()
 
     var opened = open_write(path)
@@ -1296,8 +1052,6 @@ def write_attempt(
 
     var stmt = db.prepare(invocation_insert_sql())
     var columns = invocation_columns()
-    # The `id` is the engine's, so the insert binds every column but the
-    # first, in the column list's own order.
     for i in range(len(columns)):
         if columns[i].name == "id":
             continue
@@ -1317,9 +1071,7 @@ def write_attempt(
         "INSERT INTO problems (invocation_id, ordinal, problem) VALUES (?, ?, ?)"
     )
     for i in range(len(problems)):
-        # A statement that has reached SQLITE_DONE must be reset before it
-        # is bound again: SQLite answers a bind on a finished statement
-        # with SQLITE_MISUSE.
+        # A statement that reached SQLITE_DONE must be reset before it is bound again.
         problem_stmt.reset()
         problem_stmt.bind_int(1, id)
         problem_stmt.bind_int(2, i + 1)
@@ -1331,17 +1083,10 @@ def write_attempt(
     return result^
 
 
-# -------------------------------------------------------------- resolution
 
 
 struct ResolvedRow(Movable):
-    """One row's resolution after `resolve` touched it (or looked at it).
-
-    `changed` is false when the row already carried the same fix: the
-    call is idempotent, and the stored `resolved_at` stays the one the
-    first stamp wrote rather than moving on every retry. `refusal` is the
-    store refusal when the file could not be used at all.
-    """
+    """One row's resolution after `resolve` touched it (or looked at it)."""
 
     var found: Bool
     var skill: String
@@ -1364,17 +1109,7 @@ struct ResolvedRow(Movable):
 def resolve_row(
     path: String, id: Int, fix: String, dry_run: Bool
 ) raises -> ResolvedRow:
-    """Stamp one row with the commit that carries its fix.
-
-    The read comes first and through a read connection: a row already
-    carrying this fix is answered without a write at all, and a dry run
-    never opens the store for writing. Only a genuine change opens the
-    write path, inside the same whole-attempt busy retry `add` uses.
-
-    The commit and the timestamp are written together; the timestamp is
-    read from SQLite in the same transaction, so the stamp is the moment
-    the row was resolved. A refusal is a value, never an exception.
-    """
+    """Stamp one row with the commit that carries its fix."""
     var result = ResolvedRow()
 
     var opened = open_read(path)
@@ -1387,8 +1122,6 @@ def resolve_row(
         return result^
 
     var db = opened.db.take()
-    # An existing file with no store tables yet is an empty log, not an
-    # error: the id it is asked for cannot exist.
     if not is_skill_log_store(db):
         return result^
     var row = read_invocation(db, id)
@@ -1401,13 +1134,10 @@ def resolve_row(
     result.fix = fix
 
     if row.value().fix == fix:
-        # The same fix again is a no-op: keep the first stamp's time.
         result.resolved_at = row.value().resolved_at
         return result^
 
     if dry_run:
-        # A preview reads the clock the write would read, through the
-        # same store connection, and writes nothing.
         result.resolved_at = local_timestamp(db)
         result.changed = True
         return result^
@@ -1420,24 +1150,13 @@ def resolve_row(
             var message = String(e)
             var detail = strip_path(message, path)
             if not is_busy(detail):
-                # Not a lock: the store classifies it and the named
-                # failure is what leaves this function.
                 raise_write_failure(path, message)
             if not budget.retry():
-                # The budget is spent. The failure is a lock, and the
-                # store names it as one.
                 raise_write_failure(path, message)
 
 
 def stamp_attempt(path: String, id: Int, fix: String) raises -> ResolvedRow:
-    """One write attempt: open, re-read inside the transaction, stamp.
-
-    The row is read again here, under the write transaction, because the
-    earlier read was only a fast path: two concurrent resolves of the
-    same fix would otherwise both see the old value and both write a new
-    timestamp. Inside the transaction the second one finds the fix it was
-    about to write and answers `changed = false` instead.
-    """
+    """One write attempt: open, re-read inside the transaction, stamp."""
     var result = ResolvedRow()
     var opened = open_write(path)
     if opened.refusal.refused():
@@ -1455,7 +1174,6 @@ def stamp_attempt(path: String, id: Int, fix: String) raises -> ResolvedRow:
     read.bind_int(1, id)
     var row = read.step()
     if row is None:
-        # Nothing to stamp; the transaction has written nothing.
         _ = tx^
         return result^
 
@@ -1465,8 +1183,6 @@ def stamp_attempt(path: String, id: Int, fix: String) raises -> ResolvedRow:
     result.fix = fix
 
     if row.value().text_val(2) == fix:
-        # Another writer (or our own earlier attempt) already installed
-        # this fix: keep its timestamp and change nothing.
         result.resolved_at = row.value().text_val(3)
         _ = tx^
         return result^
@@ -1486,23 +1202,15 @@ def stamp_attempt(path: String, id: Int, fix: String) raises -> ResolvedRow:
     return result^
 
 
-# ------------------------------------------------------------ merged scans
 
 
-# The skip reasons `resolve-merged` reports. SPEC §5.10 fixes these
-# tokens: the `--json` `skipped[].reason` and the human note carry the
-# same value, so a caller never has to match prose.
 comptime SKIP_UNKNOWN_ID = "unknown_id"
 comptime SKIP_FOREIGN = "foreign"
 comptime SKIP_LOGGED_AFTER = "logged_after_commit"
 
 
 struct Located(Movable):
-    """One marker the scan found, and the commit and time it came from.
-
-    The epoch is the commit time in seconds, which is what a row logged
-    after the commit is compared against.
-    """
+    """One marker the scan found, and the commit and time it came from."""
 
     var machine: String
     var id: Int
@@ -1527,12 +1235,7 @@ struct Located(Movable):
 
 
 struct MergedSkip(Movable):
-    """One marker a scan could not stamp, and the reason it was skipped.
-
-    The reason is a fixed token (SPEC §5.10): `unknown_id`, `foreign`
-    or `logged_after_commit`. The human note wraps it, but the value a
-    `--json` caller reads is the token.
-    """
+    """One marker a scan could not stamp, and the reason it was skipped."""
 
     var row: String
     var reason: String
@@ -1543,11 +1246,7 @@ struct MergedSkip(Movable):
 
 
 struct Stamped(Movable):
-    """One row a merged scan stamped: its marker and what stamped it.
-
-    The machine and the id travel too, so the writer finds the row
-    without searching the scan's markers for the one that matches.
-    """
+    """One row a merged scan stamped: its marker and what stamped it."""
 
     var marker: String
     var commit: String
@@ -1568,13 +1267,7 @@ struct Stamped(Movable):
 
 
 struct MergedResult(Movable):
-    """What a merged scan produced: the rows it stamped, kept, and skipped.
-
-    `stamped` carries the marker and the commit that stamped it;
-    `unchanged` carries markers only, because a row that already
-    carries the commit is named and nothing else. A dry run fills the
-    same three lists and writes nothing.
-    """
+    """What a merged scan produced: the rows it stamped, kept, and skipped."""
 
     var stamped: List[Stamped]
     var unchanged: List[String]
@@ -1589,13 +1282,7 @@ struct MergedResult(Movable):
 
 
 struct ResolutionRow(Movable):
-    """The columns a merged scan needs from one invocation row.
-
-    `logged` is the row's timestamp in epoch seconds, read by SQLite so
-    the comparison against a commit time does not need a second ISO
-    parser. An unparseable timestamp reads as zero, which disables the
-    guard instead of silently skipping the row.
-    """
+    """The columns a merged scan needs from one invocation row."""
 
     var id: Int
     var machine: String
@@ -1610,12 +1297,7 @@ struct ResolutionRow(Movable):
 
 
 def read_resolution_rows(db: Database) raises -> List[ResolutionRow]:
-    """Every row's id, machine, fix and timestamp, in one read.
-
-    The timestamp becomes epoch seconds through `strftime('%s', ts)`,
-    not through `unixepoch(ts)`: `unixepoch` was added in SQLite 3.38
-    and the release bundles the pinned 3.37, where it does not exist.
-    """
+    """Every row's id, machine, fix and timestamp, in one read."""
     var rows = List[ResolutionRow]()
     var stmt = db.prepare(
         "SELECT id, machine, fix,"
@@ -1638,12 +1320,7 @@ def read_resolution_rows(db: Database) raises -> List[ResolutionRow]:
 def merged_row_index(
     rows: List[ResolutionRow], machine: String, id: Int, local_host: String
 ) -> Int:
-    """The index of the row a marker names, or -1.
-
-    A row written before `add` always populated the machine column has
-    an empty machine; it belongs to the machine reading it, which is the
-    reference's rule too.
-    """
+    """The index of the row a marker names, or -1."""
     for i in range(len(rows)):
         var stored = rows[i].machine
         if stored == "":
@@ -1660,28 +1337,16 @@ def plan(
 ) -> MergedResult:
     """Decide each located marker: stamp, unchanged, or skip with a reason.
 
-    Pure: no git, no clock, no store. The caller owns the scan (which
-    yields `located`) and the writer (`apply`, via `resolve_merged_rows`);
-    this only decides. Every marker lands in exactly one of the three
-    lists, so a second scan that finds the row already carrying this
-    commit answers `unchanged` instead of stamping again.
-
-    Newest wins because the scan walks commits newest first and the plan
-    sees one marker per row. A row stamped with the *same* commit is
-    unchanged; a row stamped with a *different* commit is restamped, so
-    an amended fix supersedes the earlier one.
-
-    A marker whose machine is not this host's spelling is foreign and is
-    never stamped (SPEC §2). The one exception the store has always had
-    is a row with an *empty* machine column — written before `add`
-    always filled it — and that row belongs to the machine reading it.
+    Pure: no git, no clock, no store. The newest marker wins, because the
+    scan walks commits newest first. A row stamped with the *same* commit is
+    unchanged; a row stamped with a *different* commit is restamped. A marker
+    whose machine is not this host's spelling is foreign and is never stamped
+    (SPEC §2).
     """
     var result = MergedResult()
     for i in range(len(located)):
         var marker = located[i].text()
         if located[i].machine != local_host:
-            # A marker naming another machine: its store is elsewhere.
-            # Reported, never stamped.
             var foreign = MergedSkip(marker, SKIP_FOREIGN)
             result.skipped.append(foreign^)
             continue
@@ -1689,24 +1354,16 @@ def plan(
             rows, located[i].machine, located[i].id, local_host
         )
         if index == -1:
-            # A local marker whose id this store does not hold.
             var missing = MergedSkip(marker, SKIP_UNKNOWN_ID)
             result.skipped.append(missing^)
             continue
         if rows[index].fix != "" and rows[index].fix == located[i].commit:
-            # The same fix again: the row already carries this commit,
-            # so a second scan changes nothing.
             result.unchanged.append(marker)
             continue
         if rows[index].logged > located[i].epoch:
-            # The row was written after that commit: an id reused by a
-            # rebuilt log, not the row the commit fixed.
             var later = MergedSkip(marker, SKIP_LOGGED_AFTER)
             result.skipped.append(later^)
             continue
-        # An empty fix, or a different one: the row is stamped with this
-        # commit. A differing commit is a restamp, so an amended fix
-        # supersedes the earlier one.
         result.stamped.append(
             Stamped(marker, located[i].commit, located[i].machine, located[i].id)
         )
@@ -1719,20 +1376,11 @@ def resolve_merged_rows(
     local_host: String,
     dry_run: Bool,
 ) raises -> MergedResult:
-    """Apply: stamp every row the scanned markers name.
-
-    The first pass reads through a read connection: when nothing would
-    change (the hook's usual case) no write path is opened at all, and a
-    dry run never gets one either. A genuine change opens the store once,
-    under the same whole-attempt busy retry `add` uses, re-decides inside
-    a transaction, and stamps every changed row with one resolution time.
-    """
+    """Apply: stamp every row the scanned markers name."""
     var result = MergedResult()
     if len(located) == 0:
         return result^
     if not Path(path).is_file():
-        # The store vanished between the caller's check and here. A hook
-        # must not create one.
         return result^
 
     var opened = open_read(path)
@@ -1760,28 +1408,17 @@ def resolve_merged_rows(
             var message = String(e)
             var detail = strip_path(message, path)
             if not is_busy(detail):
-                # Not a lock: the store classifies it and the named
-                # failure is what leaves this function.
                 raise_write_failure(path, message)
             if not budget.retry():
-                # The budget is spent. The failure is a lock, and the
-                # store names it as one.
                 raise_write_failure(path, message)
 
 
 def merged_write_attempt(
     path: String, located: List[Located], local_host: String
 ) raises -> MergedResult:
-    """The writer `apply`: open, re-read, re-decide, stamp, commit.
-
-    Applying the plan is the only write. One timestamp is read inside
-    the transaction and written to every row this attempt resolves, so a
-    pull's rows share the moment they closed.
-    """
+    """The writer `apply`: open, re-read, re-decide, stamp, commit."""
     var result = MergedResult()
     if not Path(path).is_file():
-        # The store vanished after the preview. A hook must not create a
-        # new store, so this is nothing to do, not a write.
         return result^
     var opened = open_write(path)
     if opened.refusal.refused():
@@ -1796,19 +1433,14 @@ def merged_write_attempt(
     var rows = read_resolution_rows(db)
     var resolved = plan(located, rows, local_host)
     if len(resolved.stamped) == 0:
-        # A concurrent writer closed every row between the preview and
-        # here. There is nothing to commit; the guard rolls back.
         _ = tx^
         return resolved^
-    # One prepared statement, reset per row: preparing inside the loop
-    # leaves the earlier statement unfinalized in this binding, and the
-    # transaction's COMMIT then fails with SQLITE_MISUSE.
+    # One prepared statement, reset per row: preparing inside the loop leaves the
+    # earlier one unfinalized, and the COMMIT then fails with SQLITE_MISUSE.
     var update = db.prepare(
         "UPDATE invocations SET fix = ?, resolved_at = ? WHERE id = ?"
     )
     for i in range(len(resolved.stamped)):
-        # The plan's answer carries the machine and the id, so the row
-        # is found directly: no search through the scan's markers.
         var row_index = merged_row_index(
             rows,
             resolved.stamped[i].machine,

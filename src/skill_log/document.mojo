@@ -1,26 +1,22 @@
-"""The document: the fenced usage-log block, parsed and classified."""
+"""The document: the fenced usage-log block, parsed and classified.
+
+The fence is the only provenance there is. Everything outside it is
+user-owned: the tool never reads, matches, rewrites or deletes a byte
+outside the fence — not even with `--force`.
+"""
 
 from skill_log.hash import fnv1a64_hex
 from skill_log.text import shell_quote
 
-# The fence, spelled once.
 comptime FENCE_OPEN = "<!-- skill-log:usage-log"
 comptime FENCE_CLOSE = "<!-- /skill-log:usage-log -->"
 
-# The document states, in the order the spec's table lists them.
 comptime STATE_OK = "ok"
 comptime STATE_MISSING = "missing"
 comptime STATE_STALE = "stale"
 comptime STATE_EDITED = "edited"
 comptime STATE_VENDORED = "vendored"
 
-# The vendor stamp: a skill whose frontmatter carries `metadata:` with a
-# `source:` key is a copy of someone else's skill (SPEC §7). Such a
-# skill is skipped entirely: its usage-log wording belongs to its
-# upstream, not to this tool. The scan is line-based and prefix-based on
-# purpose — no YAML parser is needed to recognise the two-line shape,
-# and a key spelled `source:` at the start of a line inside a
-# frontmatter `metadata:` block is the stamp.
 comptime FRONTMATTER = "---"
 comptime METADATA_KEY = "metadata:"
 comptime SOURCE_KEY = "source:"
@@ -28,11 +24,7 @@ comptime NAME_KEY = "name:"
 
 
 struct Block(Movable):
-    """One fenced usage-log block, as `parse` found it.
-
-        `start` and `end` are byte offsets into the document. `content` is
-        the text strictly between the two fence lines, without their
-        trailing newline."""
+    """One fenced usage-log block, as `parse` found it."""
 
     var start: Int
     var end: Int
@@ -49,11 +41,7 @@ struct Block(Movable):
 
 
 struct Parsed(Movable):
-    """A document split at its fence: what is before, the block, what is
-        after.
-
-        `block` is `None` when the document has no fenced block; `before` is
-        then the whole text and `after` is empty."""
+    """A document split at its fence: what is before, the block, what is"""
 
     var before: String
     var block: Optional[Block]
@@ -79,11 +67,7 @@ struct Rendered(Movable):
 
 
 def render(template: String, name: String, command: String) raises -> Rendered:
-    """Render `template` for one skill into a fenced block.
-
-        The template source is hashed as-is (the hash is of the *source*,
-        so a copy in the user directory and a shipped default with the
-        same bytes agree)."""
+    """Render `template` for one skill into a fenced block."""
     var content = substitute(template, name, command)
     var template_hash = fnv1a64_hex(template)
     var content_hash = fnv1a64_hex(content)
@@ -108,27 +92,20 @@ def render(template: String, name: String, command: String) raises -> Rendered:
 def substitute(template: String, name: String, command: String) -> String:
     """`template` with every `<name>` and `<command>` replaced.
 
-        A command line's placeholders are shell-quoted; a prose line's are
-        not — see `is_command_line` for how the two are told apart."""
+    The one exception is a *command line*: there the substituted value is
+    shell-quoted, because the reader copies that line out of the block and
+    runs it. The prose lines keep the plain substitution.
+    """
     var out = String("")
     for line in template.split("\n"):
         var one = String(line)
         out += substitute_line(one, name, command)
         out += "\n"
-    # `split` gives one more element than the template has lines, and
-    # the loop above added a newline for each of them, so the last one
-    # is the extra. The template's own trailing newline is the one that
-    # must survive, and a template without one must not gain one.
     return String(out[byte=0 : out.byte_length() - 1])
 
 
 def substitute_line(line: String, name: String, command: String) -> String:
-    """One line of the template, with the placeholders replaced.
-
-    A command line's placeholders are shell-quoted; a prose line's are
-    not. See `substitute` for the rule and `is_command_line` for how a
-    command line is told from a prose line.
-    """
+    """One line of the template, with the placeholders replaced."""
     var quoted = is_command_line(line)
     var out = String("")
     var at = 0
@@ -153,8 +130,6 @@ def substitute_line(line: String, name: String, command: String) -> String:
             known = False
         out += String(line[byte=at:open])
         if not known:
-            # An unknown placeholder is left alone: the template's own
-            # text is the user's, and the tool does not rewrite it.
             out += "<"
             at = open + 1
             continue
@@ -167,18 +142,12 @@ def substitute_line(line: String, name: String, command: String) -> String:
 
 
 def is_command_line(line: String) -> Bool:
-    """True when the line is a command line of the rendered block.
-
-        A command line is one that *starts* a command: the placeholder is
-        the first thing on the line, after the indentation, or it follows a
-        markdown list item's label."""
+    """True when the line is a command line of the rendered block."""
     var text = String(line).strip()
     if text == "":
         return False
     if text.startswith("<name>") or text.startswith("<command>"):
         return True
-    # A markdown list item whose label ends in a colon introduces what
-    # follows it.
     if not (text.startswith("- ") or text.startswith("* ") or text.startswith("+ ")):
         return False
     var colon = text.find(":")
@@ -194,11 +163,7 @@ def has_placeholder(text: String, placeholder: String) -> Bool:
 
 
 def quoted_placeholder(text: String, placeholder: String) -> Bool:
-    """True when `placeholder` sits next to a quote character.
-
-        The tool quotes a placeholder's value with single quotes, and a
-        template's own double quotes around the placeholder would nest the
-        two, so the value would reach the shell where a shell expands it."""
+    """True when `placeholder` sits next to a quote character."""
     var at = text.find(placeholder)
     while at >= 0:
         var before = at - 1
@@ -217,11 +182,7 @@ def is_quote(char: String) -> Bool:
 
 
 def validate_template(name: String, template: String) raises:
-    """Refuse a template whose placeholders are wrong, by name.
-
-        `usage-log.md` needs `<name>` and an invocation of `<command> add`;
-        `skill-friction-review.md` needs `<command>`. A placeholder may not
-        sit next to a quote character."""
+    """Refuse a template whose placeholders are wrong, by name."""
     if name == "usage-log.md":
         if not has_placeholder(template, "<name>"):
             raise Error(
@@ -259,11 +220,7 @@ def validate_template(name: String, template: String) raises:
 
 
 def parse(text: String) -> Parsed:
-    """Split `text` at its fence.
-
-        Only the first block is recognised: a second fenced block is not
-        this tool's, and treating it as after-text keeps the
-        never-touch-outside-the-fence rule honest."""
+    """Split `text` at its fence."""
     var parsed = Parsed()
     var open_at = find_line(text, FENCE_OPEN)
     if open_at < 0:
@@ -271,15 +228,12 @@ def parse(text: String) -> Parsed:
         return parsed^
     var line_end = find_newline(text, open_at)
     if line_end < 0:
-        # An opening fence at the very end of the text is not a block.
         parsed.before = text
         return parsed^
     var header = String(text[byte=open_at:line_end])
     var rest = String(text[byte=line_end + 1 :])
     var close_rel = find_line(rest, FENCE_CLOSE)
     if close_rel < 0:
-        # An opening fence with no closing fence is not a block at all:
-        # it is unfenced text as far as the tool is concerned.
         parsed.before = text
         return parsed^
     var close_at = line_end + 1 + close_rel
@@ -291,11 +245,8 @@ def parse(text: String) -> Parsed:
     var block = Block()
     block.start = open_at
     block.end = close_end
-    # The content is the bytes between the two fence lines, minus the
-    # one newline `render` writes to put the closing fence on its own
-    # line. Stripping exactly one keeps the round trip honest: a hand
-    # that added a blank line of its own changes the hash, which is the
-    # `edited` answer.
+    # The content is the bytes between the fence lines, minus one newline:
+    # stripping exactly one keeps the round trip honest.
     var content = String(text[byte=line_end + 1 : close_at])
     if content.endswith("\n"):
         var trimmed = String(content[byte=0 : content.byte_length() - 1])
@@ -310,11 +261,7 @@ def parse(text: String) -> Parsed:
 
 
 def fence_field(header: String, key: String) -> String:
-    """The value of `key` in a fence header, or "" when absent.
-
-    The value runs to the next space or to the end of the line: the
-    fence grammar has no quoting, so a hash never carries either.
-    """
+    """The value of `key` in a fence header, or "" when absent."""
     var at = header.find(key)
     if at < 0:
         return ""
@@ -327,13 +274,7 @@ def fence_field(header: String, key: String) -> String:
 
 
 def find_line(text: String, prefix: String) -> Int:
-    """The byte offset of the first line that starts with `prefix`, or
-    -1.
-
-    "Starts with" means the line's own first bytes: a fence in the
-    middle of a line is not a fence, which keeps prose that mentions the
-    marker from being parsed as a block.
-    """
+    """The byte offset of the first line that starts with `prefix`, or"""
     var at = 0
     var n = text.byte_length()
     while at <= n:
@@ -352,32 +293,14 @@ def find_newline(text: String, start: Int) -> Int:
 
 
 def append(document: String, block: String) -> String:
-    """`document` with the fenced `block` appended at the end.
-
-    The whole document is user-owned when no block exists yet, so every
-    one of its bytes is kept as-is and the block lands after the last of
-    them. The block opens on its own line: a document whose last byte is
-    not a newline gets one separator newline in front of it. That
-    separator is the one byte `append` adds outside the fence, and it is
-    required — a fence that opens mid-line is not a fence, and the next
-    run would append a second block instead of recognising the first.
-    """
+    """`document` with the fenced `block` appended at the end."""
     if document == "" or document.endswith("\n"):
         return document + block
     return document + "\n" + block
 
 
 def rewrite(document: String, block: String) -> String:
-    """`document` with its fenced block replaced by `block`.
-
-    The splice is `before + block + after`, the parts `parse` split at
-    the fence: the bytes outside the fence are carried through
-    untouched — they are never read, matched or trimmed, and the caller
-    writes them back exactly as they came in.
-
-    A document with no fenced block is appended to instead: that is the
-    `missing` case, and rewriting nothing would silently drop the block.
-    """
+    """`document` with its fenced block replaced by `block`."""
     var parsed = parse(document)
     if parsed.block is None:
         return append(document, block)
@@ -392,26 +315,8 @@ def classify(
 ) raises -> String:
     """The document's state, as one of the five names.
 
-    `vendored` short-circuits: a vendored skill is skipped entirely and
-    its block is never looked at. Otherwise:
-
-    - no fenced block → `missing` (unfenced usage-log text is invisible:
-      it is never read or matched, so a skill whose only log section is
-      unfenced text is `missing`)
-    - the fence's `hash` does not match the recomputed content hash →
-      `edited` (a human changed bytes inside the fence)
-    - the fence's `template` hash matches the current template's hash
-      *and* the fence's `hash` matches the current render's content
-      hash → `ok`
-    - anything else → `stale` (the fence is intact — the content matches
-      its own fence hash — but an older render wrote it)
-
-    The content hash is what makes `ok` mean "this is the current
-    render": the same template rendered for another skill, or with
-    another resolved binary path, is a different content and therefore
-    an older render. The caller passes the *current* render's two
-    hashes, so `classify` itself never renders and stays a pure
-    decision over the document.
+    The five states are distinct on purpose: a hand-edited block (`edited`)
+    and an older render (`stale`) call for different actions.
     """
     if vendored:
         return STATE_VENDORED
@@ -432,21 +337,16 @@ def classify(
 def is_vendored(document: String) -> Bool:
     """True when the document carries the vendor stamp.
 
-    The stamp is a frontmatter `metadata:` block with a `source:` key
-    (see the constant comments above). The scan is line-based: the first
-    line must open frontmatter with `---`, and somewhere before the
-    closing `---` there must be a `metadata:` line and, after it, a line
-    starting with `source:`. Nothing else counts, so a prose mention of
-    `source:` outside the frontmatter is not a stamp.
+    The scan is line-based and prefix-based on purpose — no YAML parser is
+    needed to recognise the two-line shape: a `source:` key at the start of
+    a line inside a frontmatter `metadata:` block is the stamp.
     """
     var n = document.byte_length()
-    # The document must open with the frontmatter fence on its own line.
     if not document.startswith(FRONTMATTER):
         return False
     var first_end = find_newline(document, 0)
     if first_end < 0:
         return False
-    # Walk the frontmatter lines for `metadata:` and then `source:`.
     var in_metadata = False
     var line_start = first_end + 1
     while line_start < n:
@@ -465,15 +365,7 @@ def is_vendored(document: String) -> Bool:
 
 
 def frontmatter_name(document: String) -> String:
-    """The skill's name, from its frontmatter `name:` key, or "".
-
-    The same line scan as `is_vendored`: the first `name:` line inside
-    the frontmatter wins. Its value is the rest of the line, stripped of
-    whitespace and of one matching pair of quotes (a YAML `name: "foo"`
-    is the name `foo`). A document with no frontmatter, or no `name:`
-    key in it, answers "" — the caller falls back to the skill's
-    directory name, which is what the skill is called everywhere else.
-    """
+    """The skill's name, from its frontmatter `name:` key, or ""."""
     if not document.startswith(FRONTMATTER):
         return ""
     var n = document.byte_length()

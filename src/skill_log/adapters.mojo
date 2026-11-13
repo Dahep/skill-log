@@ -6,25 +6,17 @@ from std.pathlib import Path
 from skill_log.detect import env_or_empty, t3_project
 from skill_log.opendb import read_text_value
 
-# The environment variable that names the adapters to run.
 comptime ADAPTERS_ENV = "SKILL_LOG_ADAPTERS"
 
-# The environment variable opencode exports into the shells it runs
-# skills in.
 comptime OPENCODE_SESSION_ENV = "OPENCODE_SESSION_ID"
 
-# Where opencode keeps its session store.
 comptime OPENCODE_DB_RELATIVE = "/.local/share/opencode/opencode.db"
 
-# The table and column the model comes from.
 comptime OPENCODE_MODEL_SQL = "SELECT model FROM session_v2 WHERE id = ?"
 
 
 struct AdapterContext(Movable):
-    """What an enabled adapter filled.
-
-        Every field is a string; an empty one means the adapter
-        did not fill it, or that it failed."""
+    """What an enabled adapter filled."""
 
     var harness: String
     var session: String
@@ -39,11 +31,7 @@ struct AdapterContext(Movable):
 
 
 def split_commas(text: String) -> List[String]:
-    """Split a comma-separated list into its parts, trimmed.
-
-    An empty part is dropped: `opencode,,t3` names two adapters, not
-    three.
-    """
+    """Split a comma-separated list into its parts, trimmed."""
     var parts = List[String]()
     var start = 0
     while True:
@@ -65,18 +53,12 @@ def split_commas(text: String) -> List[String]:
 
 
 def env_adapters() -> List[String]:
-    """The adapters `SKILL_LOG_ADAPTERS` names.
-
-    The variable is comma-separated: `SKILL_LOG_ADAPTERS=opencode,t3`.
-    """
+    """The adapters `SKILL_LOG_ADAPTERS` names."""
     return split_commas(env_or_empty(ADAPTERS_ENV))
 
 
 def enabled_adapters(flags: List[String]) -> List[String]:
-    """The adapters to run: the flag's names plus the variable's.
-
-        Both sources take a comma-separated list. Duplicates are
-        harmless, so the list is not deduplicated here."""
+    """The adapters to run: the flag's names plus the variable's."""
     var names = List[String]()
     for i in range(len(flags)):
         var parts = split_commas(flags[i])
@@ -88,7 +70,6 @@ def enabled_adapters(flags: List[String]) -> List[String]:
     return names^
 
 
-# ------------------------------------------------------------- the model
 
 
 def is_json_space(ch: String) -> Bool:
@@ -97,9 +78,7 @@ def is_json_space(ch: String) -> Bool:
 
 
 def json_string_span(text: String, at: Int) -> Int:
-    """The index just past the closing quote of the string opening at `at`.
-
-        `-1` when the string never closes."""
+    """The index just past the closing quote of the string opening at `at`."""
     var n = text.byte_length()
     var i = at + 1
     while i < n:
@@ -114,13 +93,7 @@ def json_string_span(text: String, at: Int) -> Int:
 
 
 def json_string_value(text: String, at: Int) -> String:
-    """The text of the string that opens at `at`, its escapes resolved.
-
-    The unescaped case is one slice, so multi-byte text survives intact.
-    The escapes JSON allows are decoded; a `\\uXXXX` escape (or anything
-    this reader does not recognise) makes the value unreadable, and the
-    caller falls back to the raw text rather than writing a mangled id.
-    """
+    """The text of the string that opens at `at`, its escapes resolved."""
     var end = json_string_span(text, at)
     if end == -1:
         return ""
@@ -164,10 +137,11 @@ def json_string_value(text: String, at: Int) -> String:
 def json_string_field(text: String, key: String) -> String:
     """The value of a string field at the top level of a JSON object.
 
-        A small targeted scanner, not a JSON parser: the only shape this
-        tool reads is opencode's `{"id":"...","providerID":"..."}`. The
-        scan tracks nesting, so a key spelled inside a nested object never
-        answers for the top-level one."""
+    A small targeted scanner, not a JSON parser: the only shape this tool
+    reads is opencode's `{"id":"...","providerID":"..."}`. The scan
+    tracks nesting, so a key spelled inside a nested object never answers
+    for the top-level one.
+    """
     var n = text.byte_length()
     var i = 0
     while i < n and is_json_space(String(text[byte=i])):
@@ -186,9 +160,6 @@ def json_string_field(text: String, key: String) -> String:
             var name = json_string_value(text, i)
             i = end
 
-            # A string is a key only when a colon follows it. A string
-            # value has a comma or a closing brace instead, and the loop
-            # simply carries on past it.
             var j = i
             while j < n and is_json_space(String(text[byte=j])):
                 j += 1
@@ -214,9 +185,7 @@ def json_string_field(text: String, key: String) -> String:
 
 
 def render_model(raw: String) -> String:
-    """An opencode model value as `provider/id`.
-
-        A value that is not that shape is passed through unchanged."""
+    """An opencode model value as `provider/id`."""
     if raw == "":
         return ""
     if not raw.startswith("{"):
@@ -229,22 +198,15 @@ def render_model(raw: String) -> String:
     return provider + "/" + model_id
 
 
-# ----------------------------------------------------------- the adapters
 
 
 def opencode_db_path() -> String:
-    """The path of opencode's session store.
-
-        The file is never created: the adapter checks that it exists
-        before it opens it."""
+    """The path of opencode's session store."""
     return getenv("HOME", "") + OPENCODE_DB_RELATIVE
 
 
 def opencode_model(session_id: String) -> String:
-    """The model of an opencode session, or an empty string.
-
-        The session store is read read-only; a missing file, a changed
-        schema, an absent row — every one of them is an empty string."""
+    """The model of an opencode session, or an empty string."""
     if session_id == "":
         return ""
     var path = opencode_db_path()
@@ -255,12 +217,7 @@ def opencode_model(session_id: String) -> String:
 
 
 def fill_opencode(mut context: AdapterContext):
-    """Fill the opencode adapter's fields.
-
-    `harness` is the adapter's own name — it is what the adapter is
-    for. `session` comes from the environment opencode exports.
-    `model` comes from opencode's session store.
-    """
+    """Fill the opencode adapter's fields."""
     context.harness = "opencode"
 
     var session = env_or_empty(OPENCODE_SESSION_ENV)
@@ -269,19 +226,12 @@ def fill_opencode(mut context: AdapterContext):
 
 
 def fill_t3(mut context: AdapterContext, worktree: String):
-    """Fill the t3 adapter's field.
-
-    The project grouping comes from the worktree's path under T3. A
-    worktree outside T3 has no project, and one is never invented.
-    """
+    """Fill the t3 adapter's field."""
     context.project = t3_project(worktree)
 
 
 def apply_adapters(names: List[String], worktree: String) -> AdapterContext:
-    """Run the enabled adapters and collect what they filled.
-
-        An unknown adapter name is ignored: enabling an adapter this
-        binary does not know must not fail the write."""
+    """Run the enabled adapters and collect what they filled."""
     var context = AdapterContext()
     for i in range(len(names)):
         var name = names[i].strip()
