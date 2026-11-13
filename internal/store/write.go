@@ -14,7 +14,7 @@ type WriteResult struct {
 	Refusal *Refusal
 }
 
-// retry is the write path's retry budget.
+// The write path's retry budget.
 //
 // A concurrent skill run holding the store's lock costs milliseconds, not
 // the command: the write waits for the lock within the budget and then
@@ -32,19 +32,16 @@ const (
 // milliseconds. Every other failure is returned at once — retrying a
 // damaged file would only make the failure slower.
 //
-// The refusal is the fourth answer, and it is retried like a busy error: a
-// store whose version stamp could not run because another writer held the
-// lock is the same situation as a busy statement, and it must not skip the
-// budget.
+// A locked refusal is retried like a busy error: a store whose version stamp
+// could not run because another writer held the lock is the same situation
+// as a busy statement, and it must not skip the budget.
 func withRetry[T any](attempt func() (T, *Refusal, error)) (T, *Refusal, error) {
 	deadline := time.Now().Add(time.Duration(writeBudgetSeconds * float64(time.Second)))
 	for {
 		result, refusal, err := attempt()
 		switch {
 		case refusal != nil:
-			// A lock is a busy store: wait for it within the budget, the
-			// same way a busy statement is waited for. Every other refusal
-			// is final.
+			// Every refusal but a lock is final.
 			if refusal.Kind != Locked {
 				return result, refusal, nil
 			}
@@ -70,9 +67,7 @@ func withRetry[T any](attempt func() (T, *Refusal, error)) (T, *Refusal, error) 
 // WriteInvocation writes one invocation and its problems, atomically.
 //
 // One transaction covers the invocation row and every problem row: a failed
-// write leaves nothing behind. A BUSY/LOCKED failure is retried as a whole
-// attempt inside the write budget, because a concurrent skill run holding the
-// lock costs milliseconds, not the command.
+// write leaves nothing behind.
 func WriteInvocation(path string, row *Invocation, problems []string) (WriteResult, error) {
 	result, _, err := withRetry(func() (WriteResult, *Refusal, error) {
 		return writeAttempt(path, row, problems)

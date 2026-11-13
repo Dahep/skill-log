@@ -130,8 +130,6 @@ func (s *Store) isEmptyLog() (bool, error) {
 // row's ISO stamp (rows carry their writer's own UTC offset) so the rows sort
 // by when the run happened, not by when it was written. A limit of zero means
 // every matching row.
-//
-// A store with no tables yet is an empty log: no rows and no error.
 func (s *Store) Rows(filters Filters) ([]Invocation, error) {
 	if empty, err := s.isEmptyLog(); err != nil || empty {
 		return nil, err
@@ -243,8 +241,6 @@ func IsGroupColumn(name string) bool {
 // JOIN produces one line per problem, so COUNT(*) would count problems. The
 // join rather than a sub-query keeps a run with no problems visible, with
 // zeroes.
-//
-// A store with no tables yet is an empty log: no groups and no error.
 func (s *Store) GroupCounts(column, skill string) ([]GroupCount, error) {
 	if !IsGroupColumn(column) {
 		return nil, errNotGroupable(column)

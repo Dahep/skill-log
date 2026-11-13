@@ -18,9 +18,6 @@ type Column[T any] struct {
 }
 
 // JoinLines joins the lines with newlines and no trailing newline.
-//
-// main prints the text and adds the one newline the output needs, so a
-// newline here would leave a blank line behind.
 func JoinLines(lines []string) string {
 	return strings.Join(lines, "\n")
 }
@@ -37,10 +34,6 @@ func homePrefix() string {
 }
 
 // ShortenHome replaces the reader's home directory with `~`.
-//
-// A path outside the home is returned unchanged. The home is the one the
-// reader's own environment names, so the same row reads the same way for
-// every reader on the machine.
 func ShortenHome(path string) string {
 	home := homePrefix()
 	if home == "" {
@@ -56,8 +49,7 @@ func ShortenHome(path string) string {
 //
 // Columns are padded to their widest value, separated by two spaces, and
 // trailing spaces are removed from every row. The last column is not padded,
-// so the right edge stays exactly where its content ends. Sub-lines from a
-// column's Under function follow their row without table padding.
+// so the right edge stays exactly where its content ends.
 func TableLines[T any](columns []Column[T], rows []T) []string {
 	widths := make([]int, len(columns))
 	for i, column := range columns {
