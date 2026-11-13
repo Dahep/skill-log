@@ -461,6 +461,9 @@ check_contains "the refusal says a placeholder may not be quoted" "$ERR" \
 # And the hostile name must not run through either path: the default
 # template (which quotes the value itself) and the quoted override (which
 # is refused before it renders).
+# The command substitution is literal on purpose: it is the payload the
+# case is about.
+# shellcheck disable=SC2016  # the substitution is the payload, not a command
 HOSTILE_NAME='$(touch '"$SCRATCH"'/quoted-pwned)'
 
 # The default template: the value is quoted by the tool, so the name is
@@ -565,14 +568,45 @@ def is_command_line(line):
     return rest.startswith("<name>") or rest.startswith("<command>")
 
 
-def substitute(text, name, command):
+def substitute_line(line, name, command):
+    """One line of the template, with the placeholders replaced.
+
+    The placeholders are found and replaced in one pass, so a value is
+    never read again: a skill name carrying a literal `<command>` token
+    stays as it is. The tool substitutes the same way."""
+    quoted = is_command_line(line)
     out = []
-    for line in text.split("\n"):
-        quoted = is_command_line(line)
-        line = line.replace("<name>", shell_quote(name) if quoted else name)
-        line = line.replace("<command>", shell_quote(command) if quoted else command)
-        out.append(line)
-    return "\n".join(out)
+    at = 0
+    while at < len(line):
+        open_at = line.find("<", at)
+        if open_at < 0:
+            out.append(line[at:])
+            break
+        close_at = line.find(">", open_at)
+        if close_at < 0:
+            out.append(line[at:])
+            break
+        tag = line[open_at:close_at + 1]
+        if tag == "<name>":
+            value = name
+        elif tag == "<command>":
+            value = command
+        else:
+            # An unknown placeholder is left alone: the template's own
+            # text is the user's, and the tool does not rewrite it.
+            out.append(line[at:open_at + 1])
+            at = open_at + 1
+            continue
+        out.append(line[at:open_at])
+        out.append(shell_quote(value) if quoted else value)
+        at = close_at + 1
+    return "".join(out)
+
+
+def substitute(text, name, command):
+    return "\n".join(
+        substitute_line(line, name, command) for line in text.split("\n")
+    )
 
 
 content = substitute(template, name, command)
@@ -595,6 +629,42 @@ PY
 
 render_block ok "$EXPECTED_CMD" "$USAGE_TEMPLATE" > "$SCRATCH/block.txt"
 cat "$SCRATCH/block.txt" >> "$SKILLS/ok/SKILL.md"
+
+# --------------------------------------------- the mirror is the oracle
+#
+# The fixtures above are built by the suite's own render, and the audit
+# compares the tool's render against them byte for byte. So the mirror
+# has to be the tool's render, not a lookalike: if the two disagree,
+# the comparison can agree with a wrong answer.
+#
+# The one way they used to disagree: the mirror substituted `<name>` and
+# then `<command>`, in two passes. A name carrying a literal `<command>`
+# token therefore had the second pass run over the first pass's result.
+# The tool substitutes in one pass, so a value is never re-read.
+#
+# The case: a skill whose name carries the token. The tool's own render
+# and the mirror's must be the same bytes.
+TOKEN_NAME='skill<command>evil'
+TOKEN_DIR="$SCRATCH/token-name"
+rm -rf "$TOKEN_DIR"
+mkdir -p "$TOKEN_DIR/evil"
+printf -- '---\nname: %s\n---\n' "$TOKEN_NAME" > "$TOKEN_DIR/evil/SKILL.md"
+run skills adopt --dir "$TOKEN_DIR"
+check "the token-name skill adopts" "$STATUS" "0"
+TOKEN_BLOCK="$(cat "$TOKEN_DIR/evil/SKILL.md")"
+# The tool left the token in the name: it substituted once.
+check_contains "the tool does not re-substitute a value" "$TOKEN_BLOCK" \
+    "'$TOKEN_NAME'"
+check_absent "the tool did not substitute the token inside the value" \
+    "$TOKEN_BLOCK" "'skill$EXPECTED_CMD"
+# And the mirror agrees with it: the same render, byte for byte.
+TOKEN_MIRROR="$(render_block "$TOKEN_NAME" "$EXPECTED_CMD" "$USAGE_TEMPLATE" \
+    | sed 's/^<!--.*-->$/<!-- fence -->/')"
+TOKEN_TOOL="$(printf '%s\n' "$TOKEN_BLOCK" \
+    | sed -n '/^<!-- skill-log:usage-log/,/^<!-- \/skill-log:usage-log -->/p' \
+    | sed 's/^<!--.*-->$/<!-- fence -->/')"
+check "the mirror renders what the tool renders" \
+    "$TOKEN_MIRROR" "$TOKEN_TOOL"
 
 # stale: an older render — a different template's block.
 render_block ok "$EXPECTED_CMD" '## Usage log

@@ -167,7 +167,6 @@ check_contains "the checkout action is pinned" \
 # body, and the scan must fail. A scanner that cannot see the body
 # cannot fail, and the suite would pass on the mutation.
 MUTANT="$SCRATCH/mutant.yml"
-mkdir -p "$SCRATCH"
 # The mutation: the version's own assignment inside a `run: |` block
 # body becomes an expression, the way a careless edit would write it.
 sed 's|version="\$TAG_NAME"|version="${{ github.ref_name }}"|' \
