@@ -15,7 +15,7 @@ The output is one flat object per line. There is no nesting: a caller
 piping the stream into `jq` should never have to reach into a wrapper.
 """
 
-from skill_log.json import json_string, json_string_array
+from skill_log.json import JsonObject
 from skill_log.store import Invocation
 
 
@@ -28,25 +28,24 @@ def render_row_json(row: Invocation) -> String:
     the row has not been written yet, and it is rendered as `null` so a
     `--dry-run` preview does not claim a row that does not exist.
     """
-    var out = "{"
+    var out = JsonObject()
     if row.id > 0:
-        out += "\"id\":" + String(row.id)
+        out.put_int("id", row.id)
     else:
-        out += "\"id\":null"
-    out += ",\"ts\":" + json_string(row.ts)
-    out += ",\"skill\":" + json_string(row.skill)
-    out += ",\"harness\":" + json_string(row.harness)
-    out += ",\"session\":" + json_string(row.session)
-    out += ",\"parent\":" + json_string(row.parent)
-    out += ",\"model\":" + json_string(row.model)
-    out += ",\"repo\":" + json_string(row.repo)
-    out += ",\"worktree\":" + json_string(row.worktree)
-    out += ",\"project\":" + json_string(row.project)
-    out += ",\"t3_thread\":" + json_string(row.t3_thread)
-    out += ",\"machine\":" + json_string(row.machine)
-    out += ",\"fix\":" + json_string(row.fix)
-    out += ",\"resolved_at\":" + json_string(row.resolved_at)
-    out += ",\"marker\":" + json_string(row.marker())
-    out += ",\"problems\":" + json_string_array(row.problems)
-    out += "}"
-    return out
+        out.put_null("id")
+    out.put("ts", row.ts)
+    out.put("skill", row.skill)
+    out.put("harness", row.harness)
+    out.put("session", row.session)
+    out.put("parent", row.parent)
+    out.put("model", row.model)
+    out.put("repo", row.repo)
+    out.put("worktree", row.worktree)
+    out.put("project", row.project)
+    out.put("t3_thread", row.t3_thread)
+    out.put("machine", row.machine)
+    out.put("fix", row.fix)
+    out.put("resolved_at", row.resolved_at)
+    out.put("marker", row.marker())
+    out.put_strings("problems", row.problems)
+    return out.render()

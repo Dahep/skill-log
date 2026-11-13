@@ -50,7 +50,7 @@ from skill_log.context import hostname
 from skill_log.detect import git_toplevel, shell_quote
 from skill_log.errors import EXIT_FAILURE, EXIT_USAGE, Outcome
 from skill_log.flags import take_value
-from skill_log.json import json_bool, json_string, json_string_array
+from skill_log.json import JsonObject
 from skill_log.markers import parse_marker
 from skill_log.report import REPORT_DIR, TRAILER_KEY
 from skill_log.store import (
@@ -557,8 +557,10 @@ def skipped_json(items: List[MergedSkip]) -> String:
     for i in range(len(items)):
         if i > 0:
             out += ","
-        out += "{\"row\":" + json_string(items[i].row)
-        out += ",\"reason\":" + json_string(items[i].reason) + "}"
+        var item = JsonObject()
+        item.put("row", items[i].row)
+        item.put("reason", items[i].reason)
+        out += item.render()
     out += "]"
     return out
 
@@ -599,13 +601,13 @@ def render_json(
     result: MergedResult, ignored: List[String], dry_run: Bool
 ) -> String:
     """One shape for every path, so a `--json` caller never guesses keys."""
-    var out = "{\"resolved\":" + json_string_array(stamped_markers(result))
-    out += ",\"unchanged\":" + json_string_array(result.unchanged)
-    out += ",\"skipped\":" + skipped_json(result.skipped)
-    out += ",\"ignored\":" + json_string_array(ignored)
-    out += ",\"dry_run\":" + json_bool(dry_run)
-    out += "}"
-    return out
+    var out = JsonObject()
+    out.put_strings("resolved", stamped_markers(result))
+    out.put_strings("unchanged", result.unchanged)
+    out.put_raw("skipped", skipped_json(result.skipped))
+    out.put_strings("ignored", ignored)
+    out.put_bool("dry_run", dry_run)
+    return out.render()
 
 
 def first_nine(text: String) -> String:

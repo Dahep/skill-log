@@ -74,7 +74,7 @@ from skill_log.files import (
     write_text_mode,
 )
 from skill_log.flags import take_value
-from skill_log.json import json_string
+from skill_log.json import JsonObject
 from skill_log.report import (
     KEEP_NAME,
     README_NAME,
@@ -309,15 +309,11 @@ def verdict_line(verdict: Verdict) -> String:
 
 def verdict_json(verdict: Verdict) -> String:
     """One JSON object, exactly `artifact`, `status`, `detail` (§5.10)."""
-    return (
-        "{\"artifact\":"
-        + json_string(verdict.artifact)
-        + ",\"status\":"
-        + json_string(verdict.status)
-        + ",\"detail\":"
-        + json_string(verdict.detail)
-        + "}"
-    )
+    var out = JsonObject()
+    out.put("artifact", verdict.artifact)
+    out.put("status", verdict.status)
+    out.put("detail", verdict.detail)
+    return out.render()
 
 
 def store_verdict(path: String, check: Bool, dry_run: Bool) raises -> Verdict:

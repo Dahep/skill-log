@@ -67,7 +67,7 @@ from skill_log.errors import EXIT_FAILURE, EXIT_USAGE, Outcome
 from skill_log.files import resolve_path, write_text
 from skill_log.flags import take_value
 from skill_log.hash import fnv1a64_hex
-from skill_log.json import json_bool, json_string
+from skill_log.json import JsonObject
 from skill_log.templates import (
     REVIEW_NAME,
     USAGE_LOG_NAME,
@@ -533,17 +533,12 @@ def adopt_skill(
 def adopt_json_line(item: Adopted) -> String:
     """One adopt object, exactly `skill`, `path`, `state`, `action`
     (SPEC §5.10)."""
-    return (
-        "{\"skill\":"
-        + json_string(item.skill)
-        + ",\"path\":"
-        + json_string(item.path)
-        + ",\"state\":"
-        + json_string(item.state)
-        + ",\"action\":"
-        + json_string(item.action)
-        + "}"
-    )
+    var out = JsonObject()
+    out.put("skill", item.skill)
+    out.put("path", item.path)
+    out.put("state", item.state)
+    out.put("action", item.action)
+    return out.render()
 
 
 def adopt_text_line(item: Adopted) -> String:
@@ -556,15 +551,11 @@ def adopt_text_line(item: Adopted) -> String:
 
 def audit_json_line(item: SkillState) -> String:
     """One audit object, exactly `skill`, `path`, `state` (SPEC §5.10)."""
-    return (
-        "{\"skill\":"
-        + json_string(item.skill)
-        + ",\"path\":"
-        + json_string(item.path)
-        + ",\"state\":"
-        + json_string(item.state)
-        + "}"
-    )
+    var out = JsonObject()
+    out.put("skill", item.skill)
+    out.put("path", item.path)
+    out.put("state", item.state)
+    return out.render()
 
 
 def audit_text_line(item: SkillState) -> String:
@@ -574,21 +565,14 @@ def audit_text_line(item: SkillState) -> String:
 
 def template_json(t: Template) -> String:
     """One template object, per SPEC §5.10's `skills template show`."""
-    return (
-        "{\"name\":"
-        + json_string(t.name)
-        + ",\"source\":"
-        + json_string(t.source)
-        + ",\"content\":"
-        + json_string(t.content)
-        + ",\"template_hash\":"
-        + json_string(t.hash)
-        + ",\"content_hash\":"
-        + json_string(t.hash)
-        + ",\"moved\":"
-        + json_bool(t.moved)
-        + "}"
-    )
+    var out = JsonObject()
+    out.put("name", t.name)
+    out.put("source", t.source)
+    out.put("content", t.content)
+    out.put("template_hash", t.hash)
+    out.put("content_hash", t.hash)
+    out.put_bool("moved", t.moved)
+    return out.render()
 
 
 struct TemplateAction(Movable):
@@ -613,13 +597,10 @@ struct TemplateAction(Movable):
 
 def template_action_json(item: TemplateAction) -> String:
     """One action object, exactly `path`, `action` (SPEC §5.10)."""
-    return (
-        "{\"path\":"
-        + json_string(item.path)
-        + ",\"action\":"
-        + json_string(item.action)
-        + "}"
-    )
+    var out = JsonObject()
+    out.put("path", item.path)
+    out.put("action", item.action)
+    return out.render()
 
 
 # ---------------------------------------------------------- subcommand

@@ -113,3 +113,80 @@ def json_bool(value: Bool) -> String:
     if value:
         return "true"
     return "false"
+
+
+def json_number(value: Int) -> String:
+    """A JSON number, as a whole number.
+
+    The only numbers the tool writes are counts and ids, both integers,
+    so there is no float formatting rule to get wrong.
+    """
+    return String(value)
+
+
+def json_null() -> String:
+    """The JSON null literal."""
+    return "null"
+
+
+struct JsonObject(Movable):
+    """One JSON object, built in the order its keys are handed in.
+
+    Every site that writes a JSON object used to concatenate its keys by
+    hand, and a hand-concatenated object is where a missing comma or an
+    unescaped value comes from. The builder owns the punctuation: the
+    braces, the commas, the quotes and the escaping, so a caller only
+    says which key holds which value.
+
+    The key order is the order the keys are added, because the order is
+    part of what the tool emits: a consumer that reads one object must
+    read the next one the same way.
+
+    A raw value is one the caller has already rendered — a number, a
+    ratio like `1.25`, or `null` — and is inserted verbatim. Everything
+    else is escaped here.
+    """
+
+    var parts: List[String]
+
+    def __init__(out self):
+        self.parts = List[String]()
+
+    def put(mut self, key: String, value: String):
+        """One string value under `key`."""
+        self.parts.append(escape_string(key) + ":" + escape_string(value))
+
+    def put_bool(mut self, key: String, value: Bool):
+        """One boolean value under `key`."""
+        self.parts.append(escape_string(key) + ":" + json_bool(value))
+
+    def put_int(mut self, key: String, value: Int):
+        """One whole number under `key`."""
+        self.parts.append(escape_string(key) + ":" + json_number(value))
+
+    def put_null(mut self, key: String):
+        """A null value under `key`."""
+        self.parts.append(escape_string(key) + ":" + json_null())
+
+    def put_raw(mut self, key: String, value: String):
+        """One already-rendered value under `key`.
+
+        The value is inserted as it is: the caller has rendered it, and
+        the builder does not second-guess it. A number and a `null` are
+        the two raw values the tool writes.
+        """
+        self.parts.append(escape_string(key) + ":" + value)
+
+    def put_strings(mut self, key: String, items: List[String]):
+        """One array of strings under `key`."""
+        self.parts.append(escape_string(key) + ":" + json_string_array(items))
+
+    def render(mut self) -> String:
+        """The finished object: `{...}`, with no trailing newline."""
+        var out = "{"
+        for i in range(len(self.parts)):
+            if i > 0:
+                out += ","
+            out += self.parts[i]
+        out += "}"
+        return out

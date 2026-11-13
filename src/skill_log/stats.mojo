@@ -45,7 +45,7 @@ nothing written.
 
 from skill_log.errors import EXIT_FAILURE, EXIT_USAGE, Outcome
 from skill_log.flags import take_value
-from skill_log.json import json_string
+from skill_log.json import JsonObject
 from skill_log.store import (
     GroupCount,
     StoreOpen,
@@ -280,16 +280,17 @@ def render_json(groups: List[GroupCount], column: String) -> String:
     """
     var lines = List[String]()
     for i in range(len(groups)):
-        var out = "{" + json_string(column) + ":" + json_string(groups[i].key)
-        out += ",\"invocations\":" + String(groups[i].invocations)
-        out += ",\"with_problems\":" + String(groups[i].with_problems)
-        out += ",\"problems\":" + String(groups[i].problems)
-        out += ",\"resolved\":" + String(groups[i].resolved)
-        out += ",\"problems_per_invocation\":" + ratio_text(
-            groups[i].problems, groups[i].invocations
+        var out = JsonObject()
+        out.put(column, groups[i].key)
+        out.put_int("invocations", groups[i].invocations)
+        out.put_int("with_problems", groups[i].with_problems)
+        out.put_int("problems", groups[i].problems)
+        out.put_int("resolved", groups[i].resolved)
+        out.put_raw(
+            "problems_per_invocation",
+            ratio_text(groups[i].problems, groups[i].invocations),
         )
-        out += "}"
-        lines.append(out)
+        lines.append(out.render())
     return join_lines(lines)
 
 

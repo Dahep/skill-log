@@ -63,7 +63,7 @@ from skill_log.detect import git_branch, git_toplevel
 from skill_log.errors import EXIT_FAILURE, EXIT_USAGE, Outcome
 from skill_log.files import read_text, write_text
 from skill_log.flags import parse_positive, take_value
-from skill_log.json import json_bool, json_string, json_string_array
+from skill_log.json import JsonObject
 from skill_log.markers import marker_text, parse_marker
 from skill_log.store import (
     Filters,
@@ -521,14 +521,14 @@ def write_json(
     `path` is empty and `trailer` carries the line in trailer mode; the
     keys are the same in both modes, so a consumer reads one shape.
     """
-    var out = "{\"path\":" + json_string(path)
-    out += ",\"markers\":" + json_string_array(markers)
-    out += ",\"already_resolved\":" + json_string_array(resolved)
-    out += ",\"already_reported\":" + json_bool(already)
-    out += ",\"dry_run\":" + json_bool(dry_run)
-    out += ",\"trailer\":" + json_string(trailer)
-    out += "}"
-    return out
+    var out = JsonObject()
+    out.put("path", path)
+    out.put_strings("markers", markers)
+    out.put_strings("already_resolved", resolved)
+    out.put_bool("already_reported", already)
+    out.put_bool("dry_run", dry_run)
+    out.put("trailer", trailer)
+    return out.render()
 
 
 def resolved_notes(resolved: List[String]) -> String:
@@ -652,9 +652,12 @@ def check_outcome(
     """The `--check` answer: validate, never write, exit 1 on a problem."""
     if not artifact:
         if as_json:
-            return Outcome.ok(
-                "{\"path\":\"\",\"markers\":[],\"problems\":[],\"warnings\":[]}"
-            )
+            var empty = JsonObject()
+            empty.put("path", "")
+            empty.put_strings("markers", List[String]())
+            empty.put_strings("problems", List[String]())
+            empty.put_strings("warnings", List[String]())
+            return Outcome.ok(empty.render())
         return Outcome.ok(
             "no "
             + REPORT_DIR
@@ -665,11 +668,12 @@ def check_outcome(
 
     if not Path(path).is_file():
         if as_json:
-            return Outcome.ok(
-                "{\"path\":"
-                + json_string(relative)
-                + ",\"markers\":[],\"problems\":[],\"warnings\":[]}"
-            )
+            var absent = JsonObject()
+            absent.put("path", relative)
+            absent.put_strings("markers", List[String]())
+            absent.put_strings("problems", List[String]())
+            absent.put_strings("warnings", List[String]())
+            return Outcome.ok(absent.render())
         return Outcome.ok("no report file at " + relative)
 
     var opened = StoreOpen()
@@ -721,18 +725,19 @@ def check_outcome(
         warnings.append(result.warnings[i])
 
     if as_json:
-        var out = "{\"path\":" + json_string(relative)
-        out += ",\"markers\":" + json_string_array(result.markers)
-        out += ",\"problems\":" + json_string_array(result.problems)
-        out += ",\"warnings\":" + json_string_array(warnings)
-        out += "}"
+        var out = JsonObject()
+        out.put("path", relative)
+        out.put_strings("markers", result.markers)
+        out.put_strings("problems", result.problems)
+        out.put_strings("warnings", warnings)
+        var rendered = out.render()
         if len(result.problems) > 0:
             var failed = Outcome.fail_notes(
                 problems_line(len(result.problems)), EXIT_FAILURE(), ""
             )
-            failed.text = out
+            failed.text = rendered
             return failed^
-        return Outcome.ok(out)
+        return Outcome.ok(rendered)
 
     var notes = prefixed(warnings)
     if len(result.problems) > 0:

@@ -30,7 +30,7 @@ from std.pathlib import Path
 
 from skill_log.errors import EXIT_FAILURE, EXIT_USAGE, Outcome
 from skill_log.flags import parse_positive, take_value
-from skill_log.json import json_bool, json_string
+from skill_log.json import JsonObject
 from skill_log.markers import marker_text
 from skill_log.store import ResolvedRow, resolve_db, resolve_row
 from skill_log.text import sanitize
@@ -137,15 +137,15 @@ def parse_options(args: List[String]) raises -> Options:
 
 def render_json(options: Options, row: ResolvedRow) -> String:
     """The resolved row as one flat JSON object."""
-    var out = "{\"id\":" + String(options.id)
-    out += ",\"marker\":" + json_string(marker_text(row.machine, options.id))
-    out += ",\"skill\":" + json_string(row.skill)
-    out += ",\"fix\":" + json_string(row.fix)
-    out += ",\"resolved_at\":" + json_string(row.resolved_at)
-    out += ",\"changed\":" + json_bool(row.changed)
-    out += ",\"dry_run\":" + json_bool(options.dry_run)
-    out += "}"
-    return out
+    var out = JsonObject()
+    out.put_int("id", options.id)
+    out.put("marker", marker_text(row.machine, options.id))
+    out.put("skill", row.skill)
+    out.put("fix", row.fix)
+    out.put("resolved_at", row.resolved_at)
+    out.put_bool("changed", row.changed)
+    out.put_bool("dry_run", options.dry_run)
+    return out.render()
 
 
 def handle_resolve(args: List[String]) raises -> Outcome:
