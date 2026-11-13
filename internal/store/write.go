@@ -8,33 +8,20 @@ import (
 	"github.com/Dahep/skill-log/internal/settings"
 )
 
-// WriteResult is what a write produced: the new row's id, or the refusal.
 type WriteResult struct {
 	ID      int64
 	Refusal *Refusal
 }
 
-// The write path's retry budget.
-//
-// A concurrent skill run holding the store's lock costs milliseconds, not
-// the command: the write waits for the lock within the budget and then
-// gives up. The budget is one thing, shared by every write attempt, so a
-// lock that outlives it fails the same way everywhere.
+// The write path's retry budget. A concurrent skill run holding the store's lock
+// costs milliseconds, not the command: the write waits, then gives up.
 const (
 	writeBudgetSeconds = 5.0
 	writeRetrySleep    = 100 * time.Millisecond
 )
 
-// withRetry runs attempt until it succeeds, until the budget is spent, or
-// until it fails for a reason a retry cannot fix.
-//
-// A BUSY/LOCKED failure is retried: it is another writer, and it lasts
-// milliseconds. Every other failure is returned at once — retrying a
-// damaged file would only make the failure slower.
-//
-// A locked refusal is retried like a busy error: a store whose version stamp
-// could not run because another writer held the lock is the same situation
-// as a busy statement, and it must not skip the budget.
+// withRetry runs attempt until it succeeds, until the budget is spent, or until it
+// fails for a reason a retry cannot fix. BUSY/LOCKED is retried.
 func withRetry[T any](attempt func() (T, *Refusal, error)) (T, *Refusal, error) {
 	deadline := time.Now().Add(time.Duration(writeBudgetSeconds * float64(time.Second)))
 	for {
@@ -64,10 +51,8 @@ func withRetry[T any](attempt func() (T, *Refusal, error)) (T, *Refusal, error) 
 	}
 }
 
-// WriteInvocation writes one invocation and its problems, atomically.
-//
-// One transaction covers the invocation row and every problem row: a failed
-// write leaves nothing behind.
+// WriteInvocation writes one invocation and its problems, atomically: one
+// transaction covers the invocation row and every problem row.
 func WriteInvocation(path string, row *Invocation, problems []string) (WriteResult, error) {
 	result, _, err := withRetry(func() (WriteResult, *Refusal, error) {
 		return writeAttempt(path, row, problems)
@@ -128,10 +113,8 @@ func writeAttempt(path string, row *Invocation, problems []string) (WriteResult,
 	return WriteResult{ID: id}, nil, nil
 }
 
-// Resolved is one row's resolution after resolve touched it (or looked at
-// it). Changed is false when the row already carried the same fix: the call
-// is idempotent, and the stored resolved_at stays the one the first stamp
-// wrote.
+// Resolved is one row's resolution after resolve touched it (or looked at it).
+// Changed is false when the row carried the same fix: the call is idempotent.
 type Resolved struct {
 	Found      bool
 	Skill      string
@@ -141,11 +124,8 @@ type Resolved struct {
 	Changed    bool
 }
 
-// ResolveRow stamps one row with the commit that carries its fix.
-//
-// The read comes first and through a read connection: a row already carrying
-// this fix is answered without a write at all, and a dry run never opens the
-// store for writing. Only a genuine change opens the write path.
+// ResolveRow stamps one row with the commit that carries its fix. The read comes
+// first: a row already carrying this fix is answered without a write.
 func ResolveRow(path string, id int64, fix string, dryRun bool) (Resolved, *Refusal, error) {
 	var result Resolved
 	opened, refusal, err := openRead(path)
@@ -225,8 +205,8 @@ func stampAttempt(path string, id int64, fix string) (Resolved, *Refusal, error)
 	result.Machine = machine
 	result.Fix = fix
 	if storedFix == fix {
-		// Another writer (or our own earlier attempt) already installed this
-		// fix: keep its timestamp and change nothing.
+		// Another writer already installed this fix: keep its timestamp and
+		// change nothing.
 		result.ResolvedAt = resolvedAt
 		return result, nil, nil
 	}

@@ -7,17 +7,16 @@ import (
 	"github.com/Dahep/skill-log/internal/settings"
 )
 
-// The skip reasons resolve-merged reports: the --json skipped[].reason and
-// the human note carry the same value.
+// The skip reasons resolve-merged reports: the --json skipped[].reason and the
+// human note carry the same value.
 const (
 	SkipUnknownID   = "unknown_id"
 	SkipForeign     = "foreign"
 	SkipLoggedAfter = "logged_after_commit"
 )
 
-// Located is one marker the scan found, and the commit and time it came
-// from. Epoch is the commit time in seconds, which is what a row logged after
-// the commit is compared against.
+// Located is one marker the scan found, and the commit and time it came from.
+// Epoch is the commit time in seconds, compared against a row's log time.
 type Located struct {
 	Machine string
 	ID      int64
@@ -25,17 +24,15 @@ type Located struct {
 	Epoch   int64
 }
 
-// Text is the marker this located value is named by.
 func (l Located) Text() string { return marker.Format(l.Machine, l.ID) }
 
-// MergedSkip is one marker a scan could not stamp, and the reason.
 type MergedSkip struct {
 	Row    string
 	Reason string
 }
 
-// Stamped is one row a merged scan stamped: its marker, what stamped it, and
-// the row it names.
+// Stamped is one row a merged scan stamped: its marker, what stamped it, and the
+// row it names.
 type Stamped struct {
 	Marker  string
 	Commit  string
@@ -43,8 +40,7 @@ type Stamped struct {
 	ID      int64
 }
 
-// MergedResult is what a merged scan produced: the rows it stamped, kept, and
-// skipped.
+// MergedResult is what a merged scan produced: the rows it stamped, kept, and skipped.
 type MergedResult struct {
 	Stamped   []Stamped
 	Unchanged []string
@@ -52,8 +48,7 @@ type MergedResult struct {
 }
 
 // resolutionRow is the columns a merged scan needs from one invocation row.
-// Logged is the row's timestamp in epoch seconds, read by SQLite so the
-// comparison against a commit time needs no second ISO parser.
+// Logged is the timestamp in epoch seconds, read by SQLite.
 type resolutionRow struct {
 	ID      int64
 	Machine string
@@ -65,8 +60,8 @@ func mergedRowIndex(rows []resolutionRow, machine string, id int64, localHost st
 	for i, row := range rows {
 		stored := row.Machine
 		if stored == "" {
-			// A row written before the machine column existed belongs to
-			// the machine reading it.
+			// A row written before the machine column existed belongs to the
+			// machine reading it.
 			stored = localHost
 		}
 		if stored == machine && row.ID == id {
@@ -77,12 +72,7 @@ func mergedRowIndex(rows []resolutionRow, machine string, id int64, localHost st
 }
 
 // plan decides each located marker: stamp, unchanged, or skip with a reason.
-//
-// Pure: no git, no clock, no store. Every marker lands in exactly one of the
-// three lists. Newest wins because the scan walks commits newest first. A row
-// stamped with the same commit is unchanged; a row stamped with a different
-// commit is restamped, so an amended fix supersedes the earlier one. A marker
-// naming another machine is foreign and is never stamped.
+// Pure: no git, no clock, no store. Newest wins; a foreign marker is never stamped.
 func plan(located []Located, rows []resolutionRow, localHost string) MergedResult {
 	var result MergedResult
 	for _, item := range located {
@@ -136,19 +126,15 @@ func readResolutionRows(q querier) ([]resolutionRow, error) {
 	return out, rows.Err()
 }
 
-// ResolveMergedRows applies: stamp every row the scanned markers name.
-//
-// The first pass reads through a read connection: when nothing would change
-// (the hook's usual case) no write path is opened at all, and a dry run never
-// gets one either. A genuine change opens the store once, re-decides inside a
-// transaction, and stamps every changed row with one resolution time.
+// ResolveMergedRows applies: stamp every row the scanned markers name. The first
+// pass reads through a read connection: no write path opens for no change.
 func ResolveMergedRows(path string, located []Located, localHost string, dryRun bool) (MergedResult, *Refusal, error) {
 	var empty MergedResult
 	if len(located) == 0 {
 		return empty, nil, nil
 	}
 	if !isFile(path) {
-		// The store vanished between the caller's check and here. A hook must
+		// The store vanished between the caller's check and here: a hook must
 		// not create one.
 		return empty, nil, nil
 	}
@@ -160,8 +146,7 @@ func ResolveMergedRows(path string, located []Located, localHost string, dryRun 
 		return empty, nil, nil
 	}
 	defer opened.Close()
-	// A store with no tables yet is an empty log: no row carries the
-	// markers, and every one of them is an unknown id.
+	// A store with no tables yet is an empty log: every marker is an unknown id.
 	emptyLog, err := opened.isEmptyLog()
 	if err != nil {
 		return empty, nil, err

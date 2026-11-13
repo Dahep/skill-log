@@ -12,7 +12,6 @@ import (
 	"github.com/Dahep/skill-log/internal/store"
 )
 
-// mergedOptions are the flags `resolve-merged` accepts.
 type mergedOptions struct {
 	since  string
 	quiet  bool
@@ -21,8 +20,7 @@ type mergedOptions struct {
 	db     string
 }
 
-// resolveMergedVerb is the `resolve-merged` verb: close the rows a pull
-// landed.
+// resolveMergedVerb is the `resolve-merged` verb: close the rows a pull landed.
 func resolveMergedVerb() Verb {
 	return Verb{
 		Name:    "resolve-merged",
@@ -34,8 +32,7 @@ func resolveMergedVerb() Verb {
 			"skill-log resolve-merged --since HEAD@{1} --quiet",
 			"skill-log resolve-merged --since origin/main~5 --dry-run --json",
 		},
-		// The flags that consume the next argument: the dispatcher reads this
-		// to tell `--since -h` from a help request.
+		// The dispatcher reads this to tell `--since -h` from a help request.
 		ValueFlags: mergedFlags(&mergedOptions{}).names(),
 		Notes: "A checkout with .skill-log/reports/ resolves from the report files\n" +
 			"the range added or changed; elsewhere the last trailer block of\n" +
@@ -56,7 +53,6 @@ func resolveMergedVerb() Verb {
 
 func init() { register(resolveMergedVerb()) }
 
-// mergedFlags reads `resolve-merged`'s flags.
 func mergedFlags(options *mergedOptions) *flagSet {
 	flags := &flagSet{}
 	flags.valueEquals("--since", "a revision", func(value string) error { options.since = value; return nil })
@@ -75,9 +71,8 @@ func parseMergedOptions(args []string) (mergedOptions, error) {
 	}
 	since := strings.TrimSpace(options.since)
 	if since != "" {
-		// A revision reaches a git command and git's option parser. An
-		// option-shaped value would be read as an option, so it is refused
-		// before either sees it.
+		// A revision reaches git's option parser, so an option-shaped value
+		// is refused before git sees it.
 		if strings.HasPrefix(since, "-") || format.Sanitize(since) != since {
 			return options, usageError{"--since needs a revision"}
 		}
@@ -86,17 +81,13 @@ func parseMergedOptions(args []string) (mergedOptions, error) {
 	return options, nil
 }
 
-// The field and record separators of one `git log` call.
-//
-// NUL cannot appear in a commit message or an object name, and the record
-// separator ends one commit's fields, so one call carries every commit's.
+// The field and record separators of one `git log` call: NUL cannot appear in a
+// commit message or an object name.
 const (
 	mergedField  = "\x00"
 	mergedRecord = "\x1e"
 )
 
-// mergedScan is what one pass over history found: markers, bad values,
-// hidden ones.
 type mergedScan struct {
 	located   []store.Located
 	malformed []string
@@ -116,11 +107,8 @@ func addLocated(located []store.Located, machine string, id int64, commit string
 	})
 }
 
-// gitOutput runs one git command in dir and returns its exact stdout.
-//
-// The stderr is discarded so a range git cannot read is a quiet empty answer
-// rather than noise on a pull. The arguments go as argv, never through a
-// shell, so a path or a revision cannot reach git as an option.
+// gitOutput runs one git command in dir and returns its exact stdout: stderr
+// is discarded, and the arguments go as argv, never through a shell.
 func gitOutput(dir string, args ...string) string {
 	result := process.Run(dir, "git", args...)
 	if result.Status != 0 {
@@ -129,15 +117,15 @@ func gitOutput(dir string, args ...string) string {
 	return result.Stdout
 }
 
-// gitCommit is the commit `revision` names, or an empty string: a reflog
-// position that does not exist is a missing bound, not an error.
+// gitCommit is the commit `revision` names, or an empty string: a missing reflog
+// position is a missing bound, not an error.
 func gitCommit(root, revision string) string {
 	out := gitOutput(root, "rev-parse", "--verify", revision+"^{commit}")
 	return strings.TrimSpace(out)
 }
 
-// splitMarkerValues is the markers in one trailer value: the trailer grammar
-// lets a line hold several, comma-separated.
+// splitMarkerValues is the markers in one trailer value: the trailer grammar lets
+// a line hold several, comma-separated.
 func splitMarkerValues(value string) []string {
 	var pieces []string
 	for _, piece := range strings.Split(value, ",") {
@@ -149,12 +137,8 @@ func splitMarkerValues(value string) []string {
 	return pieces
 }
 
-// bodyTrailerValues is every marker the body's `Skill-log-Fix:` lines carry,
-// in body order.
-//
-// The scan is line-based and prefix-based, like the marker grammar itself: a
-// line whose first characters are the key, then a colon, then the value. A
-// prose mention of the key mid-paragraph is not a marker.
+// bodyTrailerValues is every marker the body's `Skill-log-Fix:` lines carry, in
+// body order. The scan is line-based, so a prose mention of the key is no marker.
 func bodyTrailerValues(body string) []string {
 	var values []string
 	key := strings.ToLower(trailerKey)
@@ -174,9 +158,8 @@ func bodyTrailerValues(body string) []string {
 	return values
 }
 
-// valueReturned reports whether the trailer parser returned `value`. The
-// parser returns one line per trailer it read, and a line may hold several
-// comma-separated markers, so the comparison is on the pieces.
+// valueReturned reports whether the trailer parser returned `value`: a trailer
+// line may hold several markers, so the comparison is on the pieces.
 func valueReturned(returned, value string) bool {
 	for _, line := range strings.Split(returned, "\n") {
 		for _, piece := range strings.Split(line, ",") {
@@ -188,7 +171,6 @@ func valueReturned(returned, value string) bool {
 	return false
 }
 
-// containsText reports whether `value` is already in `items`.
 func containsText(items []string, value string) bool {
 	for _, item := range items {
 		if item == value {
@@ -198,12 +180,8 @@ func containsText(items []string, value string) bool {
 	return false
 }
 
-// buriedTrailerValues is the values the body carries that the trailer parser
-// did not see.
-//
-// Git's last-trailer-block rule returns the markers of the final block only,
-// so a body with two marker blocks loses the earlier one. Every value the
-// parser did not return is reported, so the scan names what it skipped.
+// buriedTrailerValues is the values the body carries that the trailer parser did
+// not see: git returns the last trailer block only.
 func buriedTrailerValues(body, returned string) []string {
 	var buried []string
 	for _, value := range bodyTrailerValues(body) {
@@ -218,11 +196,9 @@ func buriedTrailerValues(body, returned string) []string {
 	return buried
 }
 
-// scanTrailers is every trailer marker reachable from HEAD, newest commit
-// first.
+// scanTrailers is every trailer marker reachable from HEAD, newest commit first.
 func scanTrailers(root, since string) mergedScan {
 	var scan mergedScan
-	// The revision range the scan walks.
 	span := "HEAD"
 	if since != "" {
 		span = since + "..HEAD"
@@ -252,7 +228,7 @@ func scanTrailers(root, since string) mergedScan {
 		body := fields[3]
 
 		// A value the trailer parser did not return is buried — a later
-		// trailer block hid it. The scan names it instead of losing it.
+		// trailer block hid it, so the scan names it instead of losing it.
 		for _, value := range buriedTrailerValues(body, values) {
 			scan.hidden = append(scan.hidden,
 				firstNine(commit)+
@@ -277,7 +253,6 @@ func scanTrailers(root, since string) mergedScan {
 	return scan
 }
 
-// reportFile is one report file a scan reads, and its stamp.
 type reportFile struct {
 	path   string
 	commit string
@@ -285,8 +260,7 @@ type reportFile struct {
 	order  int
 }
 
-// latestReportCommit is the newest commit in `revision` that touched one
-// report file.
+// latestReportCommit is the newest commit in `revision` that touched one report file.
 func latestReportCommit(root, relative, revision string) reportFile {
 	out := strings.TrimSpace(gitOutput(
 		root, "log", "-1", "--format=%H%x00%ct", revision, "--", relative,
@@ -309,7 +283,6 @@ func latestReportCommit(root, relative, revision string) reportFile {
 	return reportFile{path: relative, commit: commit, epoch: epoch}
 }
 
-// newestFirst is the files by their stamp, newest first.
 func newestFirst(files []reportFile) []reportFile {
 	order := make([]int, 0, len(files))
 	taken := make([]bool, len(files))
@@ -336,9 +309,8 @@ func newestFirst(files []reportFile) []reportFile {
 	return sorted
 }
 
-// reportFiles is the report files a scan reads: the range's, or the tree's.
-// The tree is only read when the report directory exists — that is the mode
-// switch `report` uses too.
+// reportFiles is the report files a scan reads: the range's, or the tree's. The
+// tree is only read when the report directory exists.
 func reportFiles(root, since string) []reportFile {
 	directory := filepath.Join(root, filepath.FromSlash(reportDir))
 	if !format.IsDir(directory) {
@@ -349,7 +321,7 @@ func reportFiles(root, since string) []reportFile {
 	if since != "" {
 		span = since + "..HEAD"
 	}
-	// The committed tree at the scanned tip is the inventory. Working-tree
+	// The committed tree at the scanned tip is the inventory: working-tree
 	// presence cannot hide or add a report from the pull.
 	listing := gitOutput(root, "ls-tree", "-r", "--name-only", "HEAD", "--", reportDir)
 	prefix := reportDir + "/"
@@ -376,7 +348,6 @@ func reportFiles(root, since string) []reportFile {
 	return newestFirst(files)
 }
 
-// commitHistory maps each commit in span to its newest-first history position.
 func commitHistory(root, span string) map[string]int {
 	out := gitOutput(root, "log", "--format=%H", span)
 	history := make(map[string]int)
@@ -389,11 +360,8 @@ func commitHistory(root, span string) map[string]int {
 	return history
 }
 
-// scanReports is the markers from the report files this scan reads.
-//
-// The marker text is read from the commit that carries the file, not the
-// working tree: a hook runs after a merge, and the checkout may hold edits
-// that are not part of the pull.
+// scanReports is the markers from the report files this scan reads. The text is
+// read from the carrying commit, not the working tree.
 func scanReports(root, since string) mergedScan {
 	var scan mergedScan
 	for _, file := range reportFiles(root, since) {
@@ -417,7 +385,6 @@ func scanReports(root, since string) mergedScan {
 	return scan
 }
 
-// skippedJSON is the skipped rows as an array of `{row, reason}` objects.
 func skippedJSON(items []store.MergedSkip) string {
 	values := make([]string, 0, len(items))
 	for _, item := range items {
@@ -429,9 +396,8 @@ func skippedJSON(items []store.MergedSkip) string {
 	return "[" + strings.Join(values, ",") + "]"
 }
 
-// ignoredMarkers is every marker the scan did not act on, hidden and
-// malformed alike. The malformed text comes first: it is the value itself,
-// where the hidden entry carries the commit it was buried in.
+// ignoredMarkers is every marker the scan did not act on: the malformed text
+// comes first, the hidden entry carries its commit.
 func ignoredMarkers(outcome mergedOutcome) []string {
 	items := make([]string, 0,
 		len(outcome.scan.malformed)+len(outcome.hidden))
@@ -440,7 +406,6 @@ func ignoredMarkers(outcome mergedOutcome) []string {
 	return items
 }
 
-// stampedMarkers is the markers of the rows a scan stamped, in order.
 func stampedMarkers(result store.MergedResult) []string {
 	markers := make([]string, 0, len(result.Stamped))
 	for _, item := range result.Stamped {
@@ -449,8 +414,8 @@ func stampedMarkers(result store.MergedResult) []string {
 	return markers
 }
 
-// renderMergedJSON is one shape for every path, so a `--json` caller never
-// guesses keys.
+// renderMergedJSON is one shape for every path, so a `--json` caller never guesses
+// keys.
 func renderMergedJSON(result store.MergedResult, ignored []string, dryRun bool) string {
 	return format.Object(
 		format.Raw("resolved", format.JSONStrings(stampedMarkers(result))),
@@ -461,9 +426,8 @@ func renderMergedJSON(result store.MergedResult, ignored []string, dryRun bool) 
 	)
 }
 
-// mergedSummary is the one stdout line a non-JSON scan prints when it
-// stamped a row. Nothing to stamp means nothing to say: the hook's output
-// has to stay trustworthy, so a pull with no markers is silent.
+// mergedSummary is the one stdout line a non-JSON scan prints when it stamped a
+// row. Nothing to stamp means nothing to say.
 func mergedSummary(result store.MergedResult, dryRun bool) string {
 	if len(result.Stamped) == 0 {
 		return ""
@@ -485,20 +449,17 @@ func mergedSummary(result store.MergedResult, dryRun bool) string {
 		" (" + strings.Join(shorts, ", ") + ")"
 }
 
-// mergedOutcome is what one scan decided and what it wants to say about it.
 type mergedOutcome struct {
 	// scan is the scan whose markers were acted on: the report files in
 	// artifact mode, the trailers otherwise.
 	scan mergedScan
-	// hidden is the markers the trailer parse buried, whatever mode the
-	// scan ran in.
+	// hidden is the markers the trailer parse buried.
 	hidden []string
-	// staleTrailer says a trailer was found in a checkout that resolves
-	// from its report files.
+	// staleTrailer says a trailer was found in a checkout that resolves from its
+	// report files.
 	staleTrailer bool
 }
 
-// mergedNotes is the stderr notes, already prefixed, or nothing when quiet.
 func mergedNotes(outcome mergedOutcome, result store.MergedResult, quiet bool) string {
 	if quiet {
 		return ""
@@ -522,10 +483,8 @@ func mergedNotes(outcome mergedOutcome, result store.MergedResult, quiet bool) s
 	return prefixedNotes(lines)
 }
 
-// localHostname is this machine's hostname, or empty when it cannot be read.
-// Only a row written before `add` always filled the column needs it, and its
-// absence must not stop a hook from resolving the rows that do carry a
-// machine.
+// localHostname is this machine's hostname, or empty when it cannot be read: only
+// a row written before `add` always filled the machine column needs it.
 func localHostname() string {
 	name, err := settings.Hostname()
 	if err != nil {
@@ -547,9 +506,8 @@ func handleResolveMerged(args []string) Outcome {
 		)
 	}
 
-	// Bound the range only when git can resolve the revision. A missing
-	// reflog entry is a hook's normal condition after a fresh clone, so it
-	// falls back to a full scan rather than failing a pull.
+	// Bound the range only when git can resolve the revision: a missing reflog
+	// entry is a hook's normal condition, so it falls back to a full scan.
 	since := options.since
 	if since != "" {
 		commit := gitCommit(root, since)
@@ -566,15 +524,15 @@ func handleResolveMerged(args []string) Outcome {
 	outcome.hidden = trailerScan.hidden
 	if artifact {
 		outcome.scan = scanReports(root, since)
-		// A trailer in a repo that resolves from files is stale, not
-		// malformed: say it once, and read only the files.
+		// A trailer in a repo that resolves from files is stale, not malformed:
+		// say it once, and read only the files.
 		outcome.staleTrailer = len(trailerScan.located) > 0
 	} else {
 		outcome.scan = trailerScan
 	}
 
-	// The markers the scan did not act on, in one array, so `--quiet --json`
-	// still says what was dropped.
+	// The markers the scan did not act on, so `--quiet --json` still says what was
+	// dropped.
 	ignored := ignoredMarkers(outcome)
 
 	var result store.MergedResult

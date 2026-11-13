@@ -1,4 +1,5 @@
-// Package template resolves the usage-log templates, their provenance state, and the binary path.
+// Package template resolves the usage-log templates, their provenance state, and
+// the binary path.
 package template
 
 import (
@@ -13,10 +14,8 @@ import (
 	"github.com/Dahep/skill-log/internal/settings"
 )
 
-// seededDirName is the state-directory entry holding seeded-from hashes.
 const seededDirName = "seeded-from"
 
-// Template is one effective template: its bytes, source, hash and provenance.
 type Template struct {
 	Name    string
 	Content string
@@ -25,7 +24,8 @@ type Template struct {
 	Moved   bool
 }
 
-// ResolveDir returns the effective template directory: flag, environment, user directory.
+// ResolveDir returns the effective template directory: flag, environment, user
+// directory.
 func ResolveDir(flag string) string {
 	if strings.TrimSpace(flag) != "" {
 		return strings.TrimSpace(flag)
@@ -36,7 +36,6 @@ func ResolveDir(flag string) string {
 	return settings.TemplatesDir()
 }
 
-// Load returns the effective template named name.
 func Load(name, templateDir string) (Template, error) {
 	out := Template{Name: name, Source: "shipped"}
 	if templateDir != "" {
@@ -71,14 +70,12 @@ func Load(name, templateDir string) (Template, error) {
 	return out, nil
 }
 
-// SeededPath is where the seeded-from record for name lives.
-//
-// The record lives under the state directory, never under the user config dir.
+// SeededPath is where the seeded-from record for name lives: under the state
+// directory, never under the user config dir.
 func SeededPath(name string) string {
 	return joinPath(joinPath(settings.StateDir(), seededDirName), name)
 }
 
-// readSeeded returns the seeded-from hash of name's user copy, or "".
 func readSeeded(name string) string {
 	path := SeededPath(name)
 	if !format.IsRegularFile(path) {
@@ -91,7 +88,6 @@ func readSeeded(name string) string {
 	return strings.TrimSpace(text)
 }
 
-// WriteSeeded records the seeded-from hash for name.
 func WriteSeeded(name, hashValue string) error {
 	dir := joinPath(settings.StateDir(), seededDirName)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -100,7 +96,6 @@ func WriteSeeded(name, hashValue string) error {
 	return format.WriteText(SeededPath(name), hashValue+"\n")
 }
 
-// ClearSeeded removes the seeded-from record for name.
 func ClearSeeded(name string) {
 	path := SeededPath(name)
 	if format.IsRegularFile(path) {
@@ -108,7 +103,6 @@ func ClearSeeded(name string) {
 	}
 }
 
-// ResolvedCommand returns this binary's absolute, symlink-free path.
 func ResolvedCommand() string {
 	program := os.Args[0]
 	if !strings.Contains(program, "/") {

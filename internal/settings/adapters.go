@@ -9,7 +9,6 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// AdaptersEnv is the environment variable that names the adapters to run.
 const AdaptersEnv = "SKILL_LOG_ADAPTERS"
 
 // OpenCodeSessionEnv is the environment variable opencode exports into the
@@ -20,9 +19,8 @@ const openCodeDBRelative = "/.local/share/opencode/opencode.db"
 
 const openCodeModelSQL = "SELECT model FROM session_v2 WHERE id = ?"
 
-// AdapterContext is what an enabled adapter filled. Every field is a string;
-// an empty one means the adapter did not fill it, or that it failed. An
-// adapter never overwrites anything the caller said.
+// AdapterContext is what an enabled adapter filled. Every field is a string; an
+// empty one means the adapter did not fill it, or that it failed.
 type AdapterContext struct {
 	Harness string
 	Session string
@@ -51,10 +49,8 @@ func EnabledAdapters(flags []string) []string {
 	return names
 }
 
-// HasAdapter reports whether one of the enabled adapters is the named one.
-//
-// An adapter's value is only consulted when that adapter runs: an adapter
-// that is not enabled fills nothing, not even its session.
+// HasAdapter reports whether one of the enabled adapters is the named one. An
+// adapter's value is only consulted when that adapter runs.
 func HasAdapter(names []string, want string) bool {
 	for _, name := range names {
 		if strings.TrimSpace(name) == want {
@@ -72,9 +68,8 @@ func isJSONSpace(ch byte) bool {
 	return ch == ' ' || ch == '\n' || ch == '\r' || ch == '\t'
 }
 
-// jsonStringSpan is the index just past the closing quote of the string
-// opening at at (the opening quote). Escapes are skipped as a pair, so a `\"`
-// inside the string does not end it. -1 when the string never closes.
+// jsonStringSpan is the index just past the closing quote of the string opening at
+// at. Escapes are skipped as a pair. -1 when the string never closes.
 func jsonStringSpan(text string, at int) int {
 	i := at + 1
 	for i < len(text) {
@@ -90,10 +85,8 @@ func jsonStringSpan(text string, at int) int {
 	return -1
 }
 
-// jsonStringValue is the text of the string that opens at at, its escapes
-// resolved. A `\uXXXX` escape (or anything this reader does not recognise)
-// makes the value unreadable, and the caller falls back to the raw text rather
-// than writing a mangled id.
+// jsonStringValue is the text of the string that opens at at, its escapes resolved.
+// An unrecognised escape makes the value unreadable.
 func jsonStringValue(text string, at int) string {
 	end := jsonStringSpan(text, at)
 	if end == -1 {
@@ -138,12 +131,8 @@ func jsonStringValue(text string, at int) string {
 	return out.String()
 }
 
-// jsonStringField is the value of a string field at the top level of a JSON
-// object.
-//
-// A small targeted scanner, not a JSON parser: the only shape this tool reads
-// is opencode's `{"id":"...","providerID":"..."}`. The scan tracks nesting, so
-// a key spelled inside a nested object never answers for the top-level one.
+// jsonStringField is the value of a string field at the top level of a JSON object.
+// The scan tracks nesting, so a nested key never answers for the top-level one.
 func jsonStringField(text, key string) string {
 	i := 0
 	for i < len(text) && isJSONSpace(text[i]) {
@@ -195,11 +184,8 @@ func jsonStringField(text, key string) string {
 	return ""
 }
 
-// renderModel turns an opencode model value into `provider/id`.
-//
-// A value that is not the `{"id":"...","providerID":"..."}` shape is passed
-// through unchanged: a value nobody can parse is better than a value silently
-// mangled.
+// renderModel turns an opencode model value into `provider/id`. A value that is
+// not the `{"id":"...","providerID":"..."}` shape is passed through unchanged.
 func renderModel(raw string) string {
 	if raw == "" {
 		return ""
@@ -215,15 +201,12 @@ func renderModel(raw string) string {
 	return provider + "/" + modelID
 }
 
-// fileURI is the path as a `file:` URI.
 func fileURI(path string) string {
 	return format.FileURI(path)
 }
 
-// openCodeModel is the model of an opencode session, or "".
-//
-// The session store is read read-only; a missing file, a changed schema, an
-// absent row — every one of them is an empty string.
+// openCodeModel is the model of an opencode session, or "". The session store is
+// read read-only, so a missing file or absent row is an empty string.
 func openCodeModel(sessionID string) string {
 	if sessionID == "" {
 		return ""
@@ -244,14 +227,8 @@ func openCodeModel(sessionID string) string {
 	return renderModel(raw)
 }
 
-// ApplyAdapters runs the enabled adapters and collects what they filled.
-//
-// worktree is the worktree the run happened in; session is the session the
-// row will carry, already resolved by the caller's chain. The model is the
-// one of *that* session.
-//
-// An unknown adapter name is ignored: enabling an adapter this binary does
-// not know must not fail the write.
+// ApplyAdapters runs the enabled adapters and collects what they filled. worktree is
+// the worktree the run happened in. An unknown adapter name is ignored.
 func ApplyAdapters(names []string, worktree string, session string) AdapterContext {
 	var context AdapterContext
 	for _, name := range names {

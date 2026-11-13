@@ -12,7 +12,6 @@ import (
 	templatepkg "github.com/Dahep/skill-log/internal/template"
 )
 
-// The five actions `adopt` reports.
 const (
 	actionAppended  = "appended"
 	actionRewritten = "rewritten"
@@ -21,7 +20,6 @@ const (
 	actionSkipped   = "skipped"
 )
 
-// The actions `template seed` and `template reset` report, one per template.
 const (
 	templateActionSeeded      = "seeded"
 	templateActionWouldSeed   = "would_seed"
@@ -31,7 +29,6 @@ const (
 	templateActionAbsent      = "absent"
 )
 
-// skillsOptions is the flags every `skills` subcommand accepts.
 type skillsOptions struct {
 	sub         string
 	dir         string
@@ -90,7 +87,6 @@ func skillsVerb() Verb {
 
 func init() { register(skillsVerb()) }
 
-// skillsFlags reads `skills`'s flags.
 func skillsFlags(options *skillsOptions) *flagSet {
 	flags := &flagSet{}
 	flags.value("--dir", "a path", func(value string) error { options.dir = value; return nil })
@@ -98,9 +94,8 @@ func skillsFlags(options *skillsOptions) *flagSet {
 	return flags
 }
 
-// parseSkillsOptions reads `skills`'s subcommand and its flags.
-//
-// The first positional is the subcommand; `template` takes a second positional.
+// parseSkillsOptions reads `skills`'s subcommand and its flags: the first
+// positional is the subcommand, `template` takes a second positional.
 func parseSkillsOptions(args []string) (skillsOptions, error) {
 	var options skillsOptions
 	var positionals []string
@@ -142,7 +137,6 @@ func parseSkillsOptions(args []string) (skillsOptions, error) {
 	return options, nil
 }
 
-// movedDefaultNote is the one line that names a moved shipped default, or "".
 func movedDefaultNote(usage, review templatepkg.Template) string {
 	if !usage.Moved && !review.Moved {
 		return ""
@@ -153,8 +147,7 @@ func movedDefaultNote(usage, review templatepkg.Template) string {
 }
 
 // movedSuffix is the moved-default clause to append to another message, or "".
-//
-// The failure gets exactly one stderr line, so the clause rides along with it.
+// The failure gets one stderr line, so the clause rides along with it.
 func movedSuffix(moved string) string {
 	if moved == "" {
 		return ""
@@ -162,12 +155,10 @@ func movedSuffix(moved string) string {
 	return "; " + moved
 }
 
-// joinPath is the tool's path spelling: the directory and the name joined with a separator.
-//
-// The join is deliberately naive rather than filepath.Join's cleaning one.
+// joinPath is the tool's path spelling: the directory and the name joined with a
+// separator, deliberately naive rather than filepath.Join's cleaning one.
 func joinPath(dir, name string) string { return dir + "/" + name }
 
-// skillDirs returns the skill subdirectories of dir: those holding a `SKILL.md`, sorted.
 func skillDirs(dir string) []string {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -188,7 +179,6 @@ func skillDirs(dir string) []string {
 	return names
 }
 
-// skillState is one skill's audit result: its name, path, and state.
 type skillState struct {
 	skill string
 	path  string
@@ -196,8 +186,6 @@ type skillState struct {
 }
 
 // auditSkill returns one skill's state, from its `SKILL.md`.
-//
-// The current render is the one this skill would get now.
 func auditSkill(dir, name string, template templatepkg.Template, command string) (skillState, error) {
 	result := skillState{skill: name, path: joinPath(dir, name)}
 	docPath := joinPath(result.path, "SKILL.md")
@@ -215,7 +203,6 @@ func auditSkill(dir, name string, template templatepkg.Template, command string)
 	return result, nil
 }
 
-// adopted is one skill's adoption result: name, path, state, action.
 type adopted struct {
 	skill  string
 	path   string
@@ -223,9 +210,8 @@ type adopted struct {
 	action string
 }
 
-// adoptSkill makes one skill's document conform, and says what happened.
-//
-// The state is the document's state *before* the run.
+// adoptSkill makes one skill's document conform, and says what happened. The
+// state is the document's state *before* the run.
 func adoptSkill(dir, name string, template templatepkg.Template, command string, force, dryRun bool) (adopted, error) {
 	result := adopted{skill: name, path: joinPath(dir, name)}
 	docPath := joinPath(result.path, "SKILL.md")
@@ -271,7 +257,6 @@ func adoptSkill(dir, name string, template templatepkg.Template, command string,
 	return result, nil
 }
 
-// skillName is the skill's frontmatter `name:`, else its directory name.
 func skillName(text, dirName string) string {
 	if name := document.FrontmatterName(text); name != "" {
 		return name
@@ -279,7 +264,6 @@ func skillName(text, dirName string) string {
 	return dirName
 }
 
-// auditJSONLine is one audit object, exactly `skill`, `path`, `state`.
 func auditJSONLine(item skillState) string {
 	return format.Object(
 		format.Str("skill", item.skill),
@@ -288,12 +272,10 @@ func auditJSONLine(item skillState) string {
 	)
 }
 
-// auditTextLine is one audit line for a person: the state, the skill, the path.
 func auditTextLine(item skillState) string {
 	return item.state + "  " + item.skill + "  " + item.path
 }
 
-// adoptJSONLine is one adopt object, exactly `skill`, `path`, `state`, `action`.
 func adoptJSONLine(item adopted) string {
 	return format.Object(
 		format.Str("skill", item.skill),
@@ -303,7 +285,6 @@ func adoptJSONLine(item adopted) string {
 	)
 }
 
-// adoptTextLine is one adopt line for a person: the action, the state, the skill.
 func adoptTextLine(item adopted) string {
 	return item.action + "  " + item.state + "  " + item.skill + "  " + item.path
 }
@@ -319,12 +300,11 @@ func skillsFlagValue(arg string) bool {
 	return false
 }
 
-// handleSkills is the `skills` handler: dispatch on the subcommand.
-//
-// It never prints and never exits: the CLI boundary owns both.
+// handleSkills is the `skills` handler: dispatch on the subcommand. It never prints
+// and never exits: the CLI boundary owns both.
 func handleSkills(args []string) Outcome {
 	// A bare scan for the subcommand and for help, without parsing values:
-	// `--dir --help` treats `--help` as a value of `--dir` only when it follows it.
+	// `--dir --help` treats `--help` as a value of `--dir` only when it follows.
 	wantsHelp := false
 	var positionals []string
 	for i := 0; i < len(args); i++ {
@@ -377,16 +357,14 @@ func handleSkills(args []string) Outcome {
 	return Fail("unknown subcommand: "+options.sub, ExitUsage)
 }
 
-// failWithText fails with message and exit code, but still prints text on stdout.
-//
-// The findings are the answer; the exit code says the answer is "not clean".
+// failWithText fails with message and exit code, but still prints text on stdout:
+// the findings are the answer, the exit code says it is "not clean".
 func failWithText(text, message string, code int) Outcome {
 	outcome := Fail(message, code)
 	outcome.Text = text
 	return outcome
 }
 
-// handleAudit is `skills audit`: one line per skill, exit 1 on anything but ok/vendored.
 func handleAudit(options skillsOptions) Outcome {
 	if strings.TrimSpace(options.dir) == "" {
 		return Fail("usage: skills audit needs --dir <dir>", ExitUsage)
@@ -436,7 +414,7 @@ func handleAudit(options skillsOptions) Outcome {
 	text := format.JoinLines(lines)
 
 	if dirty {
-		// The findings are the answer and go to stdout even when the exit code says "not clean".
+		// The findings go to stdout even when the exit code says "not clean".
 		return failWithText(
 			text,
 			"some skills need adoption"+movedSuffix(moved),
@@ -444,21 +422,20 @@ func handleAudit(options skillsOptions) Outcome {
 		)
 	}
 	if moved != "" {
-		// A moved default is its own failure: the directory may be clean, and still behind.
+		// A moved default is its own failure: the directory may be clean and still behind.
 		return failWithText(text, moved, ExitFailure)
 	}
 	return OK(text)
 }
 
-// handleAdopt is `skills adopt`: make every skill in `--dir` conform.
 func handleAdopt(options skillsOptions) Outcome {
 	if strings.TrimSpace(options.dir) == "" {
 		return Fail("usage: skills adopt needs --dir <dir>", ExitUsage)
 	}
 	dir := strings.TrimSpace(options.dir)
 
-	// The effective template is validated first: rendering from a broken
-	// template would write blocks no skill can log from.
+	// The effective template is validated first: rendering from a broken template
+	// would write blocks no skill can log from.
 	templateDir := templatepkg.ResolveDir(options.templateDir)
 	template, err := templatepkg.Load(assets.UsageLogName, templateDir)
 	if err != nil {
@@ -493,7 +470,7 @@ func handleAdopt(options skillsOptions) Outcome {
 	text := format.JoinLines(lines)
 
 	if refused {
-		// The report is the answer and goes to stdout even when the exit code says "not conformant".
+		// The report goes to stdout even when the exit code says "not conformant".
 		return failWithText(
 			text,
 			"some skills were refused (an edited block is rewritten only with --force)",

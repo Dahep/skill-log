@@ -6,7 +6,6 @@ import (
 	"strings"
 )
 
-// escapeRepl is the JSON escape each reserved character becomes.
 var escapeRepl = map[rune]string{
 	'"':  `\"`,
 	'\\': `\\`,
@@ -17,10 +16,8 @@ var escapeRepl = map[rune]string{
 	'\f': `\f`,
 }
 
-// escapeString renders one JSON string literal, quotes included.
-//
-// The writer is hand-rolled rather than encoding/json so it never HTML-escapes
-// `<`, `>` or `&` behind the caller's back.
+// escapeString renders one JSON string literal, quotes included. The writer is
+// hand-rolled rather than encoding/json so it never HTML-escapes `<`, `>` or `&`.
 func escapeString(text string) string {
 	var out strings.Builder
 	out.Grow(len(text) + 2)
@@ -40,7 +37,6 @@ func escapeString(text string) string {
 	return out.String()
 }
 
-// JSONStrings renders an array of strings.
 func JSONStrings(items []string) string {
 	var out strings.Builder
 	out.WriteByte('[')
@@ -54,30 +50,23 @@ func JSONStrings(items []string) string {
 	return out.String()
 }
 
-// Field is one ordered field of a JSON object.
 type Field struct {
 	name  string
 	value string
 }
 
-// Str makes a string field.
 func Str(name, value string) Field { return Field{name: name, value: escapeString(value)} }
 
-// Int makes an integer field.
 func Int(name string, value int64) Field {
 	return Field{name: name, value: strconv.FormatInt(value, 10)}
 }
 
-// Bool makes a boolean field.
 func Bool(name string, value bool) Field { return Field{name: name, value: JSONBool(value)} }
 
-// Raw makes a field whose value is already rendered JSON.
 func Raw(name, value string) Field { return Field{name: name, value: value} }
 
-// Object renders fields as one JSON object, preserving their order.
-//
-// The field order is part of every JSON contract, so the builder never sorts
-// or otherwise rearranges what the caller supplied.
+// Object renders fields as one JSON object, preserving their order: the field
+// order is part of every JSON contract.
 func Object(fields ...Field) string {
 	var out strings.Builder
 	out.WriteByte('{')
@@ -93,7 +82,6 @@ func Object(fields ...Field) string {
 	return out.String()
 }
 
-// JSONBool renders a JSON boolean.
 func JSONBool(value bool) string {
 	if value {
 		return "true"

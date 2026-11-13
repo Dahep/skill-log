@@ -27,8 +27,7 @@ func resolveVerb() Verb {
 			"skill-log resolve --id 42 --fix a1b2c3d --dry-run",
 			"skill-log resolve --id 42 --fix a1b2c3d --json",
 		},
-		// The flags that consume the next argument: the dispatcher reads this
-		// to tell `--fix -h` from a help request.
+		// The dispatcher reads this to tell `--fix -h` from a help request.
 		ValueFlags: resolveFlags(&resolveOptions{}).names(),
 		Notes: "The commit is the squash merge's hash, and the time is now —\n" +
 			"run it after the merge, not when the fix is authored. This is\n" +
@@ -79,8 +78,7 @@ func parseResolveOptions(args []string) (resolveOptions, error) {
 		return options, usageError{"--fix needs a commit"}
 	}
 	// A commit is one line: a value carrying a newline would split the
-	// diagnostic that names it, and the store's own line-shaped contract has
-	// no room for it.
+	// diagnostic that names it.
 	if format.Sanitize(fix) != fix {
 		return options, usageError{"--fix takes one line: a commit or a ref"}
 	}

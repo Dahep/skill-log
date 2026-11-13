@@ -10,13 +10,11 @@ const (
 	ExitUsage = 2
 )
 
-// Failure describes one CLI failure.
 type Failure struct {
 	Message string
 	Code    int
 }
 
-// Outcome contains the result of running a handler.
 type Outcome struct {
 	Text    string
 	Notes   string
@@ -25,35 +23,28 @@ type Outcome struct {
 	Failure Failure
 }
 
-// OK returns a successful outcome.
 func OK(text string) Outcome { return Outcome{Text: text} }
 
-// OKNotes returns a successful outcome with stderr notes.
 func OKNotes(text, notes string) Outcome {
 	return Outcome{Text: text, Notes: notes}
 }
 
-// Fail returns a failed outcome.
 func Fail(message string, code int) Outcome {
 	return Outcome{Failed: true, Failure: Failure{Message: message, Code: code}}
 }
 
-// FailNotes returns a failed outcome with stderr notes.
 func FailNotes(message string, code int, notes string) Outcome {
 	outcome := Fail(message, code)
 	outcome.Notes = notes
 	return outcome
 }
 
-// UsageError returns a usage failure.
 func UsageError(usage string) Outcome {
 	return Outcome{Failed: true, Failure: Failure{Message: "usage", Code: ExitUsage}, Usage: usage}
 }
 
-// Handler runs one verb and returns its outcome.
 type Handler func(args []string) Outcome
 
-// Verb describes one command.
 type Verb struct {
 	Name       string
 	Summary    string
@@ -65,7 +56,6 @@ type Verb struct {
 	Handle     Handler
 }
 
-// TakesValue reports whether arg is a value-taking flag.
 func (v Verb) TakesValue(arg string) bool {
 	for _, flag := range v.ValueFlags {
 		if flag == arg {

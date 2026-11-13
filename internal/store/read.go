@@ -9,10 +9,8 @@ import (
 	"github.com/Dahep/skill-log/internal/marker"
 )
 
-// Invocation is one invocation row and its problems.
-//
-// The column order is the schema's, and it is also the order JSON exposes:
-// one flat object whose fields a reader can take without a guess.
+// Invocation is one invocation row and its problems. The column order is the
+// schema's, and it is also the order JSON exposes.
 type Invocation struct {
 	ID         int64
 	TS         string
@@ -31,10 +29,8 @@ type Invocation struct {
 	Problems   []string
 }
 
-// Marker is the row's marker: `machine#id`.
-//
-// A row that has not been written has no id yet, so it has no marker either:
-// the --dry-run preview must not claim a row that does not exist.
+// Marker is the row's marker: `machine#id`. A row that has not been written has
+// no id yet, so it has no marker either.
 func (i Invocation) Marker() string {
 	if i.ID == 0 {
 		return ""
@@ -42,9 +38,8 @@ func (i Invocation) Marker() string {
 	return marker.Format(i.Machine, i.ID)
 }
 
-// Filters is what one read of the store selects. An empty string means the
-// filter is not given; Run names a run rather than a column, and matches the
-// session, the T3 thread or the parent.
+// Filters is what one read of the store selects. An empty string means the filter
+// is not given; Run matches the session, the T3 thread or the parent.
 type Filters struct {
 	Skill      string
 	Machine    string
@@ -87,10 +82,8 @@ func filterClause(filters Filters) (string, []any) {
 	return " WHERE " + strings.Join(clauses, " AND "), marks
 }
 
-// ReadInvocation reads one invocation row and its problems.
-//
-// A store with no tables yet is an empty log: the id it is asked for cannot
-// exist, so the answer is no row and no error.
+// ReadInvocation reads one invocation row and its problems. A store with no tables
+// yet is an empty log: the id cannot exist, so the answer is no row.
 func (s *Store) ReadInvocation(id int64) (*Invocation, error) {
 	if empty, err := s.isEmptyLog(); err != nil || empty {
 		return nil, err
@@ -111,11 +104,8 @@ func (s *Store) ReadInvocation(id int64) (*Invocation, error) {
 	return invocation, nil
 }
 
-// isEmptyLog reports whether the store carries no tables at all.
-//
-// A file that is a SQLite database but not a skill-log store is an empty
-// log, not a foreign one: the rows the caller asked for cannot exist in
-// it, and the empty answer is the honest one.
+// isEmptyLog reports whether the store carries no tables at all. A file that is a
+// SQLite database but not a skill-log store is an empty log, not a foreign one.
 func (s *Store) isEmptyLog() (bool, error) {
 	has, err := s.hasTables()
 	if err != nil {
@@ -124,12 +114,8 @@ func (s *Store) isEmptyLog() (bool, error) {
 	return !has, nil
 }
 
-// Rows reads the invocation rows the filters select, newest first.
-//
-// The ordering is `datetime(ts) DESC, id DESC`: datetime() normalizes each
-// row's ISO stamp (rows carry their writer's own UTC offset) so the rows sort
-// by when the run happened, not by when it was written. A limit of zero means
-// every matching row.
+// Rows reads the invocation rows the filters select, newest first. The ordering
+// is `datetime(ts) DESC, id DESC`. A limit of zero means every row.
 func (s *Store) Rows(filters Filters) ([]Invocation, error) {
 	if empty, err := s.isEmptyLog(); err != nil || empty {
 		return nil, err
@@ -164,7 +150,6 @@ func (s *Store) Rows(filters Filters) ([]Invocation, error) {
 	return out, rows.Err()
 }
 
-// scanner is the shape *sql.Row and *sql.Rows share.
 type scanner interface {
 	Scan(dest ...any) error
 }
@@ -206,10 +191,8 @@ func (s *Store) problemsFor(id int64) ([]string, error) {
 	return problems, rows.Err()
 }
 
-// GroupCount is one line of the stats table: a group's key and its four
-// counts. WithProblems counts invocations with at least one problem, and
-// Problems counts problem rows: a run with two findings is one run and two
-// problems.
+// GroupCount is one line of the stats table: a group's key and its four counts.
+// WithProblems counts invocations, Problems counts problem rows.
 type GroupCount struct {
 	Key          string
 	Invocations  int64
@@ -218,14 +201,12 @@ type GroupCount struct {
 	Resolved     int64
 }
 
-// GroupColumns is the columns a count may be grouped by, default first.
 func GroupColumns() []string {
 	return []string{"skill", "harness", "model", "repo", "worktree", "machine", "project"}
 }
 
-// IsGroupColumn reports whether name is one of the columns stats may group
-// by. The one allow-list: no caller can put a column name into SQL text
-// without having been through this check.
+// IsGroupColumn reports whether name is one of the columns stats may group by: the
+// one allow-list, so no caller can put a column name into SQL text unchecked.
 func IsGroupColumn(name string) bool {
 	for _, column := range GroupColumns() {
 		if column == name {
@@ -236,11 +217,7 @@ func IsGroupColumn(name string) bool {
 }
 
 // GroupCounts counts the invocations and problems per value of column.
-//
-// COUNT(DISTINCT i.id) is the denominator and the only honest count: the LEFT
-// JOIN produces one line per problem, so COUNT(*) would count problems. The
-// join rather than a sub-query keeps a run with no problems visible, with
-// zeroes.
+// COUNT(DISTINCT i.id) is the only honest count: the LEFT JOIN repeats rows.
 func (s *Store) GroupCounts(column, skill string) ([]GroupCount, error) {
 	if !IsGroupColumn(column) {
 		return nil, errNotGroupable(column)

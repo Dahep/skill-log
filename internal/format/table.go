@@ -6,18 +6,14 @@ import (
 	"unicode/utf8"
 )
 
-// Column describes one table column and the cells it renders.
-//
-// Under returns the sub-lines emitted immediately after the row's line. They
-// are not padded as table cells: they belong to the row but have their own
-// layout.
+// Column describes one table column and the cells it renders. Under returns the
+// sub-lines emitted after the row's line: they are not padded as table cells.
 type Column[T any] struct {
 	Name  string
 	Cell  func(T) string
 	Under func(T) []string
 }
 
-// JoinLines joins the lines with newlines and no trailing newline.
 func JoinLines(lines []string) string {
 	return strings.Join(lines, "\n")
 }
@@ -33,7 +29,6 @@ func homePrefix() string {
 	return home + "/"
 }
 
-// ShortenHome replaces the reader's home directory with `~`.
 func ShortenHome(path string) string {
 	home := homePrefix()
 	if home == "" {
@@ -45,11 +40,8 @@ func ShortenHome(path string) string {
 	return path
 }
 
-// TableLines renders one table's header and rows.
-//
-// Columns are padded to their widest value, separated by two spaces, and
-// trailing spaces are removed from every row. The last column is not padded,
-// so the right edge stays exactly where its content ends.
+// TableLines renders one table's header and rows. Columns are padded to their
+// widest value, separated by two spaces, and trailing spaces are removed.
 func TableLines[T any](columns []Column[T], rows []T) []string {
 	widths := make([]int, len(columns))
 	for i, column := range columns {
