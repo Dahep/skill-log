@@ -4,12 +4,8 @@ A local log of agent-skill invocations: one row per run, plus the problems
 that cost it, so friction can be counted, attributed to a skill, and closed by
 a specific change.
 
-**Status:** the Go implementation is complete and every suite passes, including
-the parity gate. The specification is [SPEC.md](SPEC.md); the decisions behind
-it are in [docs/adr/](docs/adr/), and the vocabulary in [CONTEXT.md](CONTEXT.md).
-The Python implementation it replaces is archived verbatim in
-[`reference/`](reference/README.md): that tree is the parity ground truth for
-the port, not the shipped tool.
+The specification is [SPEC.md](SPEC.md); the decisions behind it are in
+[docs/adr/](docs/adr/), and the vocabulary in [CONTEXT.md](CONTEXT.md).
 
 ## What it is
 
@@ -123,19 +119,14 @@ copy.
 
 - [SPEC.md](SPEC.md) — the specification: behavior, store, commands, reports,
   resolution, skills, distribution, testing.
-- [ADR-0001](docs/adr/0001-mojo-binary-and-sqlite.md) — why a Mojo binary and a
-  vendored SQLite binding (superseded by ADR-0004).
+- [ADR-0001](docs/adr/0001-go-binary-and-sqlite.md) — why a Go binary and a
+  pure-Go SQLite driver.
 - [ADR-0002](docs/adr/0002-explicit-harness-context.md) — explicit harness
   context, adapters, `report`, one store per machine.
 - [ADR-0003](docs/adr/0003-module-map.md) — the module map behind the CLI.
-- [ADR-0004](docs/adr/0004-go-binary-and-pure-go-sqlite.md) — why a Go binary
-  and a pure-Go SQLite driver.
 - [CONTEXT.md](CONTEXT.md) — vocabulary: what the terms mean.
 - [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) — the modules the binary
   includes, and their licences.
-- [Issue #1](https://github.com/Dahep/skill-log/issues/1) and
-  [issue #3](https://github.com/Dahep/skill-log/issues/3) — the historical
-  contracts this specification replaces.
 
 ## License
 

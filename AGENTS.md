@@ -40,8 +40,6 @@ lives in `CONTEXT.md`; design decisions in `docs/adr/`.
   `assets`. `format` owns the shared ordered JSON object and table builders;
   `template` owns template resolution, seeded-from state and binary-path
   resolution.
-  `reference/` is the verbatim report-era Python implementation, kept as the
-  parity ground truth: it is never built, never staged and never shipped.
 
 ## Agent skills
 
