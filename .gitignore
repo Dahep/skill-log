@@ -1,0 +1,6 @@
+# Build output
+/dist/
+/build/
+
+# Release packaging staging area (scripts/package.sh)
+/.package-stage/

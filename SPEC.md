@@ -1,9 +1,8 @@
 # skill-log — specification
 
 **Status:** normative, 1.0. This file is the single source of truth for what
-skill-log does. It replaces the contract that lived in issues #1 and #3, both
-of which are closed as historical records. How the documents divide, and how
-each changes, is defined in `AGENTS.md` §Specification.
+skill-log does. How the documents divide, and how each changes, is defined in
+`AGENTS.md` §Specification.
 
 | Document | Answers |
 |---|---|
@@ -61,7 +60,10 @@ The product is one loop, and every command is a step in it:
   contracts, not APIs.
 - A marker is `machine#id`. The machine is required because ids are per store.
 - A marker naming another machine is **foreign**: reported, never stamped.
-  There is no owner lookup and no cross-machine resolution in 1.0.
+  There is no owner lookup and no cross-machine resolution in 1.0. The rows a
+  store holds do not change that: only this host's own spelling stamps. The one
+  exception is a stored row with an empty `machine` column — written before
+  `add` always filled it — and that row belongs to the machine reading it.
 - Reports carry machine names and local ids only — never problem text or
   project details.
 - Newest marker wins. A row whose timestamp is after the named commit is
@@ -75,7 +77,9 @@ The product is one loop, and every command is a step in it:
   fence is user-owned and is never read, matched, rewritten or deleted.
 - The post-merge hook never changes a pull's exit status.
 - Exit codes: `0` success or nothing to do, `1` operational failure, `2` usage.
-  Exactly one stderr line per failure, no tracebacks. JSON goes to stdout only.
+  Each failure carries exactly one diagnostic line; a validating verb may add its
+  findings as `skill-log: `-prefixed lines. No tracebacks. JSON goes to stdout
+  only.
 
 `CONTEXT.md` defines the terms these rules use. Read it before adding a
 command, a column or a report field.
@@ -109,7 +113,7 @@ whole-attempt retry budget for writes.
 
 All text columns are `NOT NULL DEFAULT ''`. Empty means "unknown or not
 applicable", so the SQL layer has no NULL semantics and every JSON field keeps
-one type.
+one type — except the preview's `id`, which is null.
 
 `problems` is keyed `(invocation_id, ordinal)`, carries one sentence of
 friction per row, and cascades with its invocation. Problems are separate rows
@@ -121,18 +125,15 @@ normalized instant for comparison. `resolve-merged` compares a row's instant
 against the named commit's time; comparing the offset strings instead would
 mis-stamp across offsets.
 
-`origin_id` and the unique `(machine, origin_id)` index do not exist in 1.0.
-They existed to make multi-machine merging idempotent, and merging left scope
-(see [ADR-0002](docs/adr/0002-explicit-harness-context.md)).
-
 ### Creation, refusal and reads
 
 - The first write creates the state directory and the file.
 - An existing file that is not this schema is refused by name: "not a
   skill-log store", "an older skill-log store", or "a newer skill-log store".
   There is no half-migration and no column convergence.
-- A corrupt file is named as damaged. A read never reports "no invocations
-  logged yet" over a file it could not read.
+- A corrupt file is named as damaged. A store another writer is holding is
+  named as locked. A read never reports "no invocations logged yet" over a file
+  it could not read.
 - Reads create nothing. An absent store is not an error on every verb; see the
   policies below.
 
@@ -146,13 +147,21 @@ older or newer store means.
 | `add`, `setup` | create | create it |
 | `show`, `stats` | read | the empty message, exit 0 |
 | `report` | strict | refusal, exit 1, no file written |
+| `report --check` | syntax | the report is still checked, exit 0 when it is well formed |
 | `resolve` | write | refusal, exit 1 |
 | `resolve-merged` | optional | nothing to do, exit 0 |
 | `setup --check` | verify | drift, exit 1 |
 
+`report --check` is the one exception to the strict policy: it validates the
+branch's existing report and needs no store. A fresh clone or a CI job has no
+store and must still check the file, so the syntax check stands alone — a
+marker this store does not own is a warning, not a failure.
+
 The store classifies and returns a typed refusal. The CLI boundary renders the
 one-line message and maps the exit code; no handler inspects a SQLite error or
-a store's absence on its own.
+a store's absence on its own. The store classifies a SQLite failure the same
+way: damage is damage, a lock is a lock, and anything else is the generic
+operational failure.
 
 ### Location and overrides
 
@@ -267,10 +276,11 @@ stable JSON lines for pipes. Policy `read`.
 - Filters: `--skill`, `--machine`, `--harness`, `--repo`, `--run`,
   `--unresolved`, `--last`. `--run` matches a row's `session`, `t3_thread` or
   `parent`.
-- A malformed argument exits 2 and lists the valid choices: an unknown
-  `--unresolved` value, a non-numeric `--last`. A well-formed identifier that
-  no row carries (`--skill`, `--machine`, `--harness`, `--repo`, `--run`) is
-  valid and yields no rows, exit 0 — never a usage error.
+- A malformed argument exits 2 and names what is wrong: a non-numeric
+  `--last`, which reports the 1..500 range it accepts. `--unresolved` is a
+  switch and takes no value. A well-formed identifier that no row carries
+  (`--skill`, `--machine`, `--harness`, `--repo`, `--run`) is valid and yields
+  no rows, exit 0 — never a usage error.
 - The table indents sanitized problems under their invocation and shortens the
   worktree under the home directory.
 - An absent or empty store prints the empty message and exits 0; the JSON
@@ -282,6 +292,9 @@ The denominator and the friction rate. Policy `read`.
 
 - Counts are distinct invocations, invocations with problems, problems and
   resolved, plus problems per invocation.
+- `--skill <name>` narrows the whole cut to one skill: the counts, the rate and
+  the grouped rows all describe that skill alone. It is a filter, not a
+  grouping key — `--by` picks what the rows are grouped by.
 - `--by` accepts `skill` (default), `harness`, `model`, `repo`, `worktree`,
   `machine` and `project`. An unknown key exits 2 and lists them.
   `--by-model` remains as an alias for `--by model`.
@@ -300,10 +313,10 @@ Write the committed report listing the rows a change resolves. Policy
   overridable with `--slug`, written atomically.
 - Ids are validated against the store; unknown ids are named. Already-resolved
   rows are skipped and reported.
-- New markers are unioned with the file's current contents. Existing lines are
-  preserved byte-for-byte, including a marker naming another machine: the tool
-  never adds a foreign marker, and never removes one a previous report carried.
-  Problem text and project details never appear.
+- New markers are unioned with the file's current contents. No existing marker
+  is removed — including one naming another machine, which the tool never adds
+  and never drops. The file is rewritten as one marker per line, sorted;
+  problem text and project details never appear.
 - `--check` validates an existing report without writing. `--dry-run` writes
   nothing. `--json` carries the path and the markers.
 - Re-running over an unchanged report prints that it is already reported.
@@ -432,21 +445,24 @@ part of the contract; no verb adds or drops keys between runs.
 **The invocation object** is emitted by `add` and `show`, and by either with
 `--dry-run`. Its keys are `id`, `ts`, `skill`, `harness`, `session`, `parent`,
 `model`, `repo`, `worktree`, `project`, `t3_thread`, `machine`, `fix`,
-`resolved_at`, `marker`, `problems` (an array of strings).
+`resolved_at`, `marker`, `problems` (an array of strings). A `--dry-run`
+preview carries `id: null` and an empty `marker`: the row does not exist yet, so
+it has no id and no marker.
 
 | Verb | Shape |
 |---|---|
 | `add` | one invocation object |
 | `show` | one invocation object per row |
 | `stats` | `invocations`, `with_problems`, `problems`, `resolved`, `problems_per_invocation`, plus the grouping column named by `--by` |
-| `report` | `path`, `markers` |
-| `resolve` | `id`, `skill`, `fix`, `resolved_at` |
+| `report` | `path`, `markers`, `already_resolved` (markers), `already_reported`, `dry_run`, `trailer` |
+| `report --check` | `path`, `markers`, `problems`, `warnings` |
+| `resolve` | `id`, `marker`, `skill`, `fix`, `resolved_at`, `changed`, `dry_run` |
 | `resolve-merged` | `resolved` (markers), `unchanged` (markers), `skipped` (objects of `row` and `reason`), `ignored` (hidden and malformed marker text), `dry_run` |
 | `setup` | one object per artifact examined: `artifact` (`store`, `hook`, `report_dir`, `skills`), `status` (`created`, `updated`, `unchanged`, `drift`, `skipped`), `detail` |
 | `skills audit` | one object per skill: `skill`, `path`, `state` |
 | `skills adopt` | one object per skill: `skill`, `path`, `state`, `action` (`appended`, `rewritten`, `unchanged`, `refused`, `skipped`) |
 | `skills template show` | `templates`: one object per template — `name`, `source`, `content`, `template_hash`, `content_hash`, `moved` |
-| `skills template seed`, `reset` | `path`, `action` |
+| `skills template seed`, `reset` | `path`, `action` (`seeded`, `would_seed`, `refused`, `deleted`, `would_delete`, `absent`) |
 
 `resolve-merged` skip reasons are exactly `unknown_id`, `foreign` and
 `logged_after_commit`.
@@ -496,7 +512,7 @@ never touches a user copy: the state directory records the hash of the shipped
 default each copy was seeded from, and `audit` and `setup --check` name it and
 print the two commands that adopt it (`skills template seed --force`, then
 `skills adopt`). Only a human runs that, and only to discard their own wording.
-The binary carries no list of historical defaults.
+The binary carries no list of previous defaults.
 
 ### The fence
 
@@ -529,6 +545,11 @@ Unfenced text is user-owned and is not classified at all: the tool never reads,
 matches, rewrites or deletes it. A skill that has usage-log text but no fence
 is `missing`, and adoption appends a fenced block; reconciling the old section
 is a human task.
+
+The vendor stamp is a frontmatter `metadata:` block carrying a `source:` key.
+Such a skill is skipped entirely: its wording belongs to its upstream, not to
+this tool. The stamp is recognised by its shape, not by a YAML parser — a
+`source:` key at the start of a line inside a frontmatter `metadata:` block.
 
 ### Bundled skills
 
@@ -571,58 +592,62 @@ session decides how the log gets read. Neither changes the other's contract.
 
 ## 8. Distribution and build
 
-- **Language**: Mojo 1.2, toolchain pinned as a mise tool (`pypi:mojo@1.2.0`),
-  locked in `mise.toml`.
-- **Storage**: SQLite through `ehsanmok/sqlite` v0.2.2 (MIT), vendored as
-  `vendor/sqlite/ffi.mojo` + `db.mojo` with the upstream commit and license
-  recorded. No ORM layer, no `morph`, no live dependency. Upgrades are a
-  deliberate copy-forward.
+- **Language**: Go. The module is `github.com/Dahep/skill-log`; the
+  toolchain is pinned as a mise tool and locked in `mise.toml`. The module
+  targets the Go version named in `go.mod`.
+- **Storage**: SQLite through `modernc.org/sqlite`, a pure-Go driver. No cgo,
+  no C toolchain, no vendored copy and no live dependency: the module
+  versions are pinned in `go.mod` and `go.sum`, and an upgrade is a
+  deliberate `go get`.
+- **The SQLite implementation is compiled into the binary.** There is no
+  system SQLite to find, no library to bundle and no loader path to get
+  wrong. The tool's SQL stays inside the ordinary SQLite subset the driver
+  implements: where a row's stamp is turned into epoch seconds it is
+  `strftime('%s', ...)`, which SQLite 3.37 has, rather than `unixepoch()`,
+  which 3.38 added.
 - **Artifact**: one release archive, installable with mise's `github:` backend:
 
   ```
   skill-log-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz
-  ├── skill-log            # patchelf --set-rpath '$ORIGIN/lib'
-  └── lib/
-      ├── libKGENCompilerRTShared.so
-      ├── libMSupportGlobals.so
-      ├── libAsyncRTRuntimeGlobals.so
-      └── libsqlite3.so.0
+  ├── skill-log              # one statically linked executable
+  ├── LICENSE                # this project's MIT licence
+  ├── THIRD-PARTY-NOTICES.md # notices of everything linked into the binary
+  └── NOTICE-LICENSES/       # the licence texts those notices point at
   ```
 
+  The executable is built with `CGO_ENABLED=0`, so it carries no dynamic
+  dependency at all: no `lib/` directory, no rpath and no runtime libraries.
+  The archive holds the binary and the licence and notice files, and
+  nothing else — never the tests or the source tree.
+
 - **Versioning**: semantic versioning, release tag `vX.Y.Z`; `--version` is
-  baked in at build time from the tag.
-- **Platform**: `x86_64-unknown-linux-gnu` only for 1.0. glibc floor is the
-  release runner's; no musl or static build is possible through `mojo build`.
-- The bundled `libsqlite3.so.0` is built or fetched against the release
-  runner's glibc, never taken from a development machine. It must resolve
-  through the executable's `$ORIGIN` rpath with no toolchain, no
-  `$CONDA_PREFIX` and no system SQLite ([spike #4](https://github.com/Dahep/skill-log/issues/4)).
-  If it does not, the vendored binding carries an `$ORIGIN`-relative probe and
-  [ADR-0001](docs/adr/0001-mojo-binary-and-sqlite.md) is amended.
-- The binary must load the bundled copy, and must translate a load failure into
-  one named stderr line and exit 1 — never a Mojo traceback.
-- **Release workflow**: tag-triggered; install the pinned toolchain, `mojo
-  build -I vendor`, `patchelf`, `tar czf`, sha256, create the release, upload,
-  attach a provenance attestation.
+  baked in at build time from the tag with
+  `-ldflags "-X github.com/Dahep/skill-log/internal/cli.version=$VERSION"`.
+  The build takes the version from `SKILL_LOG_VERSION`, else
+  `git describe --tags`, else `0.0.0-dev`; it is never written into the
+  checkout.
+- **Platform**: `x86_64-unknown-linux-gnu` only for 1.0. The artifact is
+  static, so it carries no glibc floor from a bundled library; the Go
+  runtime's own requirements are the only floor.
+- The binary must run on a machine with no Go toolchain and no system
+  SQLite, and must translate any storage failure into one named stderr line
+  and exit 1 — never a Go panic or stack trace.
+- **Release workflow**: tag-triggered; install the pinned toolchain, build
+  with `CGO_ENABLED=0 go build`, `tar czf`, sha256, create the release,
+  upload, attach a provenance attestation.
 - **Deliverables**: the binary, the two bundled skills, and a short operator
   guide. Consumer integration instructions are documentation, not code.
-- **Hand-written infrastructure** (the ecosystem does not provide it):
-  subcommand dispatch; local dates through libc `localtime_r`/`strftime`;
-  process execution with an exit status through `fork`/`exec`/`wait` via FFI;
-  the JSON writer (the tool writes JSON and never parses it); marker and
-  report parsing. [ADR-0001](docs/adr/0001-mojo-binary-and-sqlite.md) records
+- **Hand-written infrastructure**: subcommand dispatch; the help renderer;
+  the JSON writer; marker and report parsing; the resolution plan. The clock,
+  the hostname, the process runner and the SQLite driver are standard-library
+  or module calls. [ADR-0001](docs/adr/0001-go-binary-and-sqlite.md) records
   why.
 
 ### Migration
 
-- The Python implementation stays the reference until the Mojo binary passes
-  the parity harness (§9).
-- The store is not inherited: 1.0 creates its own on first write. Moving a
-  machine's existing rows is a machine-setup task
-  ([Dahep/dotfiles#225](https://github.com/Dahep/dotfiles/issues/225)), not a
-  conversion.
-- Rollback is `mise uninstall skill-log` plus the old checkout; the store is
-  untouched throughout.
+- The store is created on first write, never inherited or converted. Moving a
+  machine's existing rows is a machine-setup task, not a conversion.
+- Rollback is `mise uninstall skill-log`; the store is untouched.
 
 ## 9. Testing
 
@@ -638,6 +663,11 @@ session decides how the log gets read. Neither changes the other's contract.
 - **Write contention** is exercised with a real second process holding a write
   lock, not another injection variable. The bounded retry budget is what the
   case asserts.
+- **The artifact is self-contained.** The build is `CGO_ENABLED=0 go build`,
+  so the executable links no SQLite library and no other shared object: there
+  is no system SQLite to be found and no bundled copy to be the right one.
+  The write, read and resolve paths all run against the driver compiled into
+  the binary, so a query the release cannot answer fails the gate.
 - **Coverage that the contract names**: the store matrix (absent, empty,
   damaged, foreign, older, newer) per verb; an adapter off by default;
   flag-over-adapter precedence; repo and worktree inside, outside and across
@@ -648,10 +678,9 @@ session decides how the log gets read. Neither changes the other's contract.
   in the hook; a time guard across differing writer offsets.
 - **Packaging test**: install the release archive into a clean container with
   no toolchain and no system SQLite, run `--version` and `setup --dry-run`,
-  and assert the bundled SQLite is the one loaded.
-- **Parity gate**: the reference implementation's harness cases run against
-  the installed binary, with the intentionally changed commands adapted and
-  case names kept comparable, plus the cases the new contract needs.
+  and assert the artifact is statically linked — the loader has no dynamic
+  dependency to resolve, so there is no bundled copy that could be the wrong
+  one.
 - A good test fails when observable behavior changes and passes for any
   internal structure that preserves the contract. No assertions on private
   functions, no timing sleeps except where the contract is second-granular.

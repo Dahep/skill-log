@@ -1,0 +1,205 @@
+#!/usr/bin/env bash
+
+PASS=0
+FAIL=0
+
+pass() {
+    PASS=$((PASS + 1))
+    printf 'ok   %s\n' "$1"
+}
+
+fail() {
+    FAIL=$((FAIL + 1))
+    printf 'FAIL %s\n' "$1"
+}
+
+# check <name> <actual> <expected>
+check() {
+    if [ "$2" = "$3" ]; then
+        pass "$1"
+    else
+        fail "$1 (expected '$3', got '$2')"
+    fi
+}
+
+# check_contains <name> <actual> <needle>
+check_contains() {
+    case "$2" in
+        *"$3"*) pass "$1" ;;
+        *) fail "$1 (expected to contain '$3', got '$2')" ;;
+    esac
+}
+
+# check_absent <name> <actual> <needle>
+check_absent() {
+    case "$2" in
+        *"$3"*) fail "$1 (expected not to contain '$3', got '$2')" ;;
+        *) pass "$1" ;;
+    esac
+}
+
+# check_one_line <name> <text>
+check_one_line() {
+    if [ "$(printf '%s\n' "$2" | grep -c .)" = "1" ]; then
+        pass "$1"
+    else
+        fail "$1 (expected one line, got: $2)"
+    fi
+}
+
+require_tools() {
+    local tool
+    for tool in "$@"; do
+        if ! command -v "$tool" >/dev/null 2>&1; then
+            printf '%s: %s is required\n' "$0" "$tool" >&2
+            exit 1
+        fi
+    done
+}
+
+# sandbox_root <root> <binary>...
+sandbox_root() {
+    local root="$1"
+    shift
+    rm -rf "$root"
+    mkdir -p "$root/usr/bin" "$root/etc" "$root/dev" "$root/proc" \
+        "$root/pkg" "$root/tmp"
+    chmod 1777 "$root" "$root/tmp"
+
+    local binary name
+    for binary in "$@"; do
+        name="$(basename "$binary")"
+        cp -a "$binary" "$root/pkg/$name"
+    done
+}
+
+# sandbox_run <root> <scratch-home> <args...>
+sandbox_run() {
+    local root="$1" home="$2"
+    shift 2
+    bwrap --ro-bind "$root" / --bind /dev /dev --proc /proc --unshare-all \
+        --bind "$home" /tmp --die-with-parent \
+        --setenv HOME /tmp --setenv PATH /usr/bin:/bin \
+        --setenv XDG_STATE_HOME /tmp/.local/state \
+        --setenv XDG_CONFIG_HOME /tmp/.config \
+        --unsetenv SKILL_LOG_DB \
+        "$@"
+}
+
+json_field() {
+    printf '%s' "$1" | python3 -c '
+import json, sys
+key = sys.argv[1]
+try:
+    value = json.loads(sys.stdin.read()).get(key, "")
+except Exception:
+    value = ""
+print("" if value is None else value)
+' "$2"
+}
+
+# json_problem <json>: the first problem, as text.
+json_problem() {
+    printf '%s' "$1" | python3 -c '
+import json, sys
+try:
+    problems = json.loads(sys.stdin.read()).get("problems") or []
+except Exception:
+    problems = []
+print(problems[0] if problems else "")
+'
+}
+
+json_array() {
+    printf '%s' "$1" | python3 -c '
+import json, sys
+key = sys.argv[1]
+try:
+    value = json.loads(sys.stdin.read()).get(key) or []
+except Exception:
+    value = []
+print(",".join(str(item) for item in value))
+' "$2"
+}
+
+json_number() {
+    printf '%s' "$1" | python3 -c '
+import json, sys
+key = sys.argv[1]
+try:
+    value = json.loads(sys.stdin.read()).get(key)
+except Exception:
+    value = None
+print("" if value is None else "%g" % value)
+' "$2"
+}
+
+# json_keys <json>: the object's keys, sorted, space-separated.
+json_keys() {
+    printf '%s' "$1" | python3 -c '
+import json, sys
+print(" ".join(sorted(json.loads(sys.stdin.read()).keys())))
+'
+}
+
+hold_lock() {
+    python3 - "$1" "$2" "$3" <<'PY'
+import sqlite3
+import sys
+import time
+
+db = sqlite3.connect(sys.argv[1], timeout=30)
+db.execute("BEGIN IMMEDIATE")
+db.execute(
+    "INSERT INTO invocations (ts, skill, machine) VALUES (?, ?, ?)",
+    ("2026-01-01T00:00:00+00:00", "lock-holder", "boxA"),
+)
+with open(sys.argv[2], "w", encoding="utf-8") as handle:
+    handle.write("ready")
+time.sleep(float(sys.argv[3]))
+db.rollback()
+db.close()
+PY
+}
+
+hold_lock_until() {
+    python3 - "$1" "$2" "$3" <<'PY'
+import os
+import sqlite3
+import sys
+import time
+
+db = sqlite3.connect(sys.argv[1], timeout=30)
+db.execute("BEGIN IMMEDIATE")
+db.execute(
+    "INSERT INTO invocations (ts, skill, machine) VALUES (?, ?, ?)",
+    ("2026-01-01T00:00:00+00:00", "lock-holder", "boxA"),
+)
+with open(sys.argv[2], "w", encoding="utf-8") as handle:
+    handle.write("ready")
+deadline = time.time() + 60
+while not os.path.exists(sys.argv[3]) and time.time() < deadline:
+    time.sleep(0.05)
+db.rollback()
+db.close()
+PY
+}
+
+wait_for() {
+    local n=0
+    while [ ! -f "$1" ] && [ "$n" -lt 300 ]; do
+        sleep 0.1
+        n=$((n + 1))
+    done
+    if [ ! -f "$1" ]; then
+        fail "$1 never arrived: the case cannot proceed"
+        return 1
+    fi
+    return 0
+}
+
+# tally: the report line and the suite's exit status.
+tally() {
+    printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
+    [ "$FAIL" -eq 0 ]
+}

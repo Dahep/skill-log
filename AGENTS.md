@@ -14,6 +14,33 @@ lives in `CONTEXT.md`; design decisions in `docs/adr/`.
 - Issues carry work items: acceptance criteria and blockers. They may cite
   `SPEC.md`; they may not restate it.
 
+## Build and test
+
+- `scripts/build.sh` — the release-shaped artifact: `dist/skill-log`, one
+  statically linked executable, the version baked in with `-ldflags -X`. The
+  build is `CGO_ENABLED=0 go build`, so it needs `mise` (the Go pin in
+  `mise.toml`) and nothing else: no C toolchain, no `patchelf`, and no
+  system SQLite, because the SQLite implementation is pure Go and lives
+  inside the executable.
+- `scripts/test.sh` — the suites under `tests/`, against `dist/`.
+  `--build` rebuilds first. Each suite also runs on its own.
+  `tests/packaging.sh` is the one suite the default gate leaves out: it needs
+  docker, so it runs on CI and on demand, not in the offline gate.
+- The suites are black-box: they run the binary as a process with a scratch
+  HOME and a scratch store. `tests/lib.sh` holds the shared assertions —
+  `check`, `check_contains`, `check_absent`, `check_one_line`, `tally`, and
+  the JSON readers. Assert on what a case can actually distinguish: a `like
+  '%a%b%'` check passes across a newline, and a `sed` field reader mangles a
+  value the writer escapes, so both prove less than they look like they do.
+- `bwrap` (sandbox checks) and `script` (the terminal case) are optional; a
+  missing one prints a `skip` line rather than pretending it ran.
+- The source layout: `cmd/skill-log` is the entry point, `internal/cli` holds
+  the verbs, the dispatch and the help, and `internal/` holds `store`,
+  `settings`, `document`, `format`, `template`, `marker`, `process` and
+  `assets`. `format` owns the shared ordered JSON object and table builders;
+  `template` owns template resolution, seeded-from state and binary-path
+  resolution.
+
 ## Agent skills
 
 ### Issue tracker
