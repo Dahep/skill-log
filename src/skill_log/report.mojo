@@ -1,59 +1,4 @@
-"""The `report` verb: name the rows a change fixes.
-
-A change closes logged friction by committing a report that names the
-invocations it addresses. The report is the transport: a squash merge
-keeps tree content byte-for-byte, so a file in the tree survives the
-merge, while a commit message can be rebuilt by the forge.
-
-## Two modes, one switch
-
-- **Artifact mode** — the checkout carries `.skill-log/reports/` (ADR-0002
-  renamed it from `fixes/`; `setup` creates it). `report` unions the
-  selected markers into `.skill-log/reports/<slug>.md`, one marker per
-  line, replacing the file atomically. `<slug>` is the branch name,
-  lowercased and reduced to `[a-z0-9._-]`, or `--slug`.
-- **Trailer mode** — the checkout has no report directory. Nothing is
-  written: `report` prints the `Skill-log-Fix:` trailer to put in the
-  commit body, comma-separated, one line, ready to paste.
-
-`report` never creates the report directory. Its presence is the mode
-switch, and a command that created it would silently change which flow a
-repo uses.
-
-## Selection
-
-`--id` names local rows and is repeatable, `--run` matches a row's
-session, T3 thread or parent (one dispatched tree), and `--skill` names
-a skill. Selectors combine with AND. No selector at all is a usage error
-that carries an example.
-
-Every selected row is checked against this store: an `--id` the store
-does not have is a failure naming it, and a row that already carries a
-fix commit is skipped and reported on stderr instead of being written
-again.
-
-## What reaches the file
-
-Markers, and only markers. `machine#id` names a row from outside the
-store — the machine is required because ids are per store — and the file
-carries nothing else: no problem text, no project, no model. A new
-selection is unioned with what the file already holds, so a second call
-for the same change adds to the report instead of replacing it.
-
-Re-running over an unchanged report writes nothing and says it is
-already reported. Two `report` calls at the same instant are not
-serialized: each writes a complete file and the later rename wins, so a
-marker the earlier one added can be lost. Authoring one change is one
-person's step, so the file is replaced atomically but not locked.
-
-## Checking
-
-`--check` validates the branch's report without writing: a line that is
-not a marker is a problem (exit 1), and a marker this store does not own,
-or one already resolved, is a warning (exit 0) — the row may live on a
-machine this store has not seen. Without a store (a fresh clone, CI) the
-syntax is still checked.
-"""
+"""The `report` verb: name the rows a change fixes."""
 
 from std.pathlib import Path
 
@@ -125,14 +70,12 @@ comptime MAX_SLUG = 80
 
 
 def report_usage() -> String:
-    """The usage line, as `--help` shows it."""
     return "skill-log report (--id <n>... | --run <id> | --skill <name>)\n" \
            "                     [--slug <name>] [--check] [--dry-run]\n" \
            "                     [--json] [--db <path>]"
 
 
 def report_examples() -> List[String]:
-    """The verb's real invocations, as `--help` shows them."""
     var examples = List[String]()
     examples.append("skill-log report --id 42")
     examples.append("skill-log report --run ses_abc123")
@@ -142,11 +85,6 @@ def report_examples() -> List[String]:
 
 
 def report_value_flags() -> List[String]:
-    """The flags that consume the next argument.
-
-    The declaration lives here, beside the parser that reads them, and
-    the parser checks every flag it reads a value for against it.
-    """
     var flags = List[String]()
     flags.append("--id")
     flags.append("--run")
@@ -157,7 +95,6 @@ def report_value_flags() -> List[String]:
 
 
 def report_notes() -> String:
-    """The paragraph between the usage line and the examples."""
     return "The report is the transport: .skill-log/reports/<branch>.md,\n" \
            "one machine#id per line, committed with the change. Markers are\n" \
            "unioned with what the file already holds, and never carry problem\n" \

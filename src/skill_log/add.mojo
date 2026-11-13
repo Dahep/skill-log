@@ -1,36 +1,4 @@
 """The `add` verb: one invocation, its problems, and its marker.
-
-`skill-log add --skill <name> [--problem <text>]...` records one skill
-run and the friction it produced. A clean run still writes a row: the
-invocation count is the denominator of the problems-per-invocation rate.
-
-The write is one transaction — the invocation row, then one problem row
-per `--problem`, then the commit — so a failed write leaves nothing
-behind.
-
-`add` is deliberately not idempotent. The log records occurrences: a
-retry after a crashed run is indistinguishable from a genuine repeat,
-and deduping would hide the second occurrence of one error. Two identical
-calls therefore produce two rows, and the help says so.
-
-## The context the row carries
-
-ADR-0002 gives the row explicit harness context, and every field of it
-is resolved by the same chain, one field at a time:
-
-1. the explicit flag (`--repo`, `--model`, …)
-2. that field's `SKILL_LOG_*` variable
-3. an enabled adapter's value
-4. the built-in detection
-
-The chain is applied per field, not per row: `--repo` beats
-`SKILL_LOG_REPO` beats the git detection, while `--model` still lets
-the opencode adapter fill the session. A field nobody filled is
-empty, and empty means "unknown".
-
-The output is the row's marker, `machine#id`, on stdout. `--json` emits
-the whole row flat, and `--dry-run` prints the row it would write and
-writes nothing.
 """
 
 from skill_log.adapters import apply_adapters, enabled_adapters
@@ -85,9 +53,7 @@ struct Options(Movable):
 def add_value_flags() -> List[String]:
     """The flags that consume the next argument.
 
-    The declaration lives here, beside the parser that reads them, and
-    the parser checks every flag it reads a value for against it. The
-    dispatcher reads the same list to tell `--problem -h` (a problem
+    The dispatcher reads the same list to tell `--problem -h` (a problem
     spelled `-h`) from a help request.
     """
     var flags = List[String]()
@@ -114,10 +80,6 @@ def parse_options(args: List[String]) raises -> Options:
     repeatable and also accepts a comma-separated list. An unknown flag
     or a missing value is a usage error, raised as a `usage` marker the
     caller turns into exit 2: one line, no write.
-
-    A value is taken as written, whatever it looks like: `--problem -h`
-    is the problem text `-h`, and the dispatcher's help scan knows that
-    `--problem` consumes the next argument (`Verb.value_flags`).
     """
     var options = Options()
     var value_flags = add_value_flags()

@@ -1,30 +1,4 @@
-"""The `resolve` verb: the manual escape hatch.
-
-`resolve` stamps one local row with the commit that carries its fix and
-the time it was resolved. The normal path is `report` plus the post-merge
-hook (#15): the report names the rows, the merged commit carries it, and
-the hook stamps them. This verb is for the case the hook cannot cover —
-history that was rewritten, a report that landed before the hook existed,
-a row whose change shipped outside the report flow.
-
-## What it guarantees
-
-- The commit and the timestamp are written together, inside one
-  transaction, so a row is either fully resolved or untouched.
-- Repeating the same call changes nothing. The row already carries that
-  fix, so the stored resolution time stays the one the first call wrote;
-  a retry does not move history forward.
-- A different commit corrects the resolution, with a fresh timestamp:
-  re-resolving is how a wrong commit is put right.
-- `--dry-run` previews the same answer and writes nothing: it reads the
-  row through a read connection and the clock through the same store, so
-  the previewed timestamp is the one a real call would write.
-- An unknown id is named, and a store that is not there is a named
-  failure rather than a silent creation — this verb never makes a store.
-
-Output is the row's marker and the commit, because the marker is how the
-row is named from outside the store. `--json` carries the same facts flat.
-"""
+"""The `resolve` verb: the manual escape hatch."""
 
 from std.pathlib import Path
 
@@ -38,13 +12,11 @@ from skill_log.text import sanitize
 
 
 def resolve_usage() -> String:
-    """The usage line, as `--help` shows it."""
     return "skill-log resolve --id <n> --fix <commit> [--dry-run]\n" \
            "                      [--json] [--db <path>]"
 
 
 def resolve_examples() -> List[String]:
-    """The verb's real invocations, as `--help` shows them."""
     var examples = List[String]()
     examples.append("skill-log resolve --id 42 --fix a1b2c3d")
     examples.append("skill-log resolve --id 42 --fix a1b2c3d --dry-run")
@@ -53,11 +25,6 @@ def resolve_examples() -> List[String]:
 
 
 def resolve_value_flags() -> List[String]:
-    """The flags that consume the next argument.
-
-    The declaration lives here, beside the parser that reads them, and
-    the parser checks every flag it reads a value for against it.
-    """
     var flags = List[String]()
     flags.append("--id")
     flags.append("--fix")
@@ -66,7 +33,6 @@ def resolve_value_flags() -> List[String]:
 
 
 def resolve_notes() -> String:
-    """The paragraph between the usage line and the examples."""
     return "The commit is the squash merge's hash, and the time is now —\n" \
            "run it after the merge, not when the fix is authored. This is\n" \
            "the manual path: the post-merge hook resolves the rows a report\n" \

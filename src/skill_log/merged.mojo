@@ -1,47 +1,4 @@
-"""The `resolve-merged` verb: close the rows a pull landed.
-
-`report` writes the markers into the change; this verb reads them back
-from the commits a pull brought in and stamps each named row with the
-commit that carries its fix. It is the post-merge hook's entry point, so
-it is bounded, quiet, and safe to run after every pull.
-
-## Where the markers come from
-
-- **Artifact mode** — the checkout carries `.skill-log/reports/`. The
-  report files the scanned range added or changed are read from their
-  commits (the working tree may have moved on) and the newest commit
-  touching each file is that file's stamp. A commit-body trailer is
-  ignored and reported once, because the tree is the transport here.
-- **Trailer mode** — no report directory. The last trailer block of each
-  commit in the range is the report, exactly what `report` prints when a
-  checkout cannot carry a file.
-
-A commit whose body carries a marker the last-trailer-block rule did not
-return — a multi-author squash puts `Co-authored-by:` in a later block —
-is reported with its value instead of being dropped. A value that is not
-`machine#id` is reported the same way. Both kinds reach the `ignored`
-array of the `--json` answer, so a `--quiet --json` caller still learns
-what the scan did not act on.
-
-## The scan
-
-`--since` bounds the scan to what a pull landed; the hook passes the
-pre-merge reflog position. A revision git cannot resolve falls back to a
-quiet full scan, because a hook that fails on a missing reflog entry
-would resolve nothing. An option-shaped `--since` is a usage error: it
-would otherwise reach git as an option.
-
-Newest marker wins: the scan walks commits newest first and keeps the
-first marker it sees for a row, so an amended fix supersedes an earlier
-one in the same range. A row logged after the named commit is skipped
-with its reason (a rebuilt log can reuse ids). Resolution is idempotent:
-a second scan finds the rows already resolved and stamps nothing.
-
-A missing store is nothing to do, exit 0: the hook runs on machines that
-may never have logged a row. `--quiet` suppresses every note, `--dry-run`
-reports the same answer and writes nothing, and `--json` is one stable
-shape in every mode.
-"""
+"""The `resolve-merged` verb: close the rows a pull landed."""
 
 from std.pathlib import Path
 
@@ -77,13 +34,11 @@ comptime FIELD = "\u0000"
 
 
 def resolve_merged_usage() -> String:
-    """The usage line, as `--help` shows it."""
     return "skill-log resolve-merged [--since <rev>] [--quiet] [--dry-run]\n" \
            "                            [--json] [--db <path>]"
 
 
 def resolve_merged_examples() -> List[String]:
-    """The verb's real invocations, as `--help` shows them."""
     var examples = List[String]()
     examples.append("skill-log resolve-merged")
     examples.append("skill-log resolve-merged --since HEAD@{1} --quiet")
@@ -92,11 +47,6 @@ def resolve_merged_examples() -> List[String]:
 
 
 def resolve_merged_value_flags() -> List[String]:
-    """The flags that consume the next argument.
-
-    The declaration lives here, beside the parser that reads them, and
-    the parser checks every flag it reads a value for against it.
-    """
     var flags = List[String]()
     flags.append("--since")
     flags.append("--db")
@@ -104,7 +54,6 @@ def resolve_merged_value_flags() -> List[String]:
 
 
 def resolve_merged_notes() -> String:
-    """The paragraph between the usage line and the examples."""
     return "A checkout with .skill-log/reports/ resolves from the report files\n" \
            "the range added or changed; elsewhere the last trailer block of\n" \
            "each commit is the report. A later trailer block hides an\n" \

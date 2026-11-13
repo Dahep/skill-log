@@ -1,47 +1,4 @@
-"""The `stats` verb: the denominator and the friction rate.
-
-`skill-log stats` answers "which skills need attention": per group, how
-many invocations ran, how many of them produced friction, how many
-problems they carried, how many are resolved, and the rate between the
-last two counts. It is a read and nothing else — no store is created and
-no schema is changed.
-
-## The counts
-
-Every count is per group and distinct where it must be:
-
-- **invocations** — `COUNT(DISTINCT i.id)`. The problems LEFT JOIN
-  produces one line per problem, so `COUNT(*)` would count problems and
-  turn the denominator into the numerator. This is the only honest
-  denominator.
-- **with_problems** — invocations with at least one problem. It counts
-  runs, not findings: a run with two findings is still one run that
-  needed attention.
-- **problems** — problem rows, the numerator of the rate.
-- **resolved** — invocations carrying a fix commit.
-- **problems/invocation** — problems per invocation, to two decimals.
-  Computed in integer arithmetic, so the table and the JSON say the same
-  number on every platform.
-
-## The cut
-
-`--by` picks the column the counts are grouped by: `skill` (the default),
-`harness`, `model`, `repo`, `worktree`, `machine` or `project`. An
-unknown key is a usage error that lists the valid ones — a typo must not
-silently report a different cut. `--by-model` is kept as an alias for
-`--by model`, the rotation view.
-
-`--skill` narrows the whole cut to one skill, which is how a reader asks
-"how has this skill's friction moved across models/hosts/repos".
-
-## Empty and refused
-
-A store that does not exist, or one with no rows (or no rows for the
-named skill), prints the empty message and exits 0; `--json` prints
-nothing, so an empty stream stays parseable. A damaged, foreign, older or
-newer store is the store layer's refusal: one named stderr line, exit 1,
-nothing written.
-"""
+"""The `stats` verb: the denominator and the friction rate."""
 
 from skill_log.errors import EXIT_FAILURE, EXIT_USAGE, Outcome
 from skill_log.flags import take_declared_value
@@ -62,13 +19,11 @@ from skill_log.text import sanitize
 
 
 def stats_usage() -> String:
-    """The usage line, as `--help` shows it."""
     return "skill-log stats [--by <column>] [--skill <name>]\n" \
            "                    [--json] [--db <path>]"
 
 
 def stats_examples() -> List[String]:
-    """The verb's real invocations, as `--help` shows them."""
     var examples = List[String]()
     examples.append("skill-log stats")
     examples.append("skill-log stats --by model")
@@ -78,11 +33,6 @@ def stats_examples() -> List[String]:
 
 
 def stats_value_flags() -> List[String]:
-    """The flags that consume the next argument.
-
-    The declaration lives here, beside the parser that reads them, and
-    the parser checks every flag it reads a value for against it.
-    """
     var flags = List[String]()
     flags.append("--by")
     flags.append("--skill")
@@ -91,7 +41,6 @@ def stats_value_flags() -> List[String]:
 
 
 def stats_notes() -> String:
-    """The paragraph between the usage line and the examples."""
     return "Counts are distinct invocations, runs with at least one problem,\n" \
            "problem rows, and resolved runs; problems/invocation is the rate\n" \
            "between the last two, to two decimals.\n" \
@@ -108,7 +57,6 @@ def stats_notes() -> String:
 
 
 def by_usage() -> String:
-    """The one line that says what `--by` accepts, valid keys included."""
     return "--by takes one of " + ", ".join(group_columns())
 
 
@@ -212,7 +160,6 @@ def empty_message(skill: String) -> String:
 
 
 def table_headers(column: String) -> List[String]:
-    """The stats table's columns: the cut, then the four counts and a rate."""
     var headers = List[String]()
     headers.append(column)
     headers.append("invocations")

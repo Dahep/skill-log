@@ -1,57 +1,4 @@
-"""The `show` verb: read the log back.
-
-`skill-log show` prints the recorded invocations, newest first, with
-their problems. It is the read half of the tool: it never writes, and a
-read of a machine leaves that machine exactly as it found it.
-
-## What it selects
-
-The filters are the columns a reader slices by, plus two that name a
-run rather than a field:
-
-- `--skill`, `--machine`, `--harness`, `--repo` — exact matches.
-- `--run <id>` — matches a row's `session`, its `t3_thread` or its
-  `parent` (ADR-0002 §6). A run is named three ways, and the filter
-  accepts all of them.
-- `--unresolved` — the rows no commit has stamped yet.
-- `--last N` — how many rows, newest first. The default is 20 and the
-  range is 1..500.
-
-The order is `datetime(ts) DESC, id DESC`: `datetime()` normalizes each
-row's stamp (rows carry their writer's own UTC offset), so rows sort by
-when the run happened rather than by when it was written. The id breaks a
-tie, so the order is total and stable.
-
-## What it prints
-
-Two shapes, one flag apart:
-
-- The table, for a person. A header row, one line per invocation, and
-  each problem indented under the invocation it belongs to. Every field
-  is sanitized the way the store sanitizes it, and the worktree is
-  shortened under the home directory to `~/...`.
-- `--json`, one flat object per row, for a pipe. Every column is flat,
-  plus the marker and the problems array. An empty result prints
-  nothing at all, so the stream stays parseable.
-
-An absent or empty store is not an error: the table prints
-`no invocations logged yet` and the JSON stream prints nothing. Both
-exit 0. A filter that matches nothing says which filter it was, so an
-empty answer is never mistaken for an empty log.
-
-The reference's empty message knew two filters and phrased them
-differently (`no invocations from machine X`). This one knows five and
-phrases them the same way — `no invocations match --skill X and
---machine Y` — because a reader who gave three filters needs all three
-named, and one rule reads the same however many filters there are.
-
-A usage error is one named line and exit 2: the line says what is wrong
-with the call and what to write instead.
-
-A damaged, foreign, older or newer store is named once on stderr and
-exits 1. A read never creates the store, the state directory or an empty
-database.
-"""
+"""The `show` verb: read the log back."""
 
 from skill_log.errors import EXIT_FAILURE, EXIT_USAGE, Outcome
 from skill_log.flags import take_declared_value
@@ -78,22 +25,12 @@ comptime LAST_MAX = 500
 
 
 def show_usage() -> String:
-    """The usage line, as `--help` shows it.
-
-    The verb's own text lives here, with its handler, so the usage a
-    usage error prints and the usage `--help` prints are the same
-    text — one source, two readers.
-    """
     return "skill-log show [--skill <name>] [--machine <name>]\n" \
            "                   [--harness <name>] [--repo <name>] [--run <id>]\n" \
            "                   [--unresolved] [--last <n>] [--json] [--db <path>]"
 
 
 def show_examples() -> List[String]:
-    """The verb's real invocations, as `--help` shows them.
-
-    Two to four, every one of them a call that works.
-    """
     var examples = List[String]()
     examples.append("skill-log show")
     examples.append("skill-log show --skill diagnosing-bugs --last 5")
@@ -102,14 +39,6 @@ def show_examples() -> List[String]:
 
 
 def show_value_flags() -> List[String]:
-    """The flags that consume the next argument.
-
-    The declaration lives here, beside the parser that reads them, and
-    the parser checks every flag it reads a value for against it. The
-    dispatcher reads the same list to tell `--run -h` (a run named `-h`)
-    from a help request, the same way `add --problem -h` records the
-    text `-h`.
-    """
     var flags = List[String]()
     flags.append("--skill")
     flags.append("--machine")
@@ -122,11 +51,6 @@ def show_value_flags() -> List[String]:
 
 
 def show_notes() -> String:
-    """The paragraph between the usage line and the examples.
-
-    The things a caller has to know before running the verb: what the
-    order is, what `--run` matches, and that a read never writes.
-    """
     return "Rows come back newest first. The table indents each problem\n" \
            "under the invocation it belongs to, and shortens a worktree\n" \
            "under your home directory to ~/.\n" \
@@ -189,16 +113,6 @@ struct Options(Movable):
 
 
 def parse_last(text: String) raises -> Int:
-    """The `--last` value, as a count.
-
-    An integer from 1 to 500. Anything else — a non-number, a number
-    below one, a number above the cap — is a usage error, not a silently
-    clamped value: a caller who asked for 5000 rows and got 500 would
-    read the wrong log.
-
-    The error names the range, so the one line that reports it is also
-    the line that says what to write instead.
-    """
     if text == "":
         raise Error("usage: " + last_range_message())
     for c in text.codepoints():
@@ -218,11 +132,6 @@ def parse_last(text: String) raises -> Int:
 
 
 def last_range_message() -> String:
-    """The one line that says what `--last` accepts.
-
-    The range, in one phrase, so the reader never has to guess what
-    number the tool wanted.
-    """
     return "--last takes a number between 1 and 500"
 
 
