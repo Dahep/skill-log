@@ -153,7 +153,7 @@ type Resolved struct {
 // store for writing. Only a genuine change opens the write path.
 func ResolveRow(path string, id int64, fix string, dryRun bool) (Resolved, *Refusal, error) {
 	var result Resolved
-	opened, refusal, err := Read(path)
+	opened, refusal, err := openRead(path)
 	if err != nil || refusal != nil {
 		return result, refusal, err
 	}

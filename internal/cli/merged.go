@@ -648,7 +648,7 @@ func handleResolveMerged(args []string) Outcome {
 	if len(outcome.scan.located) > 0 {
 		path := settings.ResolveDB(options.db)
 		// The optional policy: an absent store is nothing to do, exit 0.
-		opened, _, failure := openStore(path, store.PolicyOptional, "")
+		opened, failure := openStore(path, false)
 		if failure != nil {
 			notes := mergedNotes(outcome, result, options.quiet)
 			return FailNotes(failure.Message, failure.Code, notes)

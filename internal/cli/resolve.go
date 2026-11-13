@@ -109,8 +109,10 @@ func handleResolve(args []string) Outcome {
 
 	path := settings.ResolveDB(options.db)
 	// resolve never makes a store: an absent one is a named failure.
-	opened, _, failure := openStore(path, store.PolicyWrite,
-		"no store at "+path+" (add a row first)")
+	opened, failure := openStore(path, false)
+	if failure == nil && opened == nil {
+		return Fail("no store at "+path+" (add a row first)", ExitFailure)
+	}
 	if failure != nil {
 		return Fail(failure.Message, failure.Code)
 	}

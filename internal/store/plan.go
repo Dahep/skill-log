@@ -152,7 +152,7 @@ func ResolveMergedRows(path string, located []Located, localHost string, dryRun 
 		// not create one.
 		return empty, nil, nil
 	}
-	opened, refusal, err := Read(path)
+	opened, refusal, err := openRead(path)
 	if err != nil || refusal != nil {
 		return empty, refusal, err
 	}

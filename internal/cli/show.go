@@ -208,7 +208,7 @@ func handleShow(args []string) Outcome {
 		Limit:      options.last,
 	}
 
-	opened, _, failure := openStore(path, store.PolicyRead, "")
+	opened, failure := openStore(path, false)
 	if failure != nil {
 		return Fail(failure.Message, failure.Code)
 	}

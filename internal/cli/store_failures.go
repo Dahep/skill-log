@@ -80,38 +80,20 @@ func writeOutcome(path string, refusal *store.Refusal, err error) *Failure {
 	return nil
 }
 
-// openStore opens the store at path under the policy, and turns the two
-// answers the caller must not forget into one failure.
-//
-// The cascade is the store's: open, refuse, absent. The caller says what an
-// absent store means in its own words — the verb's message — and this
-// helper says it, so no verb re-derives the cascade.
-//
-// The returned store is nil when the store is absent; the absent verdict
-// says what the policy made of it, and the caller decides whether that is
-// an empty answer, a refusal or nothing to do.
-func openStore(path string, policy store.Policy, absentMessage string) (*store.Store, store.Absent, *Failure) {
-	opened, absent, refusal, err := store.Open(path, policy)
+// openStore returns the store, or the failure to report. A nil store with
+// no failure means the file is absent; the verb decides what that means.
+func openStore(path string, create bool) (*store.Store, *Failure) {
+	opened, refusal, err := store.Open(path, create)
 	if err != nil {
 		failure := readFailure(path, err)
-		return nil, absent, &failure
+		if create {
+			failure = writeFailure(path, err)
+		}
+		return nil, &failure
 	}
 	if refusal != nil {
 		failure := refusalFailure(refusal)
-		return nil, absent, &failure
+		return nil, &failure
 	}
-	switch absent {
-	case store.AbsentEmpty:
-		return opened, absent, nil
-	case store.AbsentRefused:
-		failure := Failure{Message: absentMessage, Code: ExitFailure}
-		return nil, absent, &failure
-	case store.AbsentNothing:
-		return nil, absent, nil
-	case store.AbsentDrift:
-		return nil, absent, nil
-	default:
-		failure := Failure{Message: "cannot use the store: " + path, Code: ExitFailure}
-		return nil, absent, &failure
-	}
+	return opened, nil
 }

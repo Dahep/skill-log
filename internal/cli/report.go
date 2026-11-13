@@ -482,17 +482,19 @@ func checkOutcome(path, relative, storePath string, artifact, asJSON bool) Outco
 		return OK("no report file at " + relative)
 	}
 
-	opened, absent, failure := openStore(storePath, store.PolicySyntax, "")
+	opened, refusal, storeErr := store.Open(storePath, false)
 	storeWarning := ""
-	if failure != nil {
-		storeWarning = "store unavailable: " + failure.Message
-	} else if absent == store.AbsentEmpty && opened == nil {
+	switch {
+	case storeErr != nil:
+		storeWarning = "store unavailable: " + readFailure(storePath, storeErr).Message
+	case refusal != nil:
+		storeWarning = "store unavailable: " + refusalFailure(refusal).Message
+	case opened == nil:
 		storeWarning = "store unavailable: no store at " + storePath
 	}
-	haveStore := false
+	haveStore := opened != nil
 	if opened != nil {
 		defer opened.Close()
-		haveStore = true
 	}
 
 	text, err := format.ReadText(path)
@@ -585,15 +587,12 @@ func handleReport(args []string) Outcome {
 		return checkOutcome(path, relative, storePath, artifact, options.json)
 	}
 
-	opened, _, failure := openStore(storePath, store.PolicyStrict,
-		"no store at "+storePath+" (run add first)")
+	opened, failure := openStore(storePath, false)
 	if failure != nil {
 		return Fail(failure.Message, failure.Code)
 	}
 	if opened == nil {
-		return Fail(
-			"no store at "+storePath+" (run add first)", ExitFailure,
-		)
+		return Fail("no store at "+storePath+" (run add first)", ExitFailure)
 	}
 	defer opened.Close()
 

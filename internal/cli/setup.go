@@ -8,7 +8,6 @@ import (
 	"github.com/Dahep/skill-log/internal/document"
 	"github.com/Dahep/skill-log/internal/format"
 	"github.com/Dahep/skill-log/internal/settings"
-	"github.com/Dahep/skill-log/internal/store"
 	templatepkg "github.com/Dahep/skill-log/internal/template"
 )
 
@@ -298,18 +297,12 @@ func verdictJSON(v verdict) string {
 // SQLite here. A refused store is drift with the refusal's own named
 // message: setup creates a store and never migrates one.
 func storeVerdict(path string, check, dryRun bool) verdict {
-	// The verify policy first: it is the read that says whether the store
-	// is there at all, and whether it is one this tool may use. Nothing is
-	// created by it.
-	opened, absent, failure := openStore(path, store.PolicyVerify, "")
+	opened, failure := openStore(path, false)
 	if failure != nil {
 		return verdict{artifactStore, statusDrift, failure.Message}
 	}
 	if opened != nil {
 		opened.Close()
-	}
-	if absent != store.AbsentDrift {
-		// The store is there and is ours: setup changes nothing about it.
 		return verdict{artifactStore, statusUnchanged, path}
 	}
 	if check {
@@ -318,8 +311,7 @@ func storeVerdict(path string, check, dryRun bool) verdict {
 	if dryRun {
 		return verdict{artifactStore, statusCreated, path}
 	}
-	// The create policy: the store comes into being here, and only here.
-	opened, _, failure = openStore(path, store.PolicyCreate, "")
+	opened, failure = openStore(path, true)
 	if failure != nil {
 		return verdict{artifactStore, statusDrift, failure.Message}
 	}

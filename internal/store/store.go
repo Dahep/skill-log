@@ -304,20 +304,6 @@ func openWrite(path string) (*Store, *Refusal, error) {
 	return store, nil, nil
 }
 
-// verify is the store's verdict under the `verify` policy: absent, a named
-// refusal, or ok. Nothing is created and nothing is written.
-func verify(path string) (absent bool, refusal *Refusal, err error) {
-	opened, refusal, err := Read(path)
-	if err != nil || refusal != nil {
-		return false, refusal, err
-	}
-	if opened == nil {
-		return true, nil, nil
-	}
-	opened.Close()
-	return false, nil, nil
-}
-
 func (s *Store) isOurs() (bool, error) {
 	has, err := s.hasTables()
 	if err != nil || !has {

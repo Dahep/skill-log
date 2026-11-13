@@ -157,7 +157,7 @@ func handleStats(args []string) Outcome {
 	}
 	path := settings.ResolveDB(options.db)
 
-	opened, _, failure := openStore(path, store.PolicyRead, "")
+	opened, failure := openStore(path, false)
 	if failure != nil {
 		return Fail(failure.Message, failure.Code)
 	}
