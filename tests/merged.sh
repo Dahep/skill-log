@@ -406,7 +406,6 @@ check "resolved_at moves to the restamp" \
     "$([ "$(sqlite3 "$DB7" 'select resolved_at from invocations where id = 1')" \
         != "$RESOLVED_ONE" ] && echo moved || echo frozen)" "moved"
 
-# A same-commit row is unchanged; a re-scan of the newer range is idempotent.
 (
     cd "$REPO7" || exit 1
     "$BIN" resolve-merged --since "$OLDER_FIX" --db "$DB7" --json >"$SCRATCH/restamp3.json"

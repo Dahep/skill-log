@@ -139,7 +139,6 @@ rm -f "$REPO/.skill-log/reports/atomic.md.tmp"
 check "no temporary file is left behind" \
     "$(find "$REPO/.skill-log/reports" -name '*.tmp*' | wc -l | tr -d ' ')" "0"
 
-# A second selection unions into the file instead of replacing it.
 run report --id 2
 check "a second selection unions" "$OUT" "reported 2 markers in $REL"
 check "the file holds both markers, sorted" "$(cat "$REPORT")" \
@@ -156,7 +155,6 @@ check "an unchanged report is not rewritten" \
 run report --id 1 --id 2
 check "a repeated selection is already reported" "$STATUS" "0"
 
-# --run selects one dispatched tree: the session and the parent.
 run report --run ses_run --slug run-report
 check "--run selects the session and the parent" "$OUT" \
     "reported 2 markers in .skill-log/reports/run-report.md"
@@ -306,7 +304,6 @@ check "the check's json carries the problems" \
     "$(json_array "$OUT" problems)" \
     ".skill-log/reports/broken.md:1: not a marker (machine#id): not a marker"
 
-# A write over a malformed report refuses instead of deleting the line.
 printf 'not a marker\n' >"$REPO/.skill-log/reports/bad-write.md"
 BEFORE_SUM="$(md5sum <"$REPO/.skill-log/reports/bad-write.md")"
 run report --id 4 --slug bad-write

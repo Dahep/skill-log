@@ -261,7 +261,6 @@ OUT="$(HOME="$OC_HOME" OPENCODE_SESSION_ID=ses_test \
     "$BIN" add --skill adapters --dry-run --json --adapter opencode)"
 check "--adapter opencode enables the adapter" "$(json_field "$OUT" harness)" "opencode"
 
-# The flag takes a comma-separated list, and may be repeated.
 OUT="$(HOME="$OC_HOME" OPENCODE_SESSION_ID=ses_test \
     "$BIN" add --skill adapters --dry-run --json --adapter opencode,t3)"
 check "--adapter takes a comma-separated list" "$(json_field "$OUT" harness)" "opencode"
@@ -300,12 +299,10 @@ OUT="$(HOME="$OC_HOME" OPENCODE_SESSION_ID=ses_test SKILL_LOG_MODEL=env/model \
     "$BIN" add --skill adapters --dry-run --json --adapter opencode)"
 check "SKILL_LOG_MODEL beats the adapter" "$(json_field "$OUT" model)" "env/model"
 
-# The adapter never sets the parent.
 OUT="$(HOME="$OC_HOME" OPENCODE_SESSION_ID=ses_test SKILL_LOG_ADAPTERS=opencode \
     "$BIN" add --skill adapters --dry-run --json)"
 check "an adapter never sets the parent" "$(json_field "$OUT" parent)" ""
 
-# A missing session store is a blank model, not an error.
 OUT="$(HOME="$SCRATCH/no-store-home" OPENCODE_SESSION_ID=ses_test \
     SKILL_LOG_ADAPTERS=opencode \
     "$BIN" add --skill adapters --dry-run --json)"
@@ -313,7 +310,6 @@ check "a missing session store is a blank model" "$(json_field "$OUT" model)" ""
 check "a missing session store still fills the harness" \
     "$(json_field "$OUT" harness)" "opencode"
 
-# The t3 adapter fills the project from the worktree's path.
 T3_HOME="$SCRATCH/t3"
 mkdir -p "$T3_HOME/worktrees/myproject/sub"
 OUT="$(T3CODE_HOME="$T3_HOME" "$BIN" add --skill adapters --dry-run --json \
@@ -330,13 +326,11 @@ OUT="$(HOME="$FALLBACK_HOME" T3CODE_HOME="" \
 check "the t3 adapter falls back to HOME/.t3" \
     "$(json_field "$OUT" project)" "fallback"
 
-# Outside T3 there is no project.
 OUT="$(T3CODE_HOME="$T3_HOME" "$BIN" add --skill adapters --dry-run --json \
     --adapter t3 --worktree "$OUTSIDE")"
 check "the t3 adapter leaves the project empty outside T3" \
     "$(json_field "$OUT" project)" ""
 
-# An unknown adapter is ignored rather than fatal.
 run add --skill adapters --dry-run --json --adapter no-such-adapter
 check "an unknown adapter is ignored" "$STATUS" "0"
 

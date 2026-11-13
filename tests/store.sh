@@ -110,7 +110,6 @@ check "the problem text is one line after the write" \
     "$(sqlite3 "$DB" "select problem from problems where invocation_id = $NEWLINE_ID")" \
     "line one line two"
 
-# `add` is deliberately not idempotent: two identical calls, two rows.
 BEFORE="$(sqlite3 "$DB" 'select count(*) from invocations')"
 run add --skill duplicate
 run add --skill duplicate

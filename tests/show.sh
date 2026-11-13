@@ -172,7 +172,6 @@ check "the second problem is indented" \
 check_contains "the worktree under the home is shortened" "$OUT" "~/wt"
 check_contains "a worktree outside the home is untouched" "$OUT" "/elsewhere/beta"
 
-# A clean row carries no problem lines.
 check "a clean row has no problem lines" \
     "$(printf '%s\n' "$OUT" | grep -c '^    problem')" "2"
 
@@ -197,7 +196,6 @@ check "json carries the marker" \
 check "json carries no trailing blank line" \
     "$(printf '%s\n' "$OUT" | grep -c '^$')" "0"
 
-# Every line is a JSON object on its own: the stream is JSON lines.
 check "every json line is an object" \
     "$(printf '%s\n' "$OUT" | grep -c '^{.*}$')" "3"
 
@@ -227,7 +225,6 @@ run show --skill beta --json
 check "--skill and the other filters compose" \
     "$(printf '%s\n' "$OUT" | grep -c '"skill":"beta"')" "1"
 
-# A filter that matches nothing is not an error: it says so and exits 0.
 run show --skill nosuch
 check "a filter that matches nothing exits 0" "$STATUS" "0"
 check "a filter that matches nothing says so" \
@@ -303,7 +300,6 @@ run show --json
 check "the stamp beats the id" \
     "$(printf '%s\n' "$OUT" | head -n1 | grep -o '"id":[0-9]*')" '"id":2'
 
-# Two rows of the same instant: the id breaks the tie, newest id first.
 sqlite3 "$DB" "UPDATE invocations SET ts = '2026-01-01T12:00:00+00:00' WHERE id = 3"
 run show --json
 check "a tie breaks by id, newest first" \
@@ -515,7 +511,6 @@ check_contains "the too-small --last lists the valid choices" "$ERR" "1 and 500"
 run show --last 501
 check_contains "the too-large --last lists the valid choices" "$ERR" "1 and 500"
 
-# A usage error keeps stdout empty: the answer belongs on stderr.
 run show --last abc
 check "a usage error keeps stdout empty" "$OUT" ""
 

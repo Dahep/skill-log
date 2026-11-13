@@ -256,7 +256,6 @@ check "a hook the owner cannot execute: the verdict is updated" \
 run setup --repo "$TMP/r1" --check
 check "check: the repaired owner-executable hook is green" "$STATUS" "0"
 
-# drift: the report directory is missing.
 run setup --repo "$TMP/r1"
 rm -rf "$TMP/r1/.skill-log"
 run setup --repo "$TMP/r1" --check
@@ -936,7 +935,6 @@ check_contains "a moved default: --json names it" \
     "$(printf '%s\n' "$OUT" | python3 -c 'import json,sys; print(next(o["detail"] for o in [json.loads(l) for l in sys.stdin if l.strip()] if o["artifact"] == "skills"))')" \
     "the shipped default moved"
 
-# The record is restored, so the check is green again.
 rm -f "$SEEDED_DIR/usage-log.md"
 run setup --repo "$TMP/r1" --skills-dir "$DIR4" --check --db "$TMP/skills4-store.db"
 check "without the record: --check is green again" "$STATUS" "0"

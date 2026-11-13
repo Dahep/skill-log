@@ -112,7 +112,7 @@ version="${version%-x86_64-unknown-linux-gnu.tar.gz}"
 # ------------------------------------------------------- the packed shape
 #
 # Exactly the executable and its four libraries. Nothing from the tree
-# the build read (§8) is shipped, and the listing check proves it.
+# the build read is shipped, and the listing check proves it.
 
 listing="$(tar -tzf "$ARCHIVE" | sort)"
 expected="$(printf '%s\n' \
@@ -159,7 +159,7 @@ INNER="$SCRATCH/inner.sh"
 cat >"$INNER" <<'INNER'
 #!/usr/bin/env bash
 # The in-container half of the packaging test. Sourced harness, plain
-# environment: this image has no toolchain and no system SQLite.
+# environment.
 set -uo pipefail
 
 # shellcheck disable=SC1091
@@ -211,7 +211,7 @@ check "loader: resolves libsqlite3.so.0 from the archive's lib/" \
 # ------------------------------------------------------ setup --dry-run
 #
 # A scratch repo. With git in the image the hook and report directory
-# show created; without git they are the SPEC's named skip.
+# show created; without git they are the named skip.
 
 mkdir -p "$REPO/skills"
 if command -v git >/dev/null 2>&1; then

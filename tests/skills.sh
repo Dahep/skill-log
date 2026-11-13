@@ -69,12 +69,10 @@ count_examples() {
 #
 # The rendered block is shell source: the agent copies the command line
 # out of it and runs it. So a skill name or a binary path that carries
-# shell metacharacters must be quoted, or the block hands the reader a
-# command nobody meant to write.
+# shell metacharacters must be quoted.
 #
-# The name below is `alpha; touch <marker>`: run the rendered line and
-# the marker appears. With the name quoted, it does not — and the line
-# still runs the binary.
+# The name below is `alpha; touch <marker>`: run the rendered line and the
+# marker appears. With the name quoted, it does not.
 HOSTILE="$SCRATCH/hostile"
 rm -rf "$HOSTILE"
 mkdir -p "$HOSTILE/skill"
@@ -229,9 +227,8 @@ check "seed --dry-run writes nothing" \
 run skills template seed --force
 check "seed --force restores the copy" "$STATUS" "0"
 
-# The JSON shape of seed and reset (SPEC §5.10): one object per
-# template, with `path` and `action`. The action vocabulary is fixed
-# here, so a caller reads a value and never matches prose.
+# The JSON shape of seed and reset: one object per template, with `path`
+# and `action`.
 run skills template reset --force
 check "reset --force clears the copies for the JSON case" "$STATUS" "0"
 run skills template seed --json
@@ -317,9 +314,8 @@ run skills template show --json
 check "a moved default is reported in JSON" \
     "$(printf '%s' "$OUT" | python3 -c 'import json,sys; t=json.loads(sys.stdin.read())["templates"][0]; print(t["moved"])')" "True"
 
-# SPEC §7: `audit` names a moved shipped default too, with the two
-# commands that adopt it. The name is the failure's one stderr line
-# (SPEC §2: exactly one stderr line per failure), and the exit code
+# `audit` names a moved shipped default too, with the two commands that
+# adopt it. The name is the failure's one stderr line, and the exit code
 # says the directory is not conformant.
 AUDITDIR="$SCRATCH/audit-moved"
 rm -rf "$AUDITDIR"
@@ -379,7 +375,6 @@ check "after reset the source is shipped again" \
 
 # ------------------------------------------------------- template dir
 
-# A --template-dir wins over the user directory and the shipped default.
 mkdir -p "$SCRATCH/custom"
 printf 'custom usage-log for <name> via <command> add\n' > "$SCRATCH/custom/usage-log.md"
 printf 'review for <command>\n' > "$SCRATCH/custom/skill-friction-review.md"
@@ -398,7 +393,6 @@ unset SKILL_LOG_TEMPLATE_DIR
 
 # -------------------------------------------- placeholder validation
 
-# A usage-log template missing <name> is refused by name.
 mkdir -p "$SCRATCH/broken"
 printf 'run <command> add\n' > "$SCRATCH/broken/usage-log.md"
 run skills template show --template-dir "$SCRATCH/broken"
@@ -406,14 +400,12 @@ check "a template missing <name> is refused" "$STATUS" "1"
 check_contains "the refusal names <name>" "$ERR" \
     "skill-log: usage-log.md has no <name> placeholder"
 
-# A usage-log template missing the <command> add invocation is refused.
 printf 'for <name> only\n' > "$SCRATCH/broken/usage-log.md"
 run skills template show --template-dir "$SCRATCH/broken"
 check "a template missing <command> add is refused" "$STATUS" "1"
 check_contains "the refusal names <command> add" "$ERR" \
     "skill-log: usage-log.md has no <command> add invocation"
 
-# The review template needs <command>.
 printf 'review with no command\n' > "$SCRATCH/broken/skill-friction-review.md"
 printf 'for <name> via <command> add\n' > "$SCRATCH/broken/usage-log.md"
 run skills template show --template-dir "$SCRATCH/broken"
@@ -423,16 +415,13 @@ check_contains "the refusal names the review's <command>" "$ERR" \
 
 # ------------------------------------------------- a quoted placeholder
 #
-# The rendered block is shell source: the agent copies the command line
-# out of it and runs it. The tool quotes a placeholder's value for that
-# reason — but the tool's own quoting is single quotes, and a template
-# that puts the placeholder inside its own double quotes would nest the
-# two: "--skill "'demo'"", which a shell still expands. A name carrying
-# "$(touch …)" would then run.
+# The rendered block is shell source, so the tool quotes a placeholder's
+# value — but the tool's own quoting is single quotes, and a template that
+# puts the placeholder inside its own double quotes would nest the two,
+# which a shell still expands.
 #
 # So a template that puts a placeholder next to a quote character is
-# refused by name. The refusal says which placeholder and why, because
-# the template is the user's own text and the fix is theirs to make.
+# refused by name.
 mkdir -p "$SCRATCH/quoted"
 printf '    <command> add --skill "<name>"\n' > "$SCRATCH/quoted/usage-log.md"
 run skills template show --template-dir "$SCRATCH/quoted"
@@ -502,19 +491,16 @@ else
     pass "the quoted override did not run the injected command"
 fi
 
-# The resolved binary the block names: the tool resolves its own path,
-# so the suite computes the same answer independently. The current
-# render embeds it, so the fixtures need it too.
+# The resolved binary the block names: the tool resolves its own path, so
+# the suite computes the same answer independently.
 EXPECTED_CMD="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$BIN")"
 
 # ------------------------------------------------------- the fixtures
 
-# Build the five state fixtures. The current render is what `ok` matches:
-# the shipped usage-log template rendered for that skill's own name and
-# the resolved binary path. The stale block is an older render of the
-# same template (older wording). The edited block is a current render
-# with its content changed after the fence hash was written. The
-# vendored skill carries the vendor stamp.
+# Build the five state fixtures. The current render is what `ok` matches.
+# The stale block is an older render of the same template. The edited
+# block is a current render with its content changed after the fence hash
+# was written.
 SKILLS="$SCRATCH/skills"
 rm -rf "$SKILLS"
 for s in ok missing stale edited vendored; do
@@ -522,18 +508,15 @@ for s in ok missing stale edited vendored; do
     printf 'name: %s\n' "$s" > "$SKILLS/$s/SKILL.md"
 done
 
-# The current render, through the CLI's own template. The audit renders
-# with name "skill" and command "skill-log"; a block built the same way is
-# `ok`. The suite reads the template source from `skills template show
-# --json` and replicates the render (same substitution, same FNV-1a hash)
-# to build a fixture without hardcoding a hash.
+# The current render, through the CLI's own template. The suite reads the
+# template source from `skills template show --json` and replicates the
+# render (same substitution, same FNV-1a hash) to build a fixture without
+# hardcoding a hash.
 TEMPLATE_JSON="$("$BIN" skills template show --json)"
 USAGE_TEMPLATE="$(printf '%s' "$TEMPLATE_JSON" | python3 -c 'import json,sys; print(json.loads(sys.stdin.read())["templates"][0]["content"])')"
 
-# Render a block the way the audit does: substitute <name> and
-# <command>, then compute the fence the CLI writes. The suite
-# replicates the render to build a fixture without hardcoding a hash —
-# the hash comes from the same bytes the CLI hashes.
+# Render a block the way the audit does: substitute <name> and <command>,
+# then compute the fence the CLI writes.
 # The template is passed as argv[3] because the heredoc owns stdin.
 render_block() {
     python3 - "$1" "$2" "$3" <<'PY'
@@ -630,16 +613,11 @@ cat "$SCRATCH/block.txt" >> "$SKILLS/ok/SKILL.md"
 #
 # The fixtures above are built by the suite's own render, and the audit
 # compares the tool's render against them byte for byte. So the mirror
-# has to be the tool's render, not a lookalike: if the two disagree,
-# the comparison can agree with a wrong answer.
+# has to be the tool's render, not a lookalike.
 #
 # The one way they used to disagree: the mirror substituted `<name>` and
 # then `<command>`, in two passes. A name carrying a literal `<command>`
 # token therefore had the second pass run over the first pass's result.
-# The tool substitutes in one pass, so a value is never re-read.
-#
-# The case: a skill whose name carries the token. The tool's own render
-# and the mirror's must be the same bytes.
 TOKEN_NAME='skill<command>evil'
 TOKEN_DIR="$SCRATCH/token-name"
 rm -rf "$TOKEN_DIR"
@@ -684,8 +662,7 @@ sed -i 's/silent write/quiet write/' "$SKILLS/edited/SKILL.md"
 cat "$SCRATCH/block_stale.txt" >> "$SKILLS/vendored/SKILL.md"
 
 # missing, with stale unfenced usage-log text nearby — which the tool must
-# never read or touch. `missing` is the state even though the text is
-# there, and the text survives the audit untouched.
+# never read or touch.
 UNFENCED='## Usage log
 
 this is old unfenced usage-log text that must never be matched or rewritten'
@@ -738,7 +715,6 @@ printf 'name: ok\n' > "$CLEAN/ok/SKILL.md.bak"
 run skills audit --dir "$CLEAN"
 check "a clean directory exits 0" "$STATUS" "0"
 
-# An empty directory (no SKILL.md subdirectories) is refused.
 EMPTY="$SCRATCH/empty"
 rm -rf "$EMPTY"
 mkdir -p "$EMPTY"
@@ -758,7 +734,6 @@ check "the audit does not create a state directory" \
 check "the audit does not change a skill file" \
     "$(md5sum < "$SKILLS/edited/SKILL.md")" "$AFTER_BEFORE"
 
-# --dry-run is accepted and changes nothing.
 run skills audit --dir "$SKILLS" --dry-run
 check "audit --dry-run is accepted" "$STATUS" "1"
 check "the audit still writes nothing with --dry-run" \
@@ -768,15 +743,12 @@ check "the audit still writes nothing with --dry-run" \
 
 # adopt writes: it appends a block where there is none, rewrites a stale
 # one, rewrites an edited one only with --force, skips vendored skills
-# and leaves an ok one alone. The five fixtures from the audit section
-# are still pristine (the audit is read-only); their originals are kept
-# so byte-exactness can be proved by removing the fence block again.
+# and leaves an ok one alone. Their originals are kept so byte-exactness
+# can be proved by removing the fence block again.
 cp -r "$SKILLS" "$SCRATCH/skills.orig"
 
 # strip_block <file>: the file with its fenced usage-log block removed —
-# every byte outside the fence, in order. Comparing it with the
-# pre-adopt original is the byte-exactness proof: nothing outside the
-# fence changed.
+# every byte outside the fence, in order.
 strip_block() {
     python3 - "$1" <<'PY'
 import sys
@@ -881,7 +853,6 @@ check "the rewrite changed no byte outside the fence" \
 check_contains "the rewritten block carries the current render" \
     "$(cat "$SKILLS/stale/SKILL.md")" "add --skill 'stale'"
 
-# edited: left untouched without --force, rewritten with it.
 check "the edited skill is untouched without --force" \
     "$(md5sum < "$SKILLS/edited/SKILL.md")" \
     "$(md5sum < "$SCRATCH/skills.orig/edited/SKILL.md")"
@@ -924,9 +895,8 @@ check "a second adopt reports only unchanged and skipped" \
 # ------------------------------------------------ a moved binary is stale
 #
 # The block names the resolved binary path. When the binary moves, the
-# current render names a different path, so the block is an older
-# render: `stale`, and `adopt` rewrites it (SPEC §7: `ok` requires the
-# content to match the current render).
+# current render names a different path, so the block is an older render:
+# `stale`, and `adopt` rewrites it.
 MOVEDBIN="$SCRATCH/moved-bin"
 rm -rf "$MOVEDBIN"
 mkdir -p "$MOVEDBIN"
@@ -940,7 +910,6 @@ rm -rf "$MOVE"
 mkdir -p "$MOVE/beta"
 printf 'name: beta\n' > "$MOVE/beta/SKILL.md"
 
-# The block is written by the moved binary, so it names the moved path.
 "$MOVEDBIN/skill-log" skills adopt --dir "$MOVE" >/dev/null
 check "the moved binary writes the block" \
     "$(grep -c '^<!-- skill-log:usage-log' "$MOVE/beta/SKILL.md")" "1"
@@ -1016,8 +985,7 @@ check "the refusal names the directory" "$ERR" \
 # ------------------------------- a moved user template makes blocks stale
 
 # The block was written from the shipped default; a user copy that
-# differs is the current render, so the block is an older one — stale —
-# and adopt rewrites it from the user copy.
+# differs is the current render, so the block is an older one — stale.
 run skills template seed
 check "seed writes a user copy for the adopt fixtures" "$STATUS" "0"
 MOVED="$SCRATCH/moved"

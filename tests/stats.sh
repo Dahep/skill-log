@@ -197,8 +197,7 @@ check "the empty project groups the run without one" \
     "$(printf '%s\n' "$OUT" | grep -c '"project":""')" "1"
 
 # The worktree cut prints a shortened path in the table, while the JSON
-# keeps the path whole; the empty key keeps its column empty rather than
-# shifting the row left.
+# keeps the path whole.
 run stats --by worktree --json
 check "the worktree cut keeps the path whole in json" \
     "$(printf '%s\n' "$OUT" | grep -c "\"worktree\":\"$HOME_DIR/wt\"")" "1"
@@ -281,8 +280,7 @@ check "stats names a newer store with both versions" \
 
 STATE_DIR="$HOME_DIR/.local/state/skill-log"
 # A reader may leave SQLite's own -wal/-shm sidecars behind (it needs
-# them to read a WAL store); the store file itself is the invariant, and
-# it is asserted byte-identical above.
+# them to read a WAL store); the store file itself is the invariant.
 files_besides_sidecars() {
     find "$STATE_DIR" -maxdepth 1 -mindepth 1 -printf '%f\n' \
         | grep -vE '^skills[.]db-(wal|shm)$' | sort | tr '\n' ' ' || true

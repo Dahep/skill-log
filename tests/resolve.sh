@@ -217,7 +217,6 @@ check "a help flag after a value still asks for help" "$STATUS" "0"
 check "the help block is the verb's usage" \
     "$(printf '%s\n' "$OUT" | grep -c '^usage:$')" "1"
 
-# An existing but table-less store is an empty log: the id is unknown.
 : >"$SCRATCH/tableless.db"
 run resolve --id 1 --fix abc --db "$SCRATCH/tableless.db"
 check "a table-less store names the unknown id" "$STATUS" "1"
