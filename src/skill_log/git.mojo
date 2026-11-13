@@ -1,25 +1,4 @@
-"""The one git seam.
-
-Every git call the tool makes goes through here. Two modules used to
-each have their own wrapper — `detect.mojo`'s `run_git` and
-`merged.mojo`'s `git_output`/`git_commit` — and they differed only in
-whether they trimmed stdout. One seam now, with the trimming as an
-explicit part of the answer rather than a difference between two
-functions.
-
-The command is built from constants and shell-quoted values, and
-stderr is redirected to `/dev/null`, so a repository without an origin
-remote, a range git cannot read, or a directory that is not a checkout
-all stay quiet: the answer is an empty string, not noise.
-
-`std.subprocess.run` cannot report an exit status — it returns the
-process's stdout and raises only when the process could not be started
-at all. So `GitResult.status` is -1 whenever the status is unknown, and
-a caller that needs to know whether git succeeded must decide what an
-unknown status means. Nothing in the tool does: every caller wants the
-output, and an empty output is the answer for "not a repository" as
-well as for "git could not answer".
-"""
+"""One seam for every git command the tool runs."""
 
 from std.subprocess import run
 

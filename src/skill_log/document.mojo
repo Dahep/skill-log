@@ -1,45 +1,4 @@
-"""The document: the fenced usage-log block, parsed and classified.
-
-The block the tool adopts into a skill is delimited and self-describing:
-
-    <!-- skill-log:usage-log template=<hash> hash=<hash> -->
-    ## Usage log
-    ...
-    <!-- /skill-log:usage-log -->
-
-`template` is the hash of the template source that rendered the block;
-`hash` is the hash of the block's content. The fence is the only
-provenance there is. Everything outside it is user-owned: the tool never
-reads, matches, rewrites or deletes a byte outside the fence — not even
-with `--force`. A skill that has usage-log text but no fence is
-`missing`; reconciling the old section is a human task.
-
-This module answers the five questions the fence makes distinguishable,
-and keeps them distinct (ADR-0003):
-
-1. **Is there a block at all?** `parse` splits the text into
-   `before · block · after`. No fence means no block.
-2. **Was the block edited by hand?** The fence's `hash` is the hash the
-   block's content had when the tool wrote it. Recompute it: a mismatch
-   means a human edited inside the fence (`edited`).
-3. **Did the template move since the block was written?** The fence's
-   `template` hash is the hash of the template source that rendered it.
-   The current template's own hash is compared (`stale` vs `ok`).
-4. **Is the content the current render?** The current render is the
-   template rendered for *this* skill's name and the resolved binary
-   path, so its content hash is compared too. A block that names another
-   skill or another binary is an older render (`stale`).
-5. **Is the skill vendored?** A vendor stamp means skip entirely
-   (`vendored`).
-
-The shipped-default-moved question is *not* one of these: it lives in
-the state directory's seeded-from record, outside this module.
-
-`rewrite` and `append` (ticket #18) are the write half: both splice
-through `parse`'s `before · block · after` split, so no byte outside the
-fence is touched — `rewrite` replaces the block in place, `append` adds
-one at the end of a document that has none.
-"""
+"""The document: the fenced usage-log block, parsed and classified."""
 
 from skill_log.hash import fnv1a64_hex
 from skill_log.text import shell_quote
@@ -71,12 +30,9 @@ comptime NAME_KEY = "name:"
 struct Block(Movable):
     """One fenced usage-log block, as `parse` found it.
 
-    `start` and `end` are byte offsets into the document: `start` is the
-    first byte of the opening fence line, `end` is one past the last byte
-    of the closing fence line. `content` is the text strictly between the
-    two fence lines, without their trailing newline. `template_hash` and
-    `content_hash` are what the fence claims.
-    """
+        `start` and `end` are byte offsets into the document. `content` is
+        the text strictly between the two fence lines, without their
+        trailing newline."""
 
     var start: Int
     var end: Int
@@ -94,12 +50,10 @@ struct Block(Movable):
 
 struct Parsed(Movable):
     """A document split at its fence: what is before, the block, what is
-    after.
+        after.
 
-    `block` is `None` when the document has no fenced block; `before` is
-    then the whole text and `after` is empty. The two outside parts are
-    the bytes the tool never touches.
-    """
+        `block` is `None` when the document has no fenced block; `before` is
+        then the whole text and `after` is empty."""
 
     var before: String
     var block: Optional[Block]
@@ -112,14 +66,7 @@ struct Parsed(Movable):
 
 
 struct Rendered(Movable):
-    """A rendered block: its full fenced text and the two hashes.
-
-    `text` is what gets written — the opening fence line carrying both
-    hashes, the content, the closing fence line. `template_hash` is the
-    hash of the template source; `content_hash` is the hash of the
-    content, which is what goes into the fence and what `classify`
-    recomputes to detect a hand edit.
-    """
+    """A rendered block: its full fenced text and the two hashes."""
 
     var text: String
     var template_hash: String
@@ -134,17 +81,9 @@ struct Rendered(Movable):
 def render(template: String, name: String, command: String) raises -> Rendered:
     """Render `template` for one skill into a fenced block.
 
-    The placeholders are substituted literally: `<name>` becomes the
-    skill's name, `<command>` becomes the resolved binary path. The
-    template source is hashed as-is (the hash is of the *source*, so a
-    copy in the user directory and a shipped default with the same bytes
-    agree), and the content is the substituted text without the fence.
-
-    `validate_template` is the caller's job (it refuses a template whose
-    placeholders are wrong by name); rendering a template that has no
-    `<name>` at all would silently produce a block no skill can log
-    from.
-    """
+        The template source is hashed as-is (the hash is of the *source*,
+        so a copy in the user directory and a shipped default with the
+        same bytes agree)."""
     var content = substitute(template, name, command)
     var template_hash = fnv1a64_hex(template)
     var content_hash = fnv1a64_hex(content)
@@ -169,18 +108,8 @@ def render(template: String, name: String, command: String) raises -> Rendered:
 def substitute(template: String, name: String, command: String) -> String:
     """`template` with every `<name>` and `<command>` replaced.
 
-    The replacements are literal — no escaping — because the values are
-    a skill name and a path, and the fence never carries them. Each
-    placeholder is replaced everywhere it occurs, so a template that
-    names the skill twice gets both names.
-
-    The one exception is a *command line*: a line of the rendered block
-    that carries a command. There the substituted value is shell-quoted,
-    because the reader copies that line out of the block and runs it —
-    a skill named `alpha; touch /tmp/pwned` would otherwise hand the
-    reader a command nobody meant to write. The prose lines keep the
-    plain substitution, so the text stays readable.
-    """
+        A command line's placeholders are shell-quoted; a prose line's are
+        not — see `is_command_line` for how the two are told apart."""
     var out = String("")
     for line in template.split("\n"):
         var one = String(line)
@@ -240,16 +169,9 @@ def substitute_line(line: String, name: String, command: String) -> String:
 def is_command_line(line: String) -> Bool:
     """True when the line is a command line of the rendered block.
 
-    A command line is one that *starts* a command: the placeholder is
-    the first thing on the line, after the indentation, or it follows a
-    markdown list item's label — `- **Input**: <command> stats` — whose
-    colon introduces the command.
-
-    The distinction is what keeps the prose readable. "run <command>
-    once" is prose and stays plain; "    <command> add --skill <name>"
-    is a command, and every placeholder on it is quoted, because the
-    reader runs that line.
-    """
+        A command line is one that *starts* a command: the placeholder is
+        the first thing on the line, after the indentation, or it follows a
+        markdown list item's label."""
     var text = String(line).strip()
     if text == "":
         return False
@@ -274,14 +196,9 @@ def has_placeholder(text: String, placeholder: String) -> Bool:
 def quoted_placeholder(text: String, placeholder: String) -> Bool:
     """True when `placeholder` sits next to a quote character.
 
-    A quote immediately before or after the placeholder means the
-    template is quoting the placeholder itself. The tool quotes a
-    placeholder's value with single quotes, and a template's own double
-    quotes around the placeholder would nest the two — `--skill
-    "'demo'"` — which a shell still expands. So the value would reach
-    the shell unquoted where it matters, and a name carrying
-    `$(…)` would run.
-    """
+        The tool quotes a placeholder's value with single quotes, and a
+        template's own double quotes around the placeholder would nest the
+        two, so the value would reach the shell where a shell expands it."""
     var at = text.find(placeholder)
     while at >= 0:
         var before = at - 1
@@ -302,23 +219,9 @@ def is_quote(char: String) -> Bool:
 def validate_template(name: String, template: String) raises:
     """Refuse a template whose placeholders are wrong, by name.
 
-    `usage-log.md` needs `<name>` and an invocation of `<command> add` —
-    a typo there would silently stop every skill from logging, which is
-    exactly the failure a refusal must prevent. `skill-friction-review.md`
-    needs `<command>`. Any other template name is not validated: the two
-    names above are the ones the contract defines placeholders for.
-
-    A placeholder may not sit next to a quote character. The tool
-    quotes a placeholder's value with single quotes, because the
-    rendered block is shell source; a template that quotes the
-    placeholder itself would nest the two, and the value would reach
-    the shell where a shell expands it. The refusal names the template
-    and the rule, because the template is the user's own text and the
-    fix is theirs to make.
-
-    A missing or quoted placeholder raises; the caller turns the
-    message into the one named line.
-    """
+        `usage-log.md` needs `<name>` and an invocation of `<command> add`;
+        `skill-friction-review.md` needs `<command>`. A placeholder may not
+        sit next to a quote character."""
     if name == "usage-log.md":
         if not has_placeholder(template, "<name>"):
             raise Error(
@@ -358,15 +261,9 @@ def validate_template(name: String, template: String) raises:
 def parse(text: String) -> Parsed:
     """Split `text` at its fence.
 
-    The scan looks for the opening fence at the start of a line and the
-    closing fence at the start of a later line. Only the first block is
-    recognised: a second fenced block is not this tool's (the fence
-    grammar names one usage-log block per skill), and treating it as
-    after-text keeps the never-touch-outside-the-fence rule honest.
-
-    Bytes outside the fence are returned untouched — the caller writes
-    `before` and `after` back exactly as they came in.
-    """
+        Only the first block is recognised: a second fenced block is not
+        this tool's, and treating it as after-text keeps the
+        never-touch-outside-the-fence rule honest."""
     var parsed = Parsed()
     var open_at = find_line(text, FENCE_OPEN)
     if open_at < 0:

@@ -1,14 +1,4 @@
-"""The `--problem -` stdin path.
-
-A hook pipes one line into `add --problem -`, so this module owns exactly
-two questions: is standard input a terminal (in which case reading would
-hang), and what was the line it carried.
-
-`read` is libc's, called once, into a buffer this module owns. The bound
-is the `read` return value, never a scan for a terminator: a pipe that
-fills the buffer exactly has no NUL in it, and reading past the count
-would read whatever the allocator left next door.
-"""
+"""Reading stdin without blocking a terminal."""
 
 from std.ffi import CStringSpan, OwnedDLHandle, RTLD, c_char
 from std.memory import alloc

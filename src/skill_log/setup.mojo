@@ -1,56 +1,4 @@
-"""The `setup` verb: make a machine and a repo ready.
-
-One command, four artifacts, and no ceremony:
-
-1. **The store** — created when absent (`create` policy), never migrated:
-   a damaged, foreign, older or newer file is named and left exactly as
-   found.
-2. **The post-merge hook** — written only into the repository's *common*
-   hooks directory, so a linked worktree shares the one hook git actually
-   runs. The file carries an ownership marker comment; a `post-merge`
-   without that marker is refused by name and never overwritten.
-   `--remove-hook` removes only a marked hook.
-3. **The report directory** — `<repo>/.skill-log/reports/` with its README
-   and keep file. Files already there are left byte-for-byte alone.
-4. **The skills install** — the two bundled skills under `--skills-dir`
-   (see `bundled.mojo`): the read-and-report skill copied verbatim with
-   its version stamp, and the review skill rendered from its template
-   followed by its own usage-log block. A differing copy is left alone
-   unless `--force`; `--check` verifies the install — the stamp and the
-   content — and drifts on anything else.
-
-## A thin coordinator
-
-Each artifact is asked for its own verdict (the store, the hook marker,
-the directory's files, the skills install); `setup` does not know their
-formats and there is no uniform provisioner interface — only the verdict
-struct below. A verdict is one of the five statuses the JSON contract
-names (`created`, `updated`, `unchanged`, `drift`, `skipped`) plus a
-detail that names its reason. Any drift is the run's failure: the first
-one is the one stderr line, and the exit code is 1. The skills verdict
-is the one aggregate one: it names each skill and its own verdict in
-the detail (`skill-log:created, skill-friction-review:created`), so one
-artifact line still carries one skill per answer.
-
-`--check` is the same verdicts with every write turned off: drift means
-"this is not set up", and nothing on disk moves. `--dry-run` shows what
-a real run would change, in the same shape.
-
-## The generated hook
-
-The hook resolves the CLI at run time (`command -v skill-log`; `mise
-which skill-log` when mise is on `PATH`; the mise shim under `$HOME`;
-else exit 0 silently), derives the pre-merge position from the reflog,
-and wraps the call so a missing, older or failing CLI never changes the
-pull's exit status — the hook itself always exits 0 and writes nothing.
-
-## Skips
-
-A checkout that is not a git repository skips the two repo-scoped
-artifacts with a named reason and exits 0; the machine-scoped store is
-still created. `--no-hook` and `--no-report-dir` turn one artifact off
-the same way.
-"""
+"""The `setup` verb: make a machine and a repo ready."""
 
 from std.os import makedirs, remove
 from std.pathlib import Path
@@ -790,14 +738,12 @@ def installed_skill_action(
 
 
 def setup_usage() -> String:
-    """The usage line, as `--help` shows it."""
     return "skill-log setup [--repo <dir>] [--skills-dir <dir>] [--db <path>]\n" \
            "                [--check] [--dry-run] [--json] [--force]\n" \
            "                [--remove-hook] [--no-hook] [--no-report-dir]"
 
 
 def setup_examples() -> List[String]:
-    """The verb's real invocations, as `--help` shows them."""
     var examples = List[String]()
     examples.append("skill-log setup")
     examples.append("skill-log setup --repo ~/src/myrepo --check")
@@ -807,11 +753,6 @@ def setup_examples() -> List[String]:
 
 
 def setup_value_flags() -> List[String]:
-    """The flags that consume the next argument.
-
-    The declaration lives here, beside the parser that reads them, and
-    the parser checks every flag it reads a value for against it.
-    """
     var flags = List[String]()
     flags.append("--repo")
     flags.append("--skills-dir")
@@ -820,7 +761,6 @@ def setup_value_flags() -> List[String]:
 
 
 def setup_notes() -> String:
-    """The paragraph between the usage line and the examples."""
     return "One command makes a machine and a repo ready: the store, the git\n" \
            "post-merge hook that resolves what a pull landed, the report\n" \
            "directory (.skill-log/reports/ with its README and keep file),\n" \

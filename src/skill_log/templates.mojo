@@ -1,29 +1,4 @@
-"""The two shipped default templates, embedded in the binary.
-
-The build only compiles `src/skill_log/`, so the defaults are Mojo
-string constants, not resource files. There are two, and each one is the
-single source of its own wording:
-
-- `usage-log.md` — the fenced block adopted into every skill. It teaches
-  the one silent write at the end of a run, the `--problem` form, the
-  `machine#id` marker grammar, the read commands (`show`, `stats`), the
-  fact that `add` is deliberately not idempotent, and the rule that a
-  missing binary is skipped silently. It is harness-neutral: it names no
-  agent product.
-- `skill-friction-review.md` — the review session's body, installed by
-  `setup`: the contract's input, clustering, classification, decisions,
-  output and self-logging bullets, rendered with the resolved command.
-
-Both use the `<name>` / `<command>` placeholders. A template is copied
-verbatim into the user directory by `skills template seed`, and the
-state directory records the hash of the shipped default each copy was
-seeded from, so a moved default can be *reported* without ever touching
-the user's copy.
-
-The wording below is the contract's, not a paraphrase: the usage-log
-block is what every skill's run ends with, and the review body is what
-the review session is.
-"""
+"""The two shipped default templates, embedded in the binary."""
 
 # The template names, in the order every command lists them.
 comptime USAGE_LOG_NAME = "usage-log.md"

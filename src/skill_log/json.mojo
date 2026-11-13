@@ -1,15 +1,4 @@
-"""A hand-rolled JSON writer.
-
-The CLI writes JSON and never reads it, so the tool needs a writer and
-not a parser. This is that writer: one flat object per line, a stable
-key order (the order the keys are handed in), and correct escaping of
-quotes, backslashes and control characters.
-
-The output is UTF-8. A control character below 0x20 becomes its JSON
-short escape where one exists (`\\n`, `\\t`, ...) and `\\u00xx` otherwise.
-Every other character is passed through unchanged, so the text the user
-wrote is the text that comes back out.
-"""
+"""The one JSON writer."""
 
 # The seven characters JSON requires escaped: the quotation mark, the
 # backslash, and the five control characters that have a short escape

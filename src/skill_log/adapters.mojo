@@ -1,29 +1,4 @@
-"""The adapter seam: opt-in code that fills context from a known harness.
-
-ADR-0002's rule, in one place:
-
-- **An adapter never runs unasked.** `SKILL_LOG_ADAPTERS=opencode` or
-  `--adapter opencode` enables one. With neither, no adapter runs, and
-  the row carries no harness and no model.
-- **An adapter never beats the caller.** Its values sit below the
-  explicit flag and below the field's `SKILL_LOG_*` variable in the
-  precedence chain, and the chain is applied per field.
-- **An adapter never sets `parent`.** The parent names a run this tool
-  did not spawn; an adapter cannot know it.
-- **An adapter's failure is a blank field, never an error.** Another
-  program's schema is not this tool's contract, so an upstream change
-  degrades to "unknown" rather than to a failed write.
-
-Two adapters exist in 1.0:
-
-| Adapter | Fills |
-|---|---|
-| `opencode` | `harness=opencode`, `session` from `OPENCODE_SESSION_ID`, `model` from opencode's session store |
-| `t3` | `project`, from the worktree's path under T3 |
-
-The `t3_thread` is never filled by an adapter: a thread id is not
-invented. The dispatching skill knows it and passes it.
-"""
+"""The adapter seam: opt-in code that fills context from a known harness."""
 
 from std.os import getenv
 from std.pathlib import Path
@@ -48,11 +23,8 @@ comptime OPENCODE_MODEL_SQL = "SELECT model FROM session_v2 WHERE id = ?"
 struct AdapterContext(Movable):
     """What an enabled adapter filled.
 
-    Every field is a string; an empty one means the adapter did not
-    fill it, or that it failed. The caller applies the precedence
-    chain to these values, so an adapter never overwrites anything the
-    caller said.
-    """
+        Every field is a string; an empty one means the adapter
+        did not fill it, or that it failed."""
 
     var harness: String
     var session: String
@@ -103,12 +75,8 @@ def env_adapters() -> List[String]:
 def enabled_adapters(flags: List[String]) -> List[String]:
     """The adapters to run: the flag's names plus the variable's.
 
-    Both sources take a comma-separated list, so `--adapter opencode,t3`
-    and `--adapter opencode --adapter t3` name the same two adapters.
-    An adapter named by either is enabled. Duplicates are harmless — an
-    adapter that fills the same field twice fills it the same way twice
-    — so the list is not deduplicated here.
-    """
+        Both sources take a comma-separated list. Duplicates are
+        harmless, so the list is not deduplicated here."""
     var names = List[String]()
     for i in range(len(flags)):
         var parts = split_commas(flags[i])
@@ -131,10 +99,7 @@ def is_json_space(ch: String) -> Bool:
 def json_string_span(text: String, at: Int) -> Int:
     """The index just past the closing quote of the string opening at `at`.
 
-    `at` is the opening quote. Escapes are skipped as a pair, so a
-    `\\"` inside the string does not end it. `-1` when the string never
-    closes.
-    """
+        `-1` when the string never closes."""
     var n = text.byte_length()
     var i = at + 1
     while i < n:
@@ -199,16 +164,10 @@ def json_string_value(text: String, at: Int) -> String:
 def json_string_field(text: String, key: String) -> String:
     """The value of a string field at the top level of a JSON object.
 
-    A small targeted scanner, not a JSON parser: the only shape this tool
-    reads is opencode's `{"id":"...","providerID":"..."}`, and the
-    project has no JSON reader to borrow. The scan walks the object one
-    token at a time and tracks nesting, so a key spelled inside a nested
-    object never answers for the top-level one.
-
-    An empty string when the key is absent, when its value is not a
-    string, or when the text is not a JSON object at all. The caller then
-    leaves the value alone.
-    """
+        A small targeted scanner, not a JSON parser: the only shape this
+        tool reads is opencode's `{"id":"...","providerID":"..."}`. The
+        scan tracks nesting, so a key spelled inside a nested object never
+        answers for the top-level one."""
     var n = text.byte_length()
     var i = 0
     while i < n and is_json_space(String(text[byte=i])):
@@ -257,13 +216,7 @@ def json_string_field(text: String, key: String) -> String:
 def render_model(raw: String) -> String:
     """An opencode model value as `provider/id`.
 
-    The stored value is a JSON object such as
-    `{"id":"kimi-k3","providerID":"opencode"}`, and the convention is
-    `provider/id`. A value that is not that shape — an older shape, a
-    bare id, something else entirely — is passed through unchanged: the
-    reference does the same, and a value nobody can parse is better
-    than a value silently mangled.
-    """
+        A value that is not that shape is passed through unchanged."""
     if raw == "":
         return ""
     if not raw.startswith("{"):
@@ -282,19 +235,16 @@ def render_model(raw: String) -> String:
 def opencode_db_path() -> String:
     """The path of opencode's session store.
 
-    The file is never created: the adapter checks that it exists
-    before it opens it, because another tool's database is not this
-    tool's to create.
-    """
+        The file is never created: the adapter checks that it exists
+        before it opens it."""
     return getenv("HOME", "") + OPENCODE_DB_RELATIVE
 
 
 def opencode_model(session_id: String) -> String:
     """The model of an opencode session, or an empty string.
 
-    The session store is read read-only; a missing file, a changed
-    schema, an absent row — every one of them is an empty string.
-    """
+        The session store is read read-only; a missing file, a changed
+        schema, an absent row — every one of them is an empty string."""
     if session_id == "":
         return ""
     var path = opencode_db_path()
@@ -330,13 +280,8 @@ def fill_t3(mut context: AdapterContext, worktree: String):
 def apply_adapters(names: List[String], worktree: String) -> AdapterContext:
     """Run the enabled adapters and collect what they filled.
 
-    `worktree` is the worktree the run happened in — the detected one,
-    or the one the caller named. The t3 adapter needs it to find the
-    project; the opencode adapter does not.
-
-    An unknown adapter name is ignored: enabling an adapter this
-    binary does not know must not fail the write.
-    """
+        An unknown adapter name is ignored: enabling an adapter this
+        binary does not know must not fail the write."""
     var context = AdapterContext()
     for i in range(len(names)):
         var name = names[i].strip()

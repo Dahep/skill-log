@@ -59,7 +59,11 @@ def replace_docstring(text: str, anchor: str, new: str) -> str:
         if "\n" not in new:
             replacement = [f"{indent}{QUOTE}{new}{QUOTE}"]
         else:
-            replacement = [indent + l if l else "" for l in new.split("\n")]
+            body = new.split("\n")
+            replacement = [f"{indent}{QUOTE}{body[0]}"]
+            for l in body[1:-1]:
+                replacement.append(indent + l if l else "")
+            replacement.append(f"{indent}{body[-1]}{QUOTE}")
         lines[start : end + 1] = replacement
         return "\n".join(lines) + "\n"
     raise ValueError(f"docstring not found: {anchor!r}")

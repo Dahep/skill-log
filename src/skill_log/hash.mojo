@@ -1,26 +1,4 @@
-"""The stable document hash.
-
-The fence carries two hashes — the template's and the block content's —
-and the seeded-from record in the state directory carries a third. All
-three are persisted in user files and compared across releases, so the
-hash must be *stable across releases*: the same bytes hash the same way
-forever. A stdlib hash whose output may change between releases would
-silently mark every adopted block `edited` after an upgrade, so it is
-not used.
-
-The algorithm is FNV-1a, 64-bit, over the text's bytes:
-
-- offset basis `0xcbf29ce484222325`
-- prime `0x100000001b3`
-- each byte: `h = (h XOR byte) * prime` modulo 2^64
-
-FNV-1a 64-bit is self-contained and deterministic, and it is spelled out
-above so the bytes that go into a fence are reproducible by anyone. It
-is a non-cryptographic hash: its job is drift detection on text the tool
-itself wrote, not tamper-proofing against an adversary. The output is
-16 lowercase hex digits, and it is the spelling that goes into the
-fence (`hash=...`) and into the seeded-from record.
-"""
+"""The one hash the tool uses."""
 
 
 def fnv1a64_hex(text: String) -> String:

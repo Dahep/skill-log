@@ -1,36 +1,4 @@
-"""A read-only SQLite reader.
-
-The opencode adapter needs one value out of opencode's own session store:
-the model of the session that ran the skill. That store belongs to another
-program, so this reader is deliberately narrow:
-
-- The file is opened **read-only** (`SQLITE_OPEN_READONLY`), so SQLite
-  cannot create it, cannot create the `-wal` and `-shm` companions beside
-  it, and cannot write a single byte into it.
-- Only `SELECT` is ever issued. There is no write path here at all.
-- Every failure is an empty string, never an exception: another
-  program's schema is not this tool's contract, and an upstream change
-  must degrade to a blank field rather than to a failed write.
-
-The binding is loaded the same way the vendored one loads it — `dlopen`
-plus `dlsym` — and the same way `context.mojo` reaches libc: a small
-number of C entry points, resolved at run time.
-
-The risk worth naming: opening another tool's database read-write can
-race that tool's own writes and can leave a `-wal` file behind. This
-reader never does that, and the file is checked for existence before the
-connection is made, so a store that is not there is never created.
-
-## The store's own read path
-
-`read_only_database` is the same seam, used for this tool's own store.
-The vendored binding opens read-write — `sqlite3_open` creates a file
-that is not there — and SPEC §2 says a read never creates the store. The
-read path therefore opens the store through this module, with SQLite's
-own `SQLITE_OPEN_READONLY` and no `SQLITE_OPEN_CREATE`: a file that is
-not there is a failure of the open, not a new file, and the
-check-then-open window a read-write open leaves open is gone.
-"""
+"""Opening a store: read-write, or read-only."""
 
 from std.ffi import CStringSpan, OwnedDLHandle, RTLD, c_char
 from std.memory import Pointer

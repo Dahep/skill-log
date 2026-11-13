@@ -1,26 +1,4 @@
-"""The entry point.
-
-No handler writes to a stream and no handler exits: a handler returns the
-text to print or a failure, and this module prints what it got. The one
-failure path is `errors.fail`, which prints the single named line and
-exits with the failure's code; `main` hands it every failure it sees.
-
-The order is fixed:
-
-1. The SQLite preflight loads the vendored binding. It runs for every
-   invocation, `--version` and `--help` included, so a missing or
-   unloadable `libsqlite3.so.0` is one named stderr line and exit 1 rather
-   than a traceback.
-2. The verb is looked up in the registry. No arguments is a usage error:
-   usage plus examples, exit 2.
-3. The handler runs and returns text, or a failure.
-4. The catch-all turns anything that escapes into one stderr line and
-   exit 1. No Mojo traceback ever reaches the user.
-
-Usage errors (exit 2) print the usage and the examples on stderr, because
-stdout stays empty on failure; the `--help` form of the same text prints on
-stdout and exits 0.
-"""
+"""The entry point: parse, dispatch, report."""
 
 from std.sys import argv, exit, stderr, stdout
 

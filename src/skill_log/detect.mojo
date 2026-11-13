@@ -1,34 +1,4 @@
-"""Built-in detection: the facts a row carries when nobody says otherwise.
-
-ADR-0002 puts four fields outside the caller's control:
-
-| Field | Built-in source |
-|---|---|
-| `repo` | the origin remote's basename, else the toplevel directory's name |
-| `worktree` | `git rev-parse --show-toplevel` |
-| `project` | the T3 worktree segment, when the worktree is under T3 |
-| `machine` | the hostname |
-
-Only `project` needs an adapter for its T3 grouping, and the adapter that
-fills it is opt-in; the detection below is the built-in half of that
-adapter's rule, kept here so the rule lives in one place.
-
-Everything here degrades to an empty string rather than raising. A row
-that says "unknown" is a useful row; a failed write is not.
-
-The git calls go through `git.mojo`, the one seam every git command in
-the tool goes through. The arguments of each are *constants*; the only
-thing a caller supplies is a directory, which is passed with `git -C`
-and shell-quoted (`shell_quote`), so a path can never be read as a
-command. The seam redirects stderr to `/dev/null`, so a repository
-without an origin remote stays quiet. An empty result means "not a
-repository" or "no origin", which is exactly the signal the callers want.
-
-`repo` is resolved *from the worktree the row carries*, not from the
-process's current directory: a caller that names `--worktree` gets the
-repository of that checkout, so the two fields always describe the same
-one.
-"""
+"""Built-in detection: the facts a row carries when nobody says otherwise."""
 
 from std.os import getenv
 
@@ -51,30 +21,16 @@ def env_or_empty(name: String) -> String:
 def shell_quote(text: String) -> String:
     """`text` as one single-quoted shell word.
 
-    A path the caller named reaches a shell command string, so it is
-    quoted the one way a POSIX shell always reads back literally: single
-    quotes, with an embedded single quote closed, escaped and re-opened.
-
-    The quoting itself lives in `text.mojo`, next to the other text
-    rules, so the one that renders a command line and the one that
-    builds a git command string are the same rule.
-    """
+        A path the caller named reaches a shell command string, so it is
+        quoted the one way a POSIX shell always reads back literally."""
     return text_module.shell_quote(text)
 
 
 def strip_userinfo(url: String) -> String:
     """A remote URL with any credentials removed.
 
-    `https://user:token@host/owner/repo.git` becomes
-    `host/owner/repo.git`, and `ssh://user@host/owner/repo.git` becomes
-    `host/owner/repo.git`. A URL without userinfo is returned unchanged,
-    and so is one whose `@` sits after the path's first `/` — that is a
-    path segment, not a credential separator.
-
-    An scp-style remote (`git@host:owner/repo.git`) is returned
-    unchanged: its `git` is the login name in the host position, not a
-    credential, and the basename below discards the host anyway.
-    """
+        An scp-style remote (`git@host:owner/repo.git`) is returned
+        unchanged: its `git` is the login name in the host position."""
     if not url.startswith("http://") and not url.startswith("https://") \
             and not url.startswith("ssh://"):
         return url
@@ -119,10 +75,7 @@ def basename(path: String) -> String:
 def repo_name(url: String) -> String:
     """The repository name an origin URL names.
 
-    The last path segment, without the `.git` suffix. An scp-style
-    remote (`git@host:owner/repo.git`) has no `/` in its path part, so
-    the colon is treated as the separator too.
-    """
+        The last path segment, without the `.git` suffix."""
     if url == "":
         return ""
 
@@ -148,15 +101,9 @@ def repo_name(url: String) -> String:
 def detect_repo(top: String) -> String:
     """The repository the named worktree belongs to.
 
-    `top` is the worktree the row will carry: the `--worktree` flag, its
-    variable, or the detected toplevel. The origin remote's basename is
-    the name; the directory's own name is the fallback when the
-    repository has no origin remote.
-
-    Empty when `top` is not a git working tree. A path that is not a
-    checkout names no repository, and one is never invented from the
-    directory's name alone.
-    """
+        Empty when `top` is not a git working tree. A path that is not a
+        checkout names no repository, and one is never invented from the
+        directory's name alone."""
     if top == "":
         return ""
     if git_toplevel(top) == "":
@@ -187,10 +134,8 @@ def t3_home() -> String:
 def t3_project(worktree: String) -> String:
     """The T3 project grouping of a worktree.
 
-    The first path segment under `$T3CODE_HOME/worktrees/`, or an empty
-    string when the worktree is not under it. A worktree outside T3 has
-    no project grouping, and one is never invented.
-    """
+        The first path segment under `$T3CODE_HOME/worktrees/`, or an empty
+        string when the worktree is not under it."""
     if worktree == "":
         return ""
 

@@ -1,50 +1,4 @@
-"""The `skills` verb: `audit`, `adopt`, and `template show|seed|reset`.
-
-The subcommands live under `skills`, split at the sub-verb (not as mode
-flags):
-
-- `skills audit` — read-only. Classify every skill's fenced usage-log
-  block as `ok`, `missing`, `stale`, `edited` or `vendored`, one line
-  per skill, exit 1 on anything but `ok`/`vendored`. Writes nothing —
-  not even a state directory.
-- `skills adopt` — write: append a block where there is none, rewrite a
-  `stale` one, rewrite an `edited` one only with `--force`, skip
-  `vendored` skills and leave `ok` ones alone. Every write goes through
-  the `document` module's splice and `files.mojo`'s atomic replacement;
-  no byte outside the fence is ever touched. Exit 0 when the directory
-  ends conformant, 1 when any skill is refused.
-- `skills template show|seed|reset` — the two shipped default templates
-  and the user's copies of them. `show` reports the effective templates,
-  their source, hashes and whether the shipped default moved since the
-  copy was seeded. `seed` copies the shipped defaults into the user
-  directory. `reset` deletes the user copies. Both refuse without
-  `--force` and both support `--dry-run`.
-
-## The templates
-
-Two shipped defaults, embedded in the binary (`templates.mojo`),
-resolved over the user's copies:
-
-1. `--template-dir <dir>`
-2. `SKILL_LOG_TEMPLATE_DIR`
-3. `${XDG_CONFIG_HOME:-$HOME/.config}/skill-log/templates/`
-4. the shipped default in the binary
-
-The effective template is the first source that has the file. Its hash
-is the hash of its own bytes (the fence records that hash). The
-seeded-from record — the hash of the shipped default each user copy was
-seeded from — lives under XDG state, never under the user config dir, so
-`show` and `audit` can report `moved` by comparing it to the current
-shipped default. A moved default is *reported* with the two commands
-that adopt it (`skills template seed --force`, then `skills adopt`) and
-never applied.
-
-## The vendored stamp
-
-A skill whose frontmatter carries `metadata:` with a `source:` key is a
-copy of someone else's skill and is skipped entirely (SPEC §7); see
-`document.is_vendored`.
-"""
+"""The `skills` verb: `audit`, `adopt`, and `template show|seed|reset`."""
 
 from std.os import listdir, makedirs, remove, rmdir
 from std.pathlib import Path
@@ -588,7 +542,6 @@ def parse_skills_options(args: List[String]) raises -> SkillsOptions:
 
 
 def skills_usage() -> String:
-    """The usage line, as `--help` shows it."""
     return "skill-log skills <subcommand> [options]\n" \
            "\n" \
            "  skill-log skills audit --dir <dir> [--json] [--dry-run]\n" \
@@ -599,7 +552,6 @@ def skills_usage() -> String:
 
 
 def skills_examples() -> List[String]:
-    """The verb's real invocations, as `--help` shows them."""
     var examples = List[String]()
     examples.append("skill-log skills audit --dir .agents/skills")
     examples.append("skill-log skills adopt --dir .agents/skills")
@@ -609,11 +561,6 @@ def skills_examples() -> List[String]:
 
 
 def skills_value_flags() -> List[String]:
-    """The flags that consume the next argument.
-
-    The declaration lives here, beside the parser that reads them, and
-    the parser checks every flag it reads a value for against it.
-    """
     var flags = List[String]()
     flags.append("--dir")
     flags.append("--template-dir")
@@ -621,7 +568,6 @@ def skills_value_flags() -> List[String]:
 
 
 def skills_notes() -> String:
-    """The paragraph between the usage line and the examples."""
     return "The subcommands, not mode flags: audit classifies, template\n" \
            "manages the two shipped defaults, adopt writes. audit is\n" \
            "read-only and exits 1 on any state but ok or vendored.\n" \

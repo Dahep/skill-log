@@ -1,21 +1,4 @@
-"""The verb registry: one table entry per verb.
-
-A verb is a row in one table. Adding a verb later means adding one entry to
-`build_verbs` and one handler to `build_handlers` — never a new file tree.
-
-Each entry carries the verb's name, a one-line summary, its usage line, and
-two to four real invocations. The handler lives beside the entry in the
-parallel list `build_handlers`; Mojo 1.2 has no callable-typed struct field,
-so the two lists stay in step by index.
-
-A handler receives the arguments that follow the verb name and returns the
-text to print. It never prints itself and it never calls `exit`: `main` owns
-both. A handler that fails returns a `Failure`, which `main` reports as one
-stderr line with the matching exit code.
-
-Only verbs that actually work are registered. There is no "not implemented"
-stub: a later ticket appends its verb here when it lands.
-"""
+"""The verb registry: one table, one lookup."""
 
 from skill_log.add import add_value_flags, handle_add
 from skill_log.errors import Outcome

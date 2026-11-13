@@ -1,15 +1,4 @@
-"""The small pieces every printed table shares.
-
-Two verbs print a table — `show` and `stats` — and both need the same
-three things: a column padded to the width of its widest cell, the lines
-joined without a trailing newline, and a worktree path with the reader's
-home written as `~`. None of them is specific to a verb, so none of them
-belongs in one.
-
-There is no column-count or layout machinery here on purpose: the two
-tables have different columns and different cells, and a shared layout
-engine would be more code than the two renderers it replaced.
-"""
+"""The table: fixed-width columns for a person."""
 
 from std.os import getenv
 

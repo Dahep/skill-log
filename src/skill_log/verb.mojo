@@ -1,21 +1,4 @@
-"""One row of the verb table.
-
-`Verb` is the row type: what the registry stores, what the help renderer
-reads. It lives in its own module so that the registry and the renderer
-both depend on it and neither depends on the other.
-
-A verb may be a *sub-verb*: the sub-commands of `skills` are `audit`,
-`adopt` and `template`, and `template` owns `show`, `seed` and `reset`
-in its turn. A sub-verb is a `Verb` like any other, so every level is
-rendered by the same renderer and a subcommand needs no help text of its
-own — only its table entry.
-
-The levels are one flat table rather than a tree: a row names the verb
-it is (`audit`) and the path it is reached by (`skills audit`), and the
-renderer and the dispatcher both walk the table by path. A tree of
-`Verb`s would have to be recursive, and Mojo 1.2 cannot hold a list of
-its own element type.
-"""
+"""The verb table's shape."""
 
 from skill_log.flags import takes_value
 

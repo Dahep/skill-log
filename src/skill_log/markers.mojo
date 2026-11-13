@@ -1,20 +1,4 @@
-"""The marker grammar: `machine#id`.
-
-A marker is the only way a row is named from outside the store. The
-machine is required because a store's ids are per store: `7` names a
-different row on every machine, `boxA#7` names one row everywhere.
-
-The grammar is strict on purpose. A bare id, a placeholder or a typo is
-never guessed at — it is reported, because the resolution that reads it
-would otherwise stamp the wrong row on some machine. The id is a positive
-decimal: a sign, a space or a fraction is not an invocation id.
-
-`add` writes the marker a row is named by; `report` writes markers to a
-file; `resolve-merged` will parse them back. The spelling lives here so
-all three agree — and this module is a leaf: it depends on nothing, so
-the store, the resolver and the report can all reach it without a
-cycle.
-"""
+"""The marker grammar: `machine#id`."""
 
 
 def marker_text(machine: String, id: Int) -> String:

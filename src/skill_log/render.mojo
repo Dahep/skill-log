@@ -1,23 +1,4 @@
-"""The row's JSON shape, in one place.
-
-`add --json` and `show --json` must describe a row the same way: the same
-fields, in the same order, with the same types. Otherwise a consumer
-that reads one of them cannot read the other, and the two verbs drift
-apart the moment one of them gains a field.
-
-So the shape lives here, once, and both verbs call it. The key order is
-the schema's own column order — the one `store.mojo`'s column list
-declares — followed by the two derived fields every consumer needs and
-neither table stores: the row's `marker` and its `problems`.
-
-Because the order comes from the column list rather than from a
-hand-written list of keys here, a column added to the schema cannot be
-missing from this shape, and this shape cannot carry a key the schema
-does not have.
-
-The output is one flat object per line. There is no nesting: a caller
-piping the stream into `jq` should never have to reach into a wrapper.
-"""
+"""Rendering a row: the table's cells and the JSON shape."""
 
 from skill_log.json import JsonObject
 from skill_log.store import Invocation, invocation_columns

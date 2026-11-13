@@ -1,18 +1,4 @@
-"""Text safety: the characters this tool neither stores nor prints raw.
-
-The tool has one line-shaped contract in three places: a problem is one
-line, a diagnostic is one line, and neither may carry a terminal escape.
-All three are the same rule about the same byte set, so the rule lives in
-one module instead of being re-derived per caller.
-
-The set is the reference implementation's — C0 below 0x20 except tab, plus
-DEL. Tab stays: a person means to type it. Everything else becomes a space,
-which keeps the text readable and cannot start a new line.
-
-The module also owns the shell quoting, because it is the same kind of
-rule: a value that reaches a shell is not text, it is a word, and the one
-way a POSIX shell always reads a word back literally is single quotes.
-"""
+"""The text rules: sanitizing, quoting, joining."""
 
 
 def shell_quote(text: String) -> String:

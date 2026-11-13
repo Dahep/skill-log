@@ -1,27 +1,4 @@
-"""Where the tool's files live, and which binary it is.
-
-Three rules decide where the tool reads and writes, and they were
-written out in two modules: the XDG state and config directories, the
-store's own path, and the path of the binary itself. One module holds
-them now, so a rule about a path lives in one place and every caller
-gets the same answer.
-
-The XDG rules are the standard ones:
-
-- `XDG_STATE_HOME` first, else `$HOME/.local/state` — the store and
-  the seeded-from record live here.
-- `XDG_CONFIG_HOME` first, else `$HOME/.config` — the user's copies of
-  the shipped templates live here.
-
-The store's path is `--db` first, then `SKILL_LOG_DB`, then the XDG
-state directory. The template directory is `--template-dir` first, then
-`SKILL_LOG_TEMPLATE_DIR`, then the XDG config directory.
-
-The binary's own path is the third rule: a bare name is looked up on
-`PATH`, and whatever is found — or given — is resolved to one absolute,
-symlink-free path. A name the filesystem cannot resolve is used as it
-was given rather than dropped.
-"""
+"""The one module for where the tool's files live."""
 
 from std.os import getenv
 from std.pathlib import Path

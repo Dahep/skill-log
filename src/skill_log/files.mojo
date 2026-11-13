@@ -1,31 +1,4 @@
-"""Reading and atomically replacing a small text file.
-
-A report file is committed with a change, so a half-written one — a
-crash between `truncate` and the last marker — would be a corrupted
-artifact in the tree. The write goes to a fresh sibling temporary file
-and is then renamed over the target: `rename(2)` inside one directory is
-atomic, so a reader sees either the old report or the new one, never a
-mixture.
-
-The temporary file is created **exclusively** under an unpredictable
-name (`<target>.tmp.<pid>.<ticks>`) and written through the descriptor
-`open(O_CREAT|O_EXCL)` returned. A fixed temporary name would let a
-symlink planted at that name redirect the write to another file, and
-would let two concurrent writers interleave their bytes; this cannot.
-On any failure the temporary is removed, so a failed write leaves the
-target and its directory as they were.
-
-`open`, `write`, `close`, `rename` and `unlink` are reached through the
-same `dlopen` seam as the rest of the tool (`ffi.mojo`); Mojo 1.2's
-`Path` can read and write text but cannot rename. `resolve_path` reaches
-libc's `realpath` through the same seam: it is how a command path is
-resolved to one absolute, symlink-free answer.
-
-The mode is `0600` (what `O_EXCL` creation gives): a report is the
-author's working file, and git records only the executable bit.
-`write_text_mode` sets an explicit mode instead — the generated hook
-must come out executable.
-"""
+"""Reading and atomically replacing a small text file."""
 
 from std.ffi import CStringSpan, OwnedDLHandle, RTLD, c_char
 from std.memory import Pointer
@@ -52,11 +25,7 @@ def read_text(path: String) raises -> String:
 
 
 def c_string(text: String) -> List[UInt8]:
-    """A NUL-terminated copy of `text`.
-
-    `String.unsafe_ptr()` is read-only on this toolchain, so the
-    terminator cannot be written in place; the copy is explicit.
-    """
+    """A NUL-terminated copy of `text`."""
     var n = text.byte_length()
     var src = text.unsafe_ptr()
     var buf = List[UInt8](capacity=n + 1)
@@ -118,14 +87,8 @@ def rename_path(from_path: String, to_path: String) raises:
 def resolve_path(path: String) -> String:
     """`path` as one absolute, symlink-resolved path, or "".
 
-    libc's `realpath` does both jobs in one call: it resolves a relative
-    path against the current directory and follows symlinks, so the same
-    binary named three ways answers one path. It answers NULL when the
-    file does not exist — an empty string here, and the caller keeps the
-    name it was given. The answer is `malloc`'d, so it is copied out and
-    freed. Nothing raises: resolution is best-effort, and a name the
-    filesystem cannot resolve is still a usable command.
-    """
+        Nothing raises: resolution is best-effort, and a name the
+        filesystem cannot resolve is still a usable command."""
     try:
         var lib = OwnedDLHandle("libc.so.6", RTLD.NOW)
         var realpath_fn = dl_sym[def(Int, Int) thin abi("C") -> Int](
@@ -155,21 +118,9 @@ def write_text(path: String, text: String) raises:
 def is_executable(path: String) -> Bool:
     """True when the *owner* of `path` may execute it.
 
-    A git hook is run only when it is executable, and git says nothing
-    when it is not — the hook simply never fires. So the bit is part of
-    the install, and a file that lost it is broken even though its
-    bytes are right.
-
-    The owner's bit is the one that matters, not "somebody's": git runs
-    the hook as the user who pulled, and the installer wrote the file
-    as that user. A mode of 0641 carries the execute bit for *other*
-    and none for the owner, so the owner cannot run it and git skips it
-    — silently, which is the failure this check exists to catch.
-
-    A file that cannot be stat'ed is not executable: the caller is
-    asking about a hook it should have written, and "no" is the safe
-    answer.
-    """
+        The owner's bit is the one that matters, not "somebody's": git runs
+        the hook as the user who pulled, and the installer wrote the file
+        as that user."""
     try:
         var info = stat(path)
         return (info.st_mode & 0o100) != 0
@@ -200,17 +151,11 @@ def set_executable(path: String) raises:
 def write_text_mode(path: String, text: String, mode: Int) raises:
     """Replace `path` with `text`, atomically, at exactly `mode`.
 
-    The temporary lives beside the target — a rename across filesystems
-    is a copy, not an atomic swap — and is created with `O_EXCL`, so a
-    file already at that name (a planted symlink included) is never
-    followed. The bytes are written through the descriptor we opened, so
-    nothing can swap the file out between creation and write.
-
-    The mode is set on the descriptor before the rename, so the
-    replacement is never visible at the wrong permissions and the
-    process's umask cannot narrow it: a generated git hook must come out
-    executable whatever the umask says.
-    """
+        The temporary lives beside the target — a rename across filesystems
+        is a copy, not an atomic swap — and is created with `O_EXCL`, so a
+        file already at that name is never followed. The mode is set on the
+        descriptor before the rename, so the replacement is never visible at
+        the wrong permissions."""
     var lib = OwnedDLHandle("libc.so.6", RTLD.NOW)
     var open_fn = dl_sym[def(Int, Int, Int) thin abi("C") -> Int](lib, "open")
     var write_fn = dl_sym[def(Int, Int, Int) thin abi("C") -> Int](

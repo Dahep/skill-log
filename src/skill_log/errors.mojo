@@ -1,17 +1,4 @@
-"""The one error and exit path.
-
-Every failure the CLI can produce is a `Failure`: a message and an exit code.
-The codes are the contract from issue #1:
-
-- 0 — success, or nothing to do
-- 1 — operational failure (the store, the filesystem, the environment)
-- 2 — usage error (unknown verb, bad flag, missing argument)
-
-A handler returns what to print; it never prints and it never exits.
-`report`/`fail` below are the single failure path — one sanitized line on
-stderr, then the exit code — and `main` and the preflight call them rather
-than printing a failure themselves.
-"""
+"""The one error and exit path."""
 
 from std.sys import stderr, exit
 
@@ -49,20 +36,9 @@ def operational_failure(message: String) -> Failure:
 struct Outcome:
     """What a handler returns: text to print, or a failure to report.
 
-    A handler never writes to a stream. It returns the text it wants on
-    stdout, or a `Failure` that `main` turns into one stderr line and an
-    exit code.
-
-    A usage failure carries the usage block in `usage`: it is printed on
-    stderr so stdout stays empty, and the block is the whole diagnostic —
-    the caller asked for nothing in particular, so the answer is how to
-    call the tool.
-
-    `notes` are additional stderr lines for a verb that has something to
-    say besides the answer — rows it skipped, a validator's findings.
-    They are already prefixed, one line each, and `main` prints them
-    before the failure line (or before nothing, on success).
-    """
+        A handler never writes to a stream. A usage failure carries the
+        usage block in `usage`: it is printed on stderr so stdout stays
+        empty."""
 
     var text: String
     var failure: Failure
@@ -134,11 +110,8 @@ struct Outcome:
 def report(failure: Failure):
     """Write the single stderr line this failure is allowed.
 
-    Every line is prefixed `skill-log: ` so a caller can recognise it
-    without parsing the message, and every control character in the
-    message becomes a space: a path or an option can carry a newline of
-    its own, and the contract is one line, not one per control character.
-    """
+        Every control character in the message becomes a space: the
+        contract is one line, not one per control character."""
     print("skill-log: " + sanitize(failure.message), file=stderr)
 
 

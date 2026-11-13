@@ -1,27 +1,4 @@
-"""The writer's context: when it happened, and on which machine.
-
-Two facts a row carries that neither a flag nor an adapter may invent: the
-invocation's timestamp and the machine's hostname. Both are read from the
-running machine. Every other context column belongs to the caller or to an
-adapter (`adapters.mojo`), and the arguments that carry them belong to
-`add.mojo`.
-
-The timestamp is ISO 8601 with the writer's own offset, to the second —
-the same shape the Python reference's
-`datetime.now().astimezone().isoformat(timespec="seconds")` produced.
-
-It is computed in SQLite rather than through libc: the vendored binding
-already carries a correct clock, and reaching `localtime_r` through
-Mojo's C ABI is not safe on this toolchain. The two values SQLite gives
-are the local wall clock and the offset in seconds; the offset is
-formatted here.
-
-The hostname comes from libc's `gethostname`, reached through the same
-`dlopen` seam the vendored binding uses (`ffi.mojo`). Unlike every other
-context field, an unreadable hostname is an error rather than a blank: the
-machine namespaces the store's markers, so a row without one cannot be
-named from outside.
-"""
+"""The writer's context: when it happened, and on which machine."""
 
 from std.ffi import CStringSpan, OwnedDLHandle, RTLD, c_char
 from std.memory import alloc
@@ -61,12 +38,7 @@ comptime HOSTNAME_SIZE = 256
 
 
 def format_offset(seconds: Int) -> String:
-    """The UTC offset as `+HH:MM` or `-HH:MM`.
-
-    The sign is the sign of the offset, the hours and minutes are its
-    absolute parts, and the minutes carry the half-hour offsets some
-    zones use.
-    """
+    """The UTC offset as `+HH:MM` or `-HH:MM`."""
     var sign = "+"
     if seconds < 0:
         sign = "-"
@@ -86,13 +58,7 @@ def two_digits(value: Int) -> String:
 
 
 def local_timestamp(db: Database) raises -> String:
-    """The writer's local wall clock as ISO 8601 with its offset.
-
-    `2026-11-11T17:04:36-03:00` is one such stamp. `SKILL_LOG_NOW`, when
-    set, is the stamp: the test-only clock injection (SPEC §9) is consulted
-    first and returned as written, so a case can pin the time without
-    touching the store or sleeping.
-    """
+    """The writer's local wall clock as ISO 8601 with its offset."""
     var pinned = getenv(CLOCK_OVERRIDE, "")
     if pinned != "":
         return pinned
@@ -122,11 +88,9 @@ def hostname_unavailable() -> Error:
 def hostname() raises -> String:
     """This machine's hostname.
 
-    A hostname that cannot be read is an error, not an empty string: the
-    machine namespaces the store's markers (`machine#id`), so a row
-    without one is a row nothing can resolve. `--machine` is the way out,
-    and the failure says so.
-    """
+        A hostname that cannot be read is an error, not an empty string:
+        the machine namespaces the store's markers, so a row without one
+        is a row nothing can resolve."""
     try:
         var lib = OwnedDLHandle("libc.so.6", RTLD.NOW)
         var gethostname = dl_sym[def(Int, Int) thin abi("C") -> Int](

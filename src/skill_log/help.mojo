@@ -1,18 +1,4 @@
-"""The one help renderer.
-
-It renders two things: the top-level usage (what `skill-log` with no
-arguments, and `skill-log --help`, print) and a verb's own usage (what
-`skill-log <verb> --help` prints). Both come out of the verb table, so a
-verb added later needs no help text of its own — only its table entry.
-
-The levels below a verb are rendered the same way: `skills audit --help`
-renders the `audit` verb's block, and `skills template show --help`
-renders the `show` verb's block, which the table holds beside the
-others. Every level comes out of the same table, so a subcommand needs
-no help text of its own either.
-
-Every rendered block ends with real, copy-pasteable invocations.
-"""
+"""One renderer for every level of the verb tree."""
 
 from skill_log.verb import Verb
 
