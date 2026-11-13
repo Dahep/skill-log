@@ -233,6 +233,32 @@ check "the foreign marker stamped nothing" \
 check "the foreign marker is not in the resolved answer" \
     "$(json_array "$(cat "$SCRATCH/foreignrow.json")" resolved)" ""
 
+# ------------------------------------------------------- an empty machine
+#
+# SPEC §2's one exception: a stored row with an empty `machine` column
+# — written before `add` always filled it — belongs to the machine
+# reading it. So a marker naming this host's spelling stamps such a row,
+# even though the row itself names no machine.
+#
+# No CLI writes an empty machine, so the column is emptied with sqlite3:
+# the row is then exactly what the rule is about.
+REPO_EM="$(new_repo empty-machine)"
+DB_EM="$SCRATCH/empty-machine.db"
+"$BIN" add --skill before-the-column --machine "$H" --db "$DB_EM" >/dev/null
+sqlite3 "$DB_EM" "update invocations set machine = '' where id = 1"
+commit_file "$REPO_EM" "Skill-log-Fix: $H#1"
+(
+    cd "$REPO_EM" || exit 1
+    "$BIN" resolve-merged --db "$DB_EM" --json \
+        >"$SCRATCH/emptymachine.json" 2>"$SCRATCH/emptymachine.err"
+)
+check "a row with an empty machine is stamped" \
+    "$(sqlite3 "$DB_EM" "select count(*) from invocations where id = 1 and fix <> ''")" "1"
+check "the empty-machine row is in the resolved answer" \
+    "$(json_array "$(cat "$SCRATCH/emptymachine.json")" resolved)" "$H#1"
+check_absent "the empty-machine row is not skipped" \
+    "$(cat "$SCRATCH/emptymachine.err")" "skipped"
+
 "$BIN" add --skill hidden --machine "$H" --db "$DB" >/dev/null
 n="$(date +%s%N)"
 printf '%s' "$n" >"$REPO/file"
