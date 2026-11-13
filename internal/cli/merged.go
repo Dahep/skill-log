@@ -23,18 +23,6 @@ type mergedOptions struct {
 
 // resolveMergedVerb is the `resolve-merged` verb: close the rows a pull
 // landed.
-//
-// `report` writes the markers into the change; this verb reads them back
-// from the commits a pull brought in and stamps each named row with the
-// commit that carries its fix. It is the post-merge hook's entry point, so
-// it is bounded, quiet, and safe to run after every pull.
-//
-// The scan has two modes. A checkout that carries `.skill-log/reports/`
-// resolves from the report files the range added or changed; a checkout
-// without one resolves from the last trailer block of each commit. A
-// marker the trailer parser hid — a multi-author squash puts
-// `Co-authored-by:` in a later block — is reported with its value instead of
-// being dropped, and so is a value that is not `machine#id`.
 func resolveMergedVerb() Verb {
 	return Verb{
 		Name:    "resolve-merged",
@@ -46,8 +34,8 @@ func resolveMergedVerb() Verb {
 			"skill-log resolve-merged --since HEAD@{1} --quiet",
 			"skill-log resolve-merged --since origin/main~5 --dry-run --json",
 		},
-		// The flags that consume the next argument. The dispatcher reads this
-		// to tell `--since -h` (a revision spelled `-h`) from a help request.
+		// The flags that consume the next argument: the dispatcher reads this
+		// to tell `--since -h` from a help request.
 		ValueFlags: mergedFlags(&mergedOptions{}).names(),
 		Notes: "A checkout with .skill-log/reports/ resolves from the report files\n" +
 			"the range added or changed; elsewhere the last trailer block of\n" +
@@ -68,10 +56,7 @@ func resolveMergedVerb() Verb {
 
 func init() { register(resolveMergedVerb()) }
 
-// parseMergedOptions reads `resolve-merged`'s flags.
-//
-// An unknown flag, a missing value or an option-shaped `--since` is a usage
-// error, raised as a `usage` marker the caller turns into exit 2.
+// mergedFlags reads `resolve-merged`'s flags.
 func mergedFlags(options *mergedOptions) *flagSet {
 	flags := &flagSet{}
 	flags.valueEquals("--since", "a revision", func(value string) error { options.since = value; return nil })
@@ -101,33 +86,25 @@ func parseMergedOptions(args []string) (mergedOptions, error) {
 	return options, nil
 }
 
-// ---------------------------------------------------------------- scanning
-
 // The field and record separators of one `git log` call.
 //
-// NUL cannot appear in a commit message or an object name, so it cannot be
-// confused with data. The record separator ends one commit's fields: git
-// commit bodies cannot carry it usefully and no marker does, so one call
-// carries every commit's fields.
+// NUL cannot appear in a commit message or an object name, and the record
+// separator ends one commit's fields, so one call carries every commit's.
 const (
 	mergedField  = "\x00"
 	mergedRecord = "\x1e"
 )
 
-// scan is what one pass over history found: markers, bad values, hidden ones.
-//
-// `located` is the scan's yield: one located marker per row the scan named.
+// mergedScan is what one pass over history found: markers, bad values,
+// hidden ones.
 type mergedScan struct {
 	located   []store.Located
 	malformed []string
 	hidden    []string
 }
 
-// addLocated keeps the first marker for a row: newest wins, oldest is
-// ignored.
-//
-// The scan walks commits newest first, so the first marker it meets is the
-// newest commit that names the row.
+// addLocated keeps the first marker for a row: the scan walks commits newest
+// first, so the first marker it meets is the newest commit that names the row.
 func addLocated(located []store.Located, machine string, id int64, commit string, epoch int64) []store.Located {
 	for _, item := range located {
 		if item.Machine == machine && item.ID == id {
@@ -142,8 +119,8 @@ func addLocated(located []store.Located, machine string, id int64, commit string
 // gitOutput runs one git command in dir and returns its exact stdout.
 //
 // The stderr is discarded so a range git cannot read is a quiet empty answer
-// rather than noise on a pull. The arguments are passed as argv, never
-// through a shell, so a path or a revision cannot reach git as an option.
+// rather than noise on a pull. The arguments go as argv, never through a
+// shell, so a path or a revision cannot reach git as an option.
 func gitOutput(dir string, args ...string) string {
 	result := process.Run(dir, "git", args...)
 	if result.Status != 0 {
@@ -152,14 +129,24 @@ func gitOutput(dir string, args ...string) string {
 	return result.Stdout
 }
 
-// gitCommit is the commit `revision` names, or an empty string.
-//
-// This is the bound check: a reflog position that does not exist is not an
-// error here, it is a missing bound, and the caller falls back to a full
-// scan.
+// gitCommit is the commit `revision` names, or an empty string: a reflog
+// position that does not exist is a missing bound, not an error.
 func gitCommit(root, revision string) string {
 	out := gitOutput(root, "rev-parse", "--verify", revision+"^{commit}")
 	return strings.TrimSpace(out)
+}
+
+// splitMarkerValues is the markers in one trailer value: the trailer grammar
+// lets a line hold several, comma-separated.
+func splitMarkerValues(value string) []string {
+	var pieces []string
+	for _, piece := range strings.Split(value, ",") {
+		one := strings.TrimSpace(piece)
+		if one != "" {
+			pieces = append(pieces, one)
+		}
+	}
+	return pieces
 }
 
 // bodyTrailerValues is every marker the body's `Skill-log-Fix:` lines carry,
@@ -167,45 +154,29 @@ func gitCommit(root, revision string) string {
 //
 // The scan is line-based and prefix-based, like the marker grammar itself: a
 // line whose first characters are the key, then a colon, then the value. A
-// prose mention of the key in the middle of a paragraph is not a marker.
-//
-// A line may hold several comma-separated markers — the trailer grammar
-// allows it — so the line's value is split into its pieces here. Both sides
-// of the comparison are then one marker each, which is the only way "did the
-// parser return this one?" has an answer.
+// prose mention of the key mid-paragraph is not a marker.
 func bodyTrailerValues(body string) []string {
 	var values []string
 	key := strings.ToLower(trailerKey)
 	for _, line := range strings.Split(body, "\n") {
 		text := strings.TrimSpace(line)
-		lower := strings.ToLower(text)
-		if !strings.HasPrefix(lower, key) {
+		if !strings.HasPrefix(strings.ToLower(text), key) {
 			continue
 		}
-		rest := text[len(key):]
-		trimmed := strings.TrimSpace(rest)
+		trimmed := strings.TrimSpace(text[len(key):])
 		if trimmed == "" || !strings.HasPrefix(trimmed, ":") {
 			continue
 		}
-		value := strings.TrimSpace(trimmed[1:])
-		if value == "" {
-			continue
-		}
-		for _, piece := range strings.Split(value, ",") {
-			one := strings.TrimSpace(piece)
-			if one != "" {
-				values = append(values, format.Sanitize(one))
-			}
+		for _, piece := range splitMarkerValues(strings.TrimSpace(trimmed[1:])) {
+			values = append(values, format.Sanitize(piece))
 		}
 	}
 	return values
 }
 
-// valueReturned reports whether the trailer parser returned `value`.
-//
-// The parser returns one line per trailer it read, and a line may hold
-// several comma-separated markers. The comparison is on the pieces, so
-// `boxA#1, boxA#2` counts as returning both.
+// valueReturned reports whether the trailer parser returned `value`. The
+// parser returns one line per trailer it read, and a line may hold several
+// comma-separated markers, so the comparison is on the pieces.
 func valueReturned(returned, value string) bool {
 	for _, line := range strings.Split(returned, "\n") {
 		for _, piece := range strings.Split(line, ",") {
@@ -230,11 +201,9 @@ func containsText(items []string, value string) bool {
 // buriedTrailerValues is the values the body carries that the trailer parser
 // did not see.
 //
-// Git's last-trailer-block rule returns the markers of the final block only.
-// A body with two marker blocks — a squash that names one row and a later
-// paragraph that names another — therefore loses the earlier one. Every value
-// in the body the parser did not return is reported, so the scan names what
-// it did not act on.
+// Git's last-trailer-block rule returns the markers of the final block only,
+// so a body with two marker blocks loses the earlier one. Every value the
+// parser did not return is reported, so the scan names what it skipped.
 func buriedTrailerValues(body, returned string) []string {
 	var buried []string
 	for _, value := range bodyTrailerValues(body) {
@@ -282,9 +251,8 @@ func scanTrailers(root, since string) mergedScan {
 		values := fields[2]
 		body := fields[3]
 
-		// Every value the body carries that the trailer parser did not
-		// return is buried — a later trailer block hid it. The scan names it
-		// instead of letting it disappear.
+		// A value the trailer parser did not return is buried — a later
+		// trailer block hid it. The scan names it instead of losing it.
 		for _, value := range buriedTrailerValues(body, values) {
 			scan.hidden = append(scan.hidden,
 				firstNine(commit)+
@@ -294,11 +262,7 @@ func scanTrailers(root, since string) mergedScan {
 					" — resolve those rows by hand")
 		}
 		for _, valueLine := range strings.Split(values, "\n") {
-			for _, piece := range strings.Split(valueLine, ",") {
-				value := strings.TrimSpace(piece)
-				if value == "" {
-					continue
-				}
+			for _, value := range splitMarkerValues(valueLine) {
 				parsed, ok := marker.Parse(value)
 				if !ok {
 					scan.malformed = append(scan.malformed, format.Sanitize(value))
@@ -313,8 +277,7 @@ func scanTrailers(root, since string) mergedScan {
 	return scan
 }
 
-// reportFile is one report file a full or bounded scan will read, and its
-// stamp.
+// reportFile is one report file a scan reads, and its stamp.
 type reportFile struct {
 	path   string
 	commit string
@@ -347,9 +310,6 @@ func latestReportCommit(root, relative, revision string) reportFile {
 }
 
 // newestFirst is the files by their stamp, newest first.
-//
-// Selection rather than a sort: the scan reads a handful of reports, not a
-// database.
 func newestFirst(files []reportFile) []reportFile {
 	order := make([]int, 0, len(files))
 	taken := make([]bool, len(files))
@@ -377,10 +337,8 @@ func newestFirst(files []reportFile) []reportFile {
 }
 
 // reportFiles is the report files a scan reads: the range's, or the tree's.
-//
-// A bounded scan asks git which reports the range added or modified; a full
-// scan lists the directory. The tree is only read when the report directory
-// exists — that is the mode switch `report` uses too.
+// The tree is only read when the report directory exists — that is the mode
+// switch `report` uses too.
 func reportFiles(root, since string) []reportFile {
 	directory := filepath.Join(root, filepath.FromSlash(reportDir))
 	if !format.IsDir(directory) {
@@ -433,9 +391,9 @@ func commitHistory(root, span string) map[string]int {
 
 // scanReports is the markers from the report files this scan reads.
 //
-// The marker text is read from the commit that carries the file, not from
-// the working tree: a hook runs after a merge, and the checkout may hold
-// edits that are not part of the pull.
+// The marker text is read from the commit that carries the file, not the
+// working tree: a hook runs after a merge, and the checkout may hold edits
+// that are not part of the pull.
 func scanReports(root, since string) mergedScan {
 	var scan mergedScan
 	for _, file := range reportFiles(root, since) {
@@ -459,8 +417,6 @@ func scanReports(root, since string) mergedScan {
 	return scan
 }
 
-// ---------------------------------------------------------------- answers
-
 // skippedJSON is the skipped rows as an array of `{row, reason}` objects.
 func skippedJSON(items []store.MergedSkip) string {
 	values := make([]string, 0, len(items))
@@ -474,16 +430,8 @@ func skippedJSON(items []store.MergedSkip) string {
 }
 
 // ignoredMarkers is every marker the scan did not act on, hidden and
-// malformed alike.
-//
-// SPEC §5.6 names one array for both: "hidden and malformed markers are
-// reported with their ids or text in `ignored`, never silently dropped". A
-// malformed value reaches the JSON only through this array, so a
-// `--quiet --json` caller still learns about it — the quiet suppresses the
-// stderr notes, not the report.
-//
-// The malformed text comes first: it is the value itself, where the hidden
-// entry carries the commit it was buried in.
+// malformed alike. The malformed text comes first: it is the value itself,
+// where the hidden entry carries the commit it was buried in.
 func ignoredMarkers(outcome mergedOutcome) []string {
 	items := make([]string, 0,
 		len(outcome.scan.malformed)+len(outcome.hidden))
@@ -493,9 +441,6 @@ func ignoredMarkers(outcome mergedOutcome) []string {
 }
 
 // stampedMarkers is the markers of the rows a scan stamped, in order.
-//
-// The answer carries markers; the commit that stamped each one travels with
-// it inside the result, for the writer and the summary.
 func stampedMarkers(result store.MergedResult) []string {
 	markers := make([]string, 0, len(result.Stamped))
 	for _, item := range result.Stamped {
@@ -517,14 +462,8 @@ func renderMergedJSON(result store.MergedResult, ignored []string, dryRun bool) 
 }
 
 // mergedSummary is the one stdout line a non-JSON scan prints when it
-// stamped a row.
-//
-// Nothing to stamp means nothing to say: the hook's output has to stay
-// trustworthy, so a pull with no markers is silent.
-//
-// The commit each row was stamped with travels with the marker in the
-// result, so the summary names it without searching the scan for the marker
-// that matches.
+// stamped a row. Nothing to stamp means nothing to say: the hook's output
+// has to stay trustworthy, so a pull with no markers is silent.
 func mergedSummary(result store.MergedResult, dryRun bool) string {
 	if len(result.Stamped) == 0 {
 		return ""
@@ -547,10 +486,6 @@ func mergedSummary(result store.MergedResult, dryRun bool) string {
 }
 
 // mergedOutcome is what one scan decided and what it wants to say about it.
-//
-// The three scan-derived facts travel together because the notes, the
-// ignored array and the summary all read the same scan: the markers it
-// found, the markers it could not use, and the trailer it ignored.
 type mergedOutcome struct {
 	// scan is the scan whose markers were acted on: the report files in
 	// artifact mode, the trailers otherwise.
@@ -588,8 +523,7 @@ func mergedNotes(outcome mergedOutcome, result store.MergedResult, quiet bool) s
 }
 
 // localHostname is this machine's hostname, or empty when it cannot be read.
-//
-// Only a row written before `add` always filled the column needs it. Its
+// Only a row written before `add` always filled the column needs it, and its
 // absence must not stop a hook from resolving the rows that do carry a
 // machine.
 func localHostname() string {
@@ -615,7 +549,7 @@ func handleResolveMerged(args []string) Outcome {
 
 	// Bound the range only when git can resolve the revision. A missing
 	// reflog entry is a hook's normal condition after a fresh clone, so it
-	// falls back to a full scan quietly rather than failing a pull.
+	// falls back to a full scan rather than failing a pull.
 	since := options.since
 	if since != "" {
 		commit := gitCommit(root, since)
@@ -639,9 +573,8 @@ func handleResolveMerged(args []string) Outcome {
 		outcome.scan = trailerScan
 	}
 
-	// The markers the scan did not act on: the malformed values it read and
-	// the ones the trailer parse hid. Both are reported in one array, so
-	// `--quiet --json` still says what was dropped.
+	// The markers the scan did not act on, in one array, so `--quiet --json`
+	// still says what was dropped.
 	ignored := ignoredMarkers(outcome)
 
 	var result store.MergedResult
