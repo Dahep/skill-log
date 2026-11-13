@@ -48,8 +48,8 @@ func reportVerb() Verb {
 			"skill-log report --skill create-skill --slug skill-fix",
 			"skill-log report --check",
 		},
-		// The flags that consume the next argument. The dispatcher reads this
-		// to tell `--run -h` (a run spelled `-h`) from a help request.
+		// The flags that consume the next argument: the dispatcher reads this
+		// to tell `--run -h` from a help request.
 		ValueFlags: reportFlags(&reportOptions{}).names(),
 		Notes: "The report is the transport: .skill-log/reports/<branch>.md,\n" +
 			"one machine#id per line, committed with the change. Markers are\n" +
@@ -122,10 +122,9 @@ func parseReportOptions(args []string) (reportOptions, error) {
 // truncated.
 //
 // A branch name may carry `/`, spaces or unicode; a file name may not
-// usefully. Every run of characters outside `[a-z0-9._-]` becomes one
-// `-`, leading and trailing `.`/`-` are dropped, and the result is cut
-// to maxSlug. The same rule the reference used, so an existing report
-// keeps its name after the port.
+// usefully. Every run of characters outside `[a-z0-9._-]` becomes one `-`,
+// leading and trailing `.`/`-` are dropped, and the result is cut to
+// maxSlug.
 func branchSlug(branch string) string {
 	lower := strings.ToLower(strings.TrimSpace(branch))
 	var out strings.Builder
@@ -266,9 +265,9 @@ func recordReportRow(row store.Invocation, pending, resolved *[]string) {
 //
 // `--id` rows are looked up one by one, so a missing id is named even when
 // the other selectors would have excluded it. The other selectors then
-// narrow the named ids the same way they narrow a plain `--run` or
-// `--skill` cut. A query with no id list reads every matching row, with no
-// hidden limit: a report is not a preview.
+// narrow the named ids the same way they narrow a plain `--run` or `--skill`
+// cut. A query with no id list reads every matching row: a report is not a
+// preview.
 func selectReportMarkers(opened *store.Store, options reportOptions) (reportSelection, error) {
 	var selection reportSelection
 
@@ -330,8 +329,7 @@ type existingReport struct {
 //
 // A report is tool-owned: every non-blank line is a marker. A line that is
 // not one is reported with its position rather than dropped, because
-// rewriting the file would otherwise delete whatever a person wrote there
-// without a word.
+// rewriting the file would otherwise delete whatever a person wrote there.
 func parseReport(text, relative string) existingReport {
 	var report existingReport
 	for i, line := range strings.Split(text, "\n") {
@@ -386,10 +384,6 @@ func nothingOutcome(options reportOptions, resolved []string, notes string) Outc
 }
 
 // trailerOutcome is trailer mode: print the line, write nothing.
-//
-// The line is the transport here. The note says why nothing was written
-// and where the line belongs, so the caller does not go looking for a file
-// that this checkout does not have.
 func trailerOutcome(pending, resolved []string, notes string, options reportOptions) Outcome {
 	if len(pending) == 0 {
 		return nothingOutcome(options, resolved, notes)
@@ -420,8 +414,8 @@ type checkResult struct {
 //
 // A marker this store does not hold is a warning: it names a row on a
 // machine whose store has not been merged here, and that machine will
-// resolve it. An already-resolved row is a warning too. A line that is
-// not a marker is a problem — the merge cannot interpret it.
+// resolve it. An already-resolved row is a warning too. A line that is not
+// a marker is a problem — the merge cannot interpret it.
 func validateReport(text, relative string, opened *store.Store, haveStore bool) (checkResult, error) {
 	var result checkResult
 	for i, line := range strings.Split(text, "\n") {
@@ -560,8 +554,8 @@ func handleReport(args []string) Outcome {
 	slugSource := options.slug
 	if slugSource == "" {
 		branch := settings.GitBranch(root)
-		// A detached HEAD is called `HEAD`, which is not a branch name;
-		// an empty answer is "not a repository", which cannot happen here.
+		// A detached HEAD is called `HEAD`, which is not a branch name; an empty
+		// answer is "not a repository", which cannot happen here.
 		if branch == "HEAD" || branch == "" {
 			return Fail(
 				"cannot name the report file (detached HEAD?); pass --slug",
@@ -618,8 +612,8 @@ func handleReport(args []string) Outcome {
 
 	// A report only carries markers that parse back to the same row.
 	// `add` refuses a machine that cannot appear in one, but a row can
-	// predate that check or come from another store; writing it would put
-	// a line in the file no resolver can read.
+	// predate that check or come from another store; writing it would put a
+	// line in the file no resolver can read.
 	for _, item := range pending {
 		parsed, ok := marker.Parse(item)
 		if !ok || parsed.Text() != item {

@@ -2,10 +2,6 @@ package cli
 
 // The report directory's README and keep file, which `setup` creates with the
 // directory and never touches again.
-//
-// The names live beside the report directory's own constant (report.go) and
-// the README's wording beside the report format's rules, so the two cannot
-// disagree about what the transport is.
 const (
 	// reportReadmeName is the operator's one-page explanation of the
 	// transport.
@@ -16,11 +12,6 @@ const (
 )
 
 // reportDirReadme is the README `setup` writes into a new report directory.
-//
-// It is the operator's one-page explanation of the transport. The wording
-// follows the reference implementation's `reference/report-dir-README.md`,
-// with the file names and commands the 1.0 contract uses (`report` and
-// `<slug>.md`) in place of the report era's (`fix` and `fixes/<slug>.txt`).
 func reportDirReadme() string {
 	return `# .skill-log/reports
 
