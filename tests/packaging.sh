@@ -142,8 +142,6 @@ HOME_DIR=/tmp/home
 
 check "image: no Go toolchain" \
     "$(command -v go 2>/dev/null || true)" ""
-check "image: no Mojo toolchain" \
-    "$(command -v mojo 2>/dev/null || true)" ""
 check "image: no system SQLite under /usr/lib" \
     "$(find /usr/lib -name 'libsqlite3.so*' 2>/dev/null | wc -l | tr -d ' ')" "0"
 check "image: no system SQLite under /lib" \

@@ -637,21 +637,17 @@ session decides how the log gets read. Neither changes the other's contract.
   upload, attach a provenance attestation.
 - **Deliverables**: the binary, the two bundled skills, and a short operator
   guide. Consumer integration instructions are documentation, not code.
-- **Hand-written infrastructure** (the ecosystem does not provide it):
-  subcommand dispatch; the help renderer; the JSON writer (the tool writes
-  JSON and never parses it); marker and report parsing; the resolution plan.
-  The clock, the hostname, the process runner and the SQLite driver are
-  standard-library or module calls, not obligations.
-  [ADR-0001](docs/adr/0001-go-binary-and-sqlite.md) records why.
+- **Hand-written infrastructure**: subcommand dispatch; the help renderer;
+  the JSON writer; marker and report parsing; the resolution plan. The clock,
+  the hostname, the process runner and the SQLite driver are standard-library
+  or module calls. [ADR-0001](docs/adr/0001-go-binary-and-sqlite.md) records
+  why.
 
 ### Migration
 
-- The store is not inherited: 1.0 creates its own on first write. Moving a
-  machine's existing rows is a machine-setup task
-  ([Dahep/dotfiles#225](https://github.com/Dahep/dotfiles/issues/225)), not a
-  conversion.
-- Rollback is `mise uninstall skill-log` plus the old checkout; the store is
-  untouched throughout.
+- The store is created on first write, never inherited or converted. Moving a
+  machine's existing rows is a machine-setup task, not a conversion.
+- Rollback is `mise uninstall skill-log`; the store is untouched.
 
 ## 9. Testing
 

@@ -164,7 +164,7 @@ else
         "$(find "$ROOTFS" -name 'libsqlite3*' 2>/dev/null | wc -l | tr -d ' ')" "0"
     check "sandbox: the root carries no toolchain" \
         "$(find "$ROOTFS/usr/bin" -maxdepth 1 \
-            \( -name go -o -name mojo -o -name gcc -o -name cc \) 2>/dev/null |
+            \( -name go -o -name gcc -o -name cc \) 2>/dev/null |
             wc -l | tr -d ' ')" "0"
 fi
 

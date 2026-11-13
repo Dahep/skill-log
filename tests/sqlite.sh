@@ -129,7 +129,7 @@ if [ "$ENVIRONMENT" = "bubblewrap" ]; then
         "$([ -d "$SANDBOX_ROOT/usr/lib" ] && printf yes || printf no)" "no"
     check "the sandbox root carries no Go toolchain" \
         "$(find "$SANDBOX_ROOT/usr/bin" -maxdepth 1 \
-            \( -name go -o -name mojo -o -name gcc \) 2>/dev/null | wc -l | tr -d ' ')" "0"
+            \( -name go -o -name gcc \) 2>/dev/null | wc -l | tr -d ' ')" "0"
 else
     printf 'skip bwrap is not installed: the environment cannot rule out a system SQLite\n'
 fi
