@@ -43,9 +43,6 @@ require_artifact() {
             "$DIST" >&2
         exit 1
     fi
-    # The archive stages only the binary and its libraries: a directory
-    # from the tree the build read in means the build picked up something
-    # it must not.
     if [ -e "$DIST/src" ] || [ -e "$DIST/tests" ] || [ -e "$DIST/docs" ]; then
         printf 'smoke.sh: %s must stage the binary and lib/ only\n' "$DIST" >&2
         exit 1
@@ -124,19 +121,11 @@ check "plain: an unknown verb prints exactly one stderr line" \
 check "plain: an unknown verb names the verb" \
     "$(grep -c '^skill-log: unknown verb: not-a-verb$' "$SCRATCH/plain.err")" "1"
 
-# ---------------------------------------------------------- LD_DEBUG proof
-#
-# The bundled libsqlite3.so.0 is the one that gets loaded: the loader
-# search trace names the path inside dist/lib/.
 
 LD_DEBUG=libs "$DIST/skill-log" --version >"$SCRATCH/ld.out" 2>"$SCRATCH/ld.err"
 check "plain: the loader resolves libsqlite3.so.0 from dist/lib" \
     "$(grep -c "calling init: $DIST/lib/libsqlite3.so.0" "$SCRATCH/ld.err")" "1"
 
-# --------------------------------------------------------------- sandbox
-#
-# A root with no system SQLite at all: the packaged copy is the only
-# possible source, and removing it must produce one named line.
 sandbox_available=1
 command -v bwrap >/dev/null 2>&1 || sandbox_available=0
 
@@ -147,8 +136,6 @@ build_sandbox_root() {
         "$root/etc" "$root/dev" "$root/proc" "$root/pkg/lib"
     chmod 1777 "$root"
 
-    # /usr/lib and /usr/lib32 without any libsqlite3*, and without the
-    # ld.so cache, so the loader has nothing but its default search path.
     python3 - "$root" <<'PY'
 import os
 import shutil
@@ -188,16 +175,13 @@ for src, dst in (("/usr/lib", os.path.join(root, "usr/lib")),
             pass
 PY
 
-    # The dynamic loader must be a real file at /lib64.
     cp -a /lib64/ld-linux-x86-64.so.2 "$root/lib64/"
 
-    # A few binaries for diagnostics inside the sandbox.
     for b in sh bash cat ls env; do
         p="$(command -v "$b" || true)"
         [ -n "$p" ] && cp -a "$p" "$root/usr/bin/" || true
     done
 
-    # The package under test.
     cp -a "$DIST/skill-log" "$root/pkg/"
     cp -a "$DIST"/lib/*.so "$root/pkg/lib/" 2>/dev/null || true
     cp -a "$DIST/lib/libsqlite3.so.0" "$root/pkg/lib/"
@@ -218,7 +202,6 @@ else
     ROOTFS="$SCRATCH/root"
     build_sandbox_root "$ROOTFS"
 
-    # Positive: the bundled copy is found with no system SQLite present.
     run_sandbox "$ROOTFS" /pkg/skill-log --version \
         >"$SCRATCH/box.out" 2>"$SCRATCH/box.err"
     check "sandbox: --version exits 0 with no system SQLite" "$?" "0"
@@ -229,14 +212,11 @@ else
         >"$SCRATCH/boxhelp.out" 2>"$SCRATCH/boxhelp.err"
     check "sandbox: --help exits 0 with no system SQLite" "$?" "0"
 
-    # The loader proof, inside the sandbox: the packaged copy is loaded.
     LD_DEBUG=libs run_sandbox "$ROOTFS" /pkg/skill-log --version \
         >"$SCRATCH/boxld.out" 2>"$SCRATCH/boxld.err"
     check "sandbox: the loader resolves libsqlite3.so.0 from the package" \
         "$(grep -c 'calling init: /pkg/lib/libsqlite3.so.0' "$SCRATCH/boxld.err")" "1"
 
-    # Negative: the bundled copy removed, and there is no system SQLite to
-    # fall back on.
     rm -f "$ROOTFS/pkg/lib/libsqlite3.so.0"
     run_sandbox "$ROOTFS" /pkg/skill-log --version \
         >"$SCRATCH/neg.out" 2>"$SCRATCH/neg.err"

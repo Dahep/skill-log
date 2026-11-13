@@ -88,7 +88,6 @@ check "the timestamp is ISO 8601 with an offset" \
 check "the other row is untouched" \
     "$(sqlite3 "$DB" 'select fix from invocations where id = 2')" ""
 
-# A second identical call changes nothing, including the first stamp's time.
 FIRST_STAMP="$(sqlite3 "$DB" 'select resolved_at from invocations where id = 1')"
 run resolve --id 1 --fix abc1234
 check "a repeated resolve exits 0" "$STATUS" "0"
@@ -98,7 +97,6 @@ check "a repeated resolve keeps the first timestamp" \
     "$(sqlite3 "$DB" 'select resolved_at from invocations where id = 1')" \
     "$FIRST_STAMP"
 
-# A different commit is a correction, not a repeat.
 run resolve --id 1 --fix def5678
 check "a different commit resolves again" "$OUT" "boxA#1 resolved: def5678"
 check "a different commit is written" \
@@ -121,7 +119,6 @@ check "a dry run leaves the timestamp alone" \
 check "a dry run does not change the store file" \
     "$(md5sum <"$DB")" "$BEFORE_SUM"
 
-# A dry run of a repeat previews the stored answer, not a new one.
 run resolve --id 1 --fix def5678 --dry-run
 check "a dry run of a repeat says already resolved" "$OUT" \
     "boxA#1 already resolved: def5678"
@@ -207,7 +204,6 @@ run resolve --id 1 --fix abc --nope
 check "an unknown flag exits 2" "$STATUS" "2"
 check_one_line "an unknown flag is one line" "$ERR"
 
-# A flag's value is taken as written: `--fix -h` is the commit `-h`.
 run resolve --id 1 --fix -h
 check "a --fix value spelled -h is a value" "$STATUS" "0"
 check "a --fix value spelled -h is written" \

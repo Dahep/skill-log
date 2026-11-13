@@ -22,8 +22,6 @@ DIST="$ROOT/dist"
 VENDOR="$ROOT/vendor"
 SRC="$ROOT/src"
 
-# The generated source file: the version lives in the build, not in the
-# checkout.
 GENERATED="$BUILD/src/skill_log/version.mojo"
 log() { printf '==> %s\n' "$*"; }
 
@@ -60,7 +58,6 @@ rm -rf "$BUILD"
 rm -rf "$DIST"
 mkdir -p "$BUILD/src/skill_log" "$DIST/lib"
 
-# The sources the build compiles: the tree under src/.
 cp -r "$SRC/skill_log/." "$BUILD/src/skill_log/"
 
 # The generated version module shadows the checked-in placeholder, so it
@@ -99,17 +96,14 @@ mojo_lib_dir() {
 
 MOJO_LIB_DIR="$(mojo_lib_dir)"
 
-# The sonames the binary needs, directly or through the runtime library.
 bundle_sonames() {
     local binary="$1" lib_dir="$2"
     local seen="" soname path
 
-    # The binary's own direct dependencies.
     for soname in $(readelf -d "$binary" | sed -n 's/.*(NEEDED).*\[\(.*\)\]$/\1/p'); do
         seen="$seen $soname"
     done
 
-    # And the dependencies of every runtime library found so far.
     for soname in $seen; do
         path="$lib_dir/$soname"
         [ -f "$path" ] || continue
@@ -121,7 +115,6 @@ bundle_sonames() {
         done
     done
 
-    # Only the libraries the toolchain itself ships.
     for soname in $seen; do
         [ -f "$lib_dir/$soname" ] || continue
         printf '%s\n' "$soname"

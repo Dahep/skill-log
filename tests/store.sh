@@ -64,9 +64,6 @@ check "the row carries a local ISO 8601 stamp with an offset" \
     "$(sqlite3 "$DB" 'select ts from invocations order by id limit 1' \
         | grep -cE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[+-][0-9]{2}:[0-9]{2}$')" "1"
 
-# Six writers against a store that does not exist yet. Both tables are
-# created inside one transaction, so no writer can see a half-built store
-# and refuse it as foreign.
 PARALLEL_DB="$SCRATCH/parallel.db"
 PARALLEL_ERR="$SCRATCH/parallel.err"
 : >"$PARALLEL_ERR"
@@ -97,9 +94,6 @@ check "the problems are in order and attached" \
 check "the row carries the skill" \
     "$(sqlite3 "$DB" "select skill from invocations where id = $ID")" "demo"
 
-# A newline in a problem must not survive the write. The assertion is on
-# the bytes in the store: `like '%one%two%'` would pass with the newline
-# still there, because `%` matches it.
 run add --skill demo --problem "$(printf 'line one\nline two')"
 check "a newline in a problem exits 0" "$STATUS" "0"
 NEWLINE_ID="$(sqlite3 "$DB" 'select max(id) from invocations')"
@@ -116,16 +110,12 @@ run add --skill duplicate
 AFTER="$(sqlite3 "$DB" 'select count(*) from invocations')"
 check "two identical calls produce two rows" "$AFTER" "$((BEFORE + 2))"
 
-# A flag's value is taken as written, even when it is spelled like help.
 run add --skill helpval --problem -h
 check "a problem spelled -h is recorded" "$STATUS" "0"
 check "the problem value -h reaches the store" \
     "$(sqlite3 "$DB" "select problem from problems
         where invocation_id = (select max(id) from invocations)")" "-h"
 
-# A pipe that fills the read buffer exactly has no terminator in it. The
-# read is bounded by the count `read` returned, so the problem is exactly
-# the bytes that were piped.
 python3 -c "import sys; sys.stdout.write('a'*65536)" | \
     env -u XDG_STATE_HOME -u SKILL_LOG_DB HOME="$HOME_DIR" \
     "$BIN" add --skill stdin --problem - >/dev/null 2>"$SCRATCH/stderr"
@@ -138,13 +128,6 @@ check "a full-buffer stdin pipe stores nothing beyond the pipe" \
     "$(sqlite3 "$DB" "select count(*) from problems where invocation_id = $STDIN_ID
         and problem glob '*[^a]*'")" "0"
 
-# A line written in two chunks is still one line, and both parts must
-# survive.
-#
-# It does not claim to exercise the short-read path — a pipe may hand
-# both chunks over in one read. The reader repeats its read until it sees
-# the newline (src/skill_log/stdin.mojo), so both outcomes end at the same
-# place.
 ( printf 'first part'; printf ' second part\n' ) | \
     env -u XDG_STATE_HOME -u SKILL_LOG_DB HOME="$HOME_DIR" \
     "$BIN" add --skill stdin --problem - >/dev/null 2>"$SCRATCH/stderr"
@@ -181,8 +164,6 @@ check "dry-run carries no marker" \
 
 # ------------------------------------------------------------ clock
 
-# The one clock injection (SPEC §9): SKILL_LOG_NOW fixes the writer's
-# stamp, so a case can pin time without writing the store or sleeping.
 OUT="$(env -u XDG_STATE_HOME -u SKILL_LOG_DB HOME="$HOME_DIR" \
     SKILL_LOG_NOW=2020-01-02T03:04:05+00:00 \
     "$BIN" add --skill pinned --json)"
@@ -230,9 +211,6 @@ check "a newer store is named with both versions" \
     "$(printf '%s' "$ERR" | grep -c 'has schema version 99.*understands 1')" "1"
 check_one_line "a newer store is one line" "$ERR"
 
-# A store whose *invocations* table is right but whose *problems* table is
-# not this schema is refused before anything is written into it: the write
-# would fail on the problems INSERT, after the store had been accepted.
 cp "$DB" "$SCRATCH/wrong-problems.db"
 sqlite3 "$SCRATCH/wrong-problems.db" \
     'drop table problems; create table problems (dummy TEXT)'
@@ -244,9 +222,6 @@ check "a store with the wrong problems table is foreign" \
 check "a store with the wrong problems table is not written" \
     "$(md5sum <"$SCRATCH/wrong-problems.db")" "$BEFORE_SUM"
 
-# The Python-era store: the two tables exist, the columns are the old
-# ones. It is a skill-log store and it is not this schema, so it is named
-# as older and left exactly as found.
 sqlite3 "$SCRATCH/older.db" <<'SQL'
 CREATE TABLE invocations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -284,8 +259,6 @@ check "an older store is not converted" "$(md5sum <"$SCRATCH/older.db")" "$BEFOR
 check "the older row is still there untouched" \
     "$(sqlite3 "$SCRATCH/older.db" 'select count(*) from invocations')" "1"
 
-# A path may contain any word the refusal vocabulary uses. The refusal is
-# a value, so the path cannot decide which one the tool reports.
 printf 'not a directory' >"$SCRATCH/not-a-dir"
 for pair in "older:older store" "newer5:newer store" \
     "foreign:foreign store" "damaged:damaged store"; do
@@ -298,8 +271,6 @@ for pair in "older:older store" "newer5:newer store" \
     check_one_line "a path named $word is one line" "$ERR"
 done
 
-# A diagnostic that carries a newline is still one line: the path below
-# includes one, and the damaged-store message names the path.
 WEIRD_DB="$SCRATCH/$(printf 'weird\npath').db"
 printf 'not a database' >"$WEIRD_DB"
 run add --skill x --db "$WEIRD_DB"
@@ -307,15 +278,6 @@ check "a damaged store with a newline in its path is named" \
     "$(printf '%s' "$ERR" | grep -c 'damaged store')" "1"
 check_one_line "a newline in a path does not split the diagnostic" "$ERR"
 
-# --------------------------------------- the path cannot choose the kind
-#
-# The failure's kind is a value, never a word re-derived from an error
-# message — and the message a caller sees carries the caller's path. So a
-# path that contains "malformed" or "older" must not turn an unrelated
-# failure into that refusal.
-#
-# The case that proves it: the store file cannot be opened at all (it is
-# a directory), so SQLite reports `sqlite3_open('<path>') failed`.
 for word in malformed older locked foreign newer; do
     OPEN_DIR="$SCRATCH/openfail/$word/store.db"
     mkdir -p "$OPEN_DIR/inside"
@@ -335,8 +297,6 @@ for word in malformed older locked foreign newer; do
     check_one_line "a path named $word is one line" "$ERR"
 done
 
-# A file that cannot be opened is a store failure too, and the path it
-# carries does not decide which one.
 NOREAD_DIR="$SCRATCH/noread/malformed"
 mkdir -p "$NOREAD_DIR"
 printf 'not a database' >"$NOREAD_DIR/store.db"
@@ -363,16 +323,6 @@ check "a failed write leaves no row behind" \
     "$(sqlite3 "$DB" 'select count(*) from invocations')" "$BEFORE"
 check_one_line "a failed write is one line" "$ERR"
 
-# ------------------------------------------------- the write path's names
-#
-# The read path has a taxonomy: damage is damage, a lock is a lock, and
-# anything else is the generic operational failure. The write path must
-# have the same one — a raw SQLite message is not a name, and
-# `sqlite3_exec failed: PRAGMA user_version=1 -- attempt to write a
-# readonly database` leaks the engine's wording into the CLI's contract.
-#
-# All three write verbs must name it the same way, and none of them may
-# print SQL.
 RODIR2="$SCRATCH/readonly-writes"
 rm -rf "$RODIR2"
 mkdir -p "$RODIR2"
@@ -398,9 +348,6 @@ check_absent "resolve leaks no SQL" "$ERR" "sqlite3_exec"
 chmod 0755 "$RODIR2"
 chmod 0644 "$RO_DB2"
 
-# A read-only store whose path carries the vocabulary is still a
-# read-only store: the write path's taxonomy does not read the path
-# either.
 RO_WORD_DIR="$SCRATCH/readonly-word/older"
 mkdir -p "$RO_WORD_DIR"
 run add --skill fixture --db "$RO_WORD_DIR/store.db"
@@ -416,10 +363,6 @@ check_absent "the vocabulary path did not make it a damaged store" \
     "$ERR" "damaged store"
 chmod 0644 "$RO_WORD_DIR/store.db"
 
-# ------------------------------------------------- a path that cannot open
-#
-# A store path that names something which cannot hold a database — a
-# directory, here — is a named fact, not the engine's return code.
 UNOPENABLE="$SCRATCH/unopenable"
 rm -rf "$UNOPENABLE"
 mkdir -p "$UNOPENABLE/adir"
@@ -469,17 +412,12 @@ check_one_line "a usage error is one line" "$ERR"
 run add --skill x --nope
 check "an unknown flag is a usage error" "$STATUS" "2"
 
-# ---------------------------------------------------------- a locked store
-#
-# A write that cannot get the store's lock within the budget is a named
-# refusal, not a SQLite message.
 LOCKDIR="$SCRATCH/locked"
 mkdir -p "$LOCKDIR"
 LOCK_DB="$LOCKDIR/skills.db"
 run add --skill lock-holder --db "$LOCK_DB"
 check "the locked fixture is written" "$STATUS" "0"
 
-# A second process holds the write lock for longer than the budget.
 hold_lock "$LOCK_DB" "$SCRATCH/lock-ready" 12 &
 HOLDER=$!
 wait_for "$SCRATCH/lock-ready"
@@ -491,29 +429,14 @@ check_one_line "the locked store's refusal is one line" "$ERR"
 kill "$HOLDER" 2>/dev/null
 wait "$HOLDER" 2>/dev/null
 
-# ------------------------------------------- a path that names the vocabulary
-#
-# The classification is made on what the engine said, never on the path
-# the caller named. So a path that *is* a word of the vocabulary must not
-# change the answer — and the path must not be able to erase the engine's
-# wording either.
-#
-# Two facts are at stake: a path named `locked` must still retry a held
-# lock, and a path named `malformed` must still be damaged when the file
-# really is corrupt.
 VOCAB_DIR="$SCRATCH/vocabulary"
 rm -rf "$VOCAB_DIR"
 mkdir -p "$VOCAB_DIR"
 
-# A relative path named `locked`: the engine's wording carries the word
-# "locked" in "database is locked", and the strip must not take it.
 (
     cd "$VOCAB_DIR" || exit 1
     "$BIN" add --skill lock-holder --db locked >/dev/null 2>&1
 )
-# A second process holds the write lock for longer than the connection's
-# busy timeout but inside the write budget, so the bounded retry has to
-# carry the write past it.
 hold_lock "$VOCAB_DIR/locked" "$SCRATCH/vocab-lock-ready" 3 &
 HOLDER=$!
 wait_for "$SCRATCH/vocab-lock-ready"
@@ -527,8 +450,6 @@ check "a store path named 'locked' retries the lock" "$VOCAB_STATUS" "0"
 check "the write behind the lock landed" \
     "$(sqlite3 "$VOCAB_DIR/locked" "SELECT COUNT(*) FROM invocations WHERE skill = 'after-the-lock'")" "1"
 
-# A path named `malformed` that really holds a corrupt file: the
-# corruption must be reported as damage, not as the generic failure.
 python3 - "$VOCAB_DIR/malformed" <<'PY'
 import sqlite3
 import sys
@@ -553,8 +474,6 @@ check_contains "a corrupt store path named 'malformed' is damaged" "$ERR" \
 check_absent "a corrupt store path named 'malformed' is not generic" \
     "$ERR" "cannot write the store"
 
-# And a healthy store under the same name is not damage: the path must
-# not choose the answer.
 (
     cd "$VOCAB_DIR" || exit 1
     "$BIN" add --skill healthy --db malformed-healthy >/dev/null 2>"$SCRATCH/stderr"
@@ -565,16 +484,6 @@ check "a healthy store path named 'malformed' is written" "$STATUS" "0"
 check_absent "a healthy store path named 'malformed' is not damage" \
     "$ERR" "damaged store"
 
-# ------------------------------------------------------- reads create nothing
-#
-# Reads never create the state directory, an empty database, or a missing
-# store. The read path opens the store read-only — SQLite's own
-# `SQLITE_OPEN_READONLY`, through the seam in `opendb.mojo` — so a store
-# that is not there is a failure of the open, never a new file.
-#
-# The proof is the open itself. A read of a store whose file carries no
-# write permission succeeds, and the read moves neither the file's bytes
-# nor its mtime.
 RODIR="$SCRATCH/readonly"
 chmod -R 0755 "$RODIR" 2>/dev/null
 rm -rf "$RODIR"
@@ -582,7 +491,6 @@ mkdir -p "$RODIR"
 RO_DB="$RODIR/skills.db"
 run add --skill read-only --db "$RO_DB"
 check "the read-only fixture is written" "$STATUS" "0"
-# A non-WAL store, so the read needs no sidecar of its own.
 sqlite3 "$RO_DB" 'PRAGMA journal_mode=DELETE;' >/dev/null
 rm -f "$RO_DB-wal" "$RO_DB-shm"
 chmod 0444 "$RO_DB"
@@ -598,20 +506,14 @@ check "the read left the store's bytes alone" \
     "$(md5sum <"$RO_DB")" "$RO_BEFORE"
 check "the read left the store's mtime alone" \
     "$(stat -c %Y "$RO_DB")" "$RO_MTIME"
-# The sidecars, counted with a glob rather than a listing: the glob
-# cannot pick up a name the way `ls | grep` can.
 SIDECARS=0
 for sidecar in "$RODIR"/skills.db-*; do
     [ -e "$sidecar" ] && SIDECARS=$((SIDECARS + 1))
 done
 check "the read created no sidecar" "$SIDECARS" "0"
-# The directory is writable again, so the next run's cleanup can remove
-# it.
 chmod 0755 "$RODIR"
 chmod 0644 "$RO_DB"
 
-# A read of a store that is not there creates nothing: not the file,
-# not the directory, not an empty database.
 ABSENT="$SCRATCH/absent/db/skills.db"
 run show --db "$ABSENT"
 check "a read of an absent store exits 0" "$STATUS" "0"

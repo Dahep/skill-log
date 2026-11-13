@@ -120,19 +120,14 @@ else
     pass "the run: blocks interpolate no GitHub expression into shell source"
 fi
 
-# The version reaches the shell through the environment: the tag is
-# read into an env: entry, and the shell reads it from there.
 check_contains "the tag reaches the shell through the environment" \
     "$(cat "$WORKFLOW")" "TAG_NAME: \${{ github.ref_name }}"
 check_contains "the version reaches the package step through the environment" \
     "$(cat "$WORKFLOW")" "SKILL_LOG_VERSION: \${{ steps.version.outputs.version }}"
 
-# The grammar is checked: a strict vX.Y.Z, before anything uses it.
 check_contains "the workflow validates the version grammar" \
     "$(cat "$WORKFLOW")" "v[0-9]*.[0-9]*.[0-9]*"
 
-# The third-party actions are pinned to commit SHAs: a tag is a name
-# somebody else can move.
 UNPINNED="$(grep -E '^[[:space:]]*uses:[[:space:]]*[^[:space:]]+@[^[:space:]]*$' \
     "$WORKFLOW" || true)"
 if [ -n "$UNPINNED" ]; then
@@ -142,29 +137,18 @@ else
     pass "every third-party action is pinned to a commit"
 fi
 
-# Every `uses:` names a version at all, and the pinned ones are SHAs.
 check_contains "the checkout action is pinned" \
     "$(cat "$WORKFLOW")" "actions/checkout@"
 
-# ------------------------------------------------- the scanner sees the bodies
-#
-# The scan above is only as good as the scanner behind it: a scanner that
-# sees no block body at all finds no expression in one. So the scanner is
-# proved on a workflow of its own: the same block shape, with an expression
-# in the body, must be found.
 MUTANT="$SCRATCH/mutant.yml"
-# The mutation: the version's own assignment inside a `run: |` block body
-# becomes an expression, the way a careless edit would write it.
 sed 's|version="\$TAG_NAME"|version="${{ github.ref_name }}"|' \
     "$WORKFLOW" > "$MUTANT"
 if [ ! -s "$MUTANT" ]; then
     fail "the mutation could not be written"
 else
-    # The mutation really did put an expression into a block body.
     # shellcheck disable=SC2016  # the expression is the text being looked for
     check_contains "the mutation put an expression into a block body" \
         "$(cat "$MUTANT")" 'version="${{ github.ref_name }}"'
-    # And the scanner finds it.
     # shellcheck disable=SC2016  # the expression is the text being looked for
     if run_lines "$MUTANT" | grep -qF '${{'; then
         pass "the scanner sees an expression in a block body"
@@ -173,15 +157,9 @@ else
     fi
 fi
 
-# ------------------------------------- the scanner sees every block form
-#
-# Each block form is mutation-tested on a workflow of its own: an
-# expression inside a body the scanner must see, and the scanner must find
-# it.
 for form in list comment; do
     case "$form" in
     list)
-        # The list-item form: the step's key carries the item's dash.
         FORM_YML="$SCRATCH/form-list.yml"
         cat > "$FORM_YML" <<'FORM'
 name: form
@@ -196,7 +174,6 @@ jobs:
 FORM
         ;;
     comment)
-        # The comment form: the block indicator carries a comment.
         FORM_YML="$SCRATCH/form-comment.yml"
         cat > "$FORM_YML" <<'FORM'
 name: form
@@ -212,12 +189,10 @@ FORM
         ;;
     esac
 
-    # The mutation: the body of the block gets an expression.
     # shellcheck disable=SC2016  # the expression is the text being looked for
     sed 's|echo "made up"|echo "${{ github.ref_name }}"|' \
         "$FORM_YML" > "$FORM_YML.mutant"
 
-    # The mutation really did put an expression into the block body.
     # shellcheck disable=SC2016  # the expression is the text being looked for
     if ! grep -qF '${{' "$FORM_YML.mutant"; then
         fail "the $form mutation could not be written"

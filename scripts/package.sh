@@ -118,7 +118,6 @@ esac
 
 # ----------------------------------------------------------------- sqlite
 
-# check_sqlite <file> <label>: the shape every bundled library must have.
 check_sqlite() {
     local file="$1" label="$2" soname max floor
     [ -f "$file" ] || die "$label is not a file: $file"
@@ -129,9 +128,6 @@ check_sqlite() {
     [ "$soname" = "libsqlite3.so.0" ] ||
         die "$label has soname '$soname', expected libsqlite3.so.0"
 
-    # The glibc floor guard: the library's own symbol needs must not
-    # exceed the floor. This is what refuses a development machine's
-    # SQLite on a modern distro.
     max="$(readelf --version-info "$file" 2>/dev/null |
         grep -o 'GLIBC_[0-9.]*' | sed 's/^GLIBC_//' | sort -uV | tail -1 || true)"
     if [ -n "$max" ]; then
@@ -141,8 +137,6 @@ check_sqlite() {
     fi
 }
 
-# The pinned fetch: download once into the cache, verify both hashes on
-# every run. Its stdout is only the path — every message goes to stderr.
 fetch_sqlite() {
     local deb="$CACHE/$SQLITE_DEB" so
 
@@ -206,8 +200,6 @@ NAME="skill-log-$VERSION-$TARGET.tar.gz"
 
 [ -x "$STAGE/skill-log" ] || die "$STAGE/skill-log is missing after the build"
 
-# The staged libraries, by name and not by `ls`: a glob cannot pick up
-# a stray file the way a directory listing can.
 staged="$(printf '%s\n' "$STAGE"/lib/* | sed "s|^$STAGE/lib/||" | sort)"
 expected="$(printf '%s\n' \
     libAsyncRTRuntimeGlobals.so \

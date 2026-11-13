@@ -210,8 +210,6 @@ check "the flag beats the detected machine" "$(json_field "$OUT" machine)" "flag
 
 # ------------------------------------------------------------- adapters
 
-# No adapter runs unasked: with an opencode session in the environment
-# and a session store present, the row carries no harness and no model.
 OC_HOME="$SCRATCH/oc-home"
 mkdir -p "$OC_HOME/.local/share/opencode"
 sqlite3 "$OC_HOME/.local/share/opencode/opencode.db" <<'SQL'
@@ -238,8 +236,6 @@ check "the opencode adapter fills the session" "$(json_field "$OUT" session)" "s
 check "the opencode adapter renders the model as provider/id" \
     "$(json_field "$OUT" model)" "opencode/kimi-k3"
 
-# The stored model is a JSON object. The id is the top-level one: a
-# nested object carrying the same key must not answer for it.
 OUT="$(HOME="$OC_HOME" OPENCODE_SESSION_ID=ses_nested \
     "$BIN" add --skill adapters --dry-run --json --adapter opencode)"
 check "the model reader takes the top-level id" \
@@ -276,8 +272,6 @@ check "SKILL_LOG_MACHINE does not fill the machine" \
 OUT="$("$BIN" add --skill adapters --dry-run --json --machine named)"
 check "--machine names the machine" "$(json_field "$OUT" machine)" "named"
 
-# The machine namespaces every marker (`machine#id`), so a value that
-# cannot appear in one is refused at the boundary.
 run add --skill machine --dry-run --machine 'box#extra'
 check "a machine with a marker separator is a usage error" "$STATUS" "2"
 check_one_line "a machine with a marker separator is one line" "$ERR"
@@ -389,8 +383,6 @@ check "the row carries the machine" \
 
 # --------------------------------------------------------------- json
 
-# The writer escapes; the reader here parses. A value carrying a quote
-# round-trips, which a `sed` field reader cannot do.
 OUT="$("$BIN" add --skill 'a"b' --dry-run --json)"
 check "an escaped quote round-trips through the JSON" \
     "$(json_field "$OUT" skill)" 'a"b'

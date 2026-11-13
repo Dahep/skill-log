@@ -28,7 +28,6 @@ fi
 # shellcheck disable=SC1091  # the harness sits beside the suite, not on PATH
 . "$HERE/lib.sh"
 
-# The pinned library: the one scripts/package.sh fetches and verifies.
 PINNED=""
 for candidate in \
     "$ROOT/.package-cache/libsqlite3.so.0" \
@@ -46,16 +45,11 @@ fi
 
 printf 'pinned library: %s\n' "$PINNED"
 
-# The tools the case needs: the pinned toolchain, the patcher that points
-# the artifact at its own libraries, and the SQLite CLI.
 require_tools mise patchelf sqlite3
 
 rm -rf "$SCRATCH"
 mkdir -p "$SCRATCH/home" "$SCRATCH/build" "$SCRATCH/src"
 
-# The artifact, built against the pinned library: the same sources, the
-# same build script, the library the release ships. The version file is
-# replaced by the heredoc below, so the build writes its own version there.
 cp -r "$ROOT/src/skill_log/." "$SCRATCH/src/skill_log/"
 cat >"$SCRATCH/src/skill_log/version.mojo" <<'EOF'
 """The release version, baked in at build time."""
@@ -77,7 +71,6 @@ if ! "$MOJO_BIN" build -I "$ROOT/vendor" -I "$SCRATCH/src" \
 fi
 pass "the artifact builds against the pinned library"
 
-# The bundled libraries, beside the binary: the release's own layout.
 mkdir -p "$SCRATCH/build/lib"
 for lib in "$ROOT"/dist/lib/*.so*; do
     [ -e "$lib" ] || continue
@@ -108,7 +101,6 @@ check "the row carries a local ISO 8601 stamp with an offset" \
         "select ts from invocations" \
         | grep -cE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[+-][0-9]{2}:[0-9]{2}$')" "1"
 
-# The read path, and the resolution that writes a stamp.
 run show --json
 check "a read against the pinned library exits 0" "$STATUS" "0"
 check "a read against the pinned library reads the row" \

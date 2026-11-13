@@ -71,8 +71,6 @@ else
     pass "a read creates no store"
 fi
 
-# The JSON stream of an absent store is empty: not a line, not a blank
-# line, no bytes at all.
 "$BIN" show --json >"$SCRATCH/absent.json" 2>"$SCRATCH/stderr"
 check "an absent store in json exits 0" "$?" "0"
 check "an absent store in json prints nothing" \
@@ -82,8 +80,6 @@ check "an absent store in json is quiet on stderr" \
 
 # ------------------------------------------------------------- empty store
 
-# A store that exists but holds no rows: the same answer as an absent
-# one, and the file is left as it was.
 sqlite3 "$SCRATCH/empty.db" <<'SQL'
 CREATE TABLE invocations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -116,8 +112,6 @@ check "an empty store says so" "$OUT" "no invocations logged yet"
 check "an empty store in json prints nothing" \
     "$(wc -c <"$SCRATCH/empty.json" | tr -d ' ')" "0"
 
-# A file that exists but was never initialised: no tables at all. It is
-# not a foreign store, because it holds nothing to be foreign.
 : >"$SCRATCH/untouched.db"
 run show --db "$SCRATCH/untouched.db"
 check "an untouched empty file exits 0" "$STATUS" "0"
@@ -132,9 +126,6 @@ check "an untouched empty file has an empty JSON stream" \
 
 # ------------------------------------------------------------------- rows
 
-# Three rows with different context, so every filter has something to
-# cut. The worktree of the second row is under the sandbox home, so the
-# shortening has something to shorten.
 run add --skill alpha --machine box1 --harness opencode --session ses-1 \
     --model opencode-go/minimax-m3 --repo alpha-repo --worktree "$HOME_DIR/wt" \
     --problem "first issue" --problem "second issue"
@@ -148,7 +139,6 @@ check "the third row is written" "$STATUS" "0"
 
 run show
 check "show exits 0" "$STATUS" "0"
-# A header, three invocations and the two problem lines of the first.
 check "the table has a header, three rows and the problems" \
     "$(printf '%s\n' "$OUT" | grep -c .)" "6"
 check "the table has exactly three invocation rows" \
@@ -159,15 +149,11 @@ check_contains "the table shows the session" "$OUT" "ses-1"
 check_contains "the table shows the parent" "$OUT" "ses-1"
 check_contains "the table shows the t3 thread" "$OUT" "thr-9"
 
-# The problems are indented under their invocation, one per line, in
-# order.
 check "the first problem is indented" \
     "$(printf '%s\n' "$OUT" | grep -c '^    problem 1: first issue$')" "1"
 check "the second problem is indented" \
     "$(printf '%s\n' "$OUT" | grep -c '^    problem 2: second issue$')" "1"
 
-# The worktree under the home is shortened; one outside it is not.
-# The tilde is the literal output, not a path to expand.
 # shellcheck disable=SC2088
 check_contains "the worktree under the home is shortened" "$OUT" "~/wt"
 check_contains "a worktree outside the home is untouched" "$OUT" "/elsewhere/beta"
@@ -175,8 +161,6 @@ check_contains "a worktree outside the home is untouched" "$OUT" "/elsewhere/bet
 check "a clean row has no problem lines" \
     "$(printf '%s\n' "$OUT" | grep -c '^    problem')" "2"
 
-# Empty columns in the middle still pad, so the table's right edge is
-# trimmed: no line ends in whitespace a diff would carry forever.
 check "the table leaves no trailing whitespace" \
     "$(printf '%s\n' "$OUT" | grep -c ' $')" "0"
 
@@ -185,8 +169,6 @@ check "the table leaves no trailing whitespace" \
 run show --json
 check "json exits 0" "$STATUS" "0"
 check "json is one object per row" "$(printf '%s\n' "$OUT" | grep -c .)" "3"
-# The key set is pinned, not counted: a count proves that many keys are
-# there, not which.
 check "json carries exactly the row's keys" "$(json_keys "$(printf '%s\n' "$OUT" | head -1)")" \
     "fix harness id machine marker model parent problems project repo resolved_at session skill t3_thread ts worktree"
 check "json carries the problems array" \
@@ -236,8 +218,6 @@ run show --machine nosuchmachine
 check "a machine filter that matches nothing says so" \
     "$OUT" "no invocations match --machine nosuchmachine"
 
-# Every filter has its own empty message. The log holds rows — the
-# filter cut them all — so the message must not say the log is empty.
 run show --harness nosuchharness
 check "a harness filter that matches nothing names the harness" \
     "$OUT" "no invocations match --harness nosuchharness"
@@ -248,16 +228,12 @@ run show --run nosuchrun
 check "a run filter that matches nothing names the run" \
     "$OUT" "no invocations match --run nosuchrun"
 
-# The filters compose in the message too: a reader who gave two filters
-# learns that both were applied.
 run show --skill nosuch --harness nosuchharness
 check "two filters that match nothing are both named" \
     "$OUT" "no invocations match --skill nosuch and --harness nosuchharness"
 
 # ------------------------------------------------------------------- run
 
-# --run names a run in whichever namespace it was recorded in: the
-# session, the T3 thread or the parent.
 run show --run ses-1 --json
 check "--run matches the session" "$(printf '%s\n' "$OUT" | grep -c .)" "2"
 check "--run matches the parent too" \
@@ -271,7 +247,6 @@ check "--run matches the other session" "$(printf '%s\n' "$OUT" | grep -c .)" "1
 
 # ---------------------------------------------------------------- unresolved
 
-# A row a commit has stamped is resolved; an unstamped one is not.
 sqlite3 "$DB" "UPDATE invocations SET fix = 'abc123', resolved_at = '2026-01-01T00:00:00+00:00' WHERE id = 1"
 run show --unresolved --json
 check "--unresolved drops the resolved row" "$(printf '%s\n' "$OUT" | grep -c .)" "2"
@@ -282,8 +257,6 @@ check "without the filter every row comes back" "$(printf '%s\n' "$OUT" | grep -
 
 # --------------------------------------------------------------- ordering
 
-# The rows are ordered by when the run happened, not by when it was
-# written: `datetime(ts)` normalizes each row's own UTC offset.
 sqlite3 "$DB" "UPDATE invocations SET ts = '2026-01-01T10:00:00+00:00' WHERE id = 1"
 sqlite3 "$DB" "UPDATE invocations SET ts = '2026-01-01T09:00:00+00:00' WHERE id = 2"
 sqlite3 "$DB" "UPDATE invocations SET ts = '2026-01-01T11:00:00+00:00' WHERE id = 3"
@@ -293,8 +266,6 @@ check "the newest row comes first" \
 check "the oldest row comes last" \
     "$(printf '%s\n' "$OUT" | tail -n1 | grep -o '"id":[0-9]*')" '"id":2'
 
-# A row written later but stamped earlier sorts earlier: the stamp is
-# what the order follows, not the id.
 sqlite3 "$DB" "UPDATE invocations SET ts = '2026-01-01T12:00:00+00:00' WHERE id = 2"
 run show --json
 check "the stamp beats the id" \
@@ -312,7 +283,6 @@ check "--last one shows one row" "$(printf '%s\n' "$OUT" | grep -c .)" "1"
 run show --last 2 --json
 check "--last two shows two rows" "$(printf '%s\n' "$OUT" | grep -c .)" "2"
 
-# The default is 20 rows: enough to see the recent shape of the log.
 DEFAULT_DB="$SCRATCH/default.db"
 for i in $(seq 1 25); do
     "$BIN" add --skill "skill-$i" --db "$DEFAULT_DB" >/dev/null
@@ -328,9 +298,6 @@ check "--last at the cap shows every row" \
 
 # ------------------------------------------------------------ sanitization
 
-# A control character in a stored problem must not split it into two
-# lines, in either shape: the table and the JSON stream both sanitize
-# the way the store does.
 python3 - "$DEFAULT_DB" <<'PY'
 import sqlite3
 import sys
@@ -377,7 +344,6 @@ check "a foreign store is named" \
 check_one_line "a foreign store is one line" "$ERR"
 check "a foreign store is not converted" "$(md5sum <"$SCRATCH/foreign.db")" "$FOREIGN_SUM"
 
-# The Python-era store: the two tables, the old columns.
 sqlite3 "$SCRATCH/older.db" <<'SQL'
 CREATE TABLE invocations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -421,8 +387,6 @@ check "a newer store is named with both versions" \
     "$(printf '%s\n' "$ERR" | grep -c 'has schema version 99.*understands 1')" "1"
 check_one_line "a newer store is one line" "$ERR"
 
-# A writer that crashed after committing leaves frames in the WAL. A
-# read must see them and must not checkpoint them into the database file.
 sqlite3 "$DB" 'pragma wal_checkpoint(TRUNCATE)'
 cp "$DB" "$SCRATCH/wal.db"
 python3 - "$SCRATCH/wal.db" <<'PY'
@@ -434,7 +398,6 @@ con = sqlite3.connect(sys.argv[1])
 con.execute("pragma journal_mode=wal")
 con.execute("update invocations set skill = 'wal-edit' where id = 1")
 con.commit()
-# Exit without closing: the committed frames stay in the WAL.
 os._exit(0)
 PY
 WAL_SUM="$(md5sum <"$SCRATCH/wal.db")"
@@ -490,8 +453,6 @@ check "an empty filter value is a usage error" "$STATUS" "2"
 run show --run ""
 check "an empty run value is a usage error" "$STATUS" "2"
 
-# A flag's value is taken as written: `--run -h` names the run `-h`, while
-# a help flag elsewhere in the call is still a help request.
 run show --run -h
 check "a --run value spelled -h is a value, not a help request" "$STATUS" "0"
 check "a --run value spelled -h filters on it" "$OUT" \
@@ -501,8 +462,6 @@ check "a help flag after a value still asks for help" "$STATUS" "0"
 check "the help block is the verb's usage" \
     "$(printf '%s\n' "$OUT" | grep -c '^usage:$')" "1"
 
-# The usage error names the flag and lists the valid choices, on one
-# line.
 run show --last abc
 check_contains "the usage error names the flag" "$ERR" "--last"
 check_contains "the usage error lists the valid choices" "$ERR" "1 and 500"
@@ -516,11 +475,7 @@ check "a usage error keeps stdout empty" "$OUT" ""
 
 # --------------------------------------------------------------- read-only
 
-# The invariant the verb rests on: a read changes nothing. The store is
-# byte-identical afterwards, its mtime is untouched.
 STATE_DIR="$HOME_DIR/.local/state/skill-log"
-# A reader may leave SQLite's own -wal/-shm sidecars behind (it needs
-# them to read a WAL store); the store file itself is the invariant.
 files_besides_sidecars() {
     find "$STATE_DIR" -maxdepth 1 -mindepth 1 -printf '%f\n' \
         | grep -vE '^skills[.]db-(wal|shm)$' | sort | tr '\n' ' ' || true
@@ -541,12 +496,8 @@ check "the store's mtime is unchanged after a read" "$(stat -c %Y "$DB")" \
 check "a read creates no new file of its own" \
     "$(files_besides_sidecars)" "$BEFORE_FILES"
 
-# The journal mode is not switched either: a read must not rewrite the
-# store's header.
 check "the journal mode is unchanged" "$(sqlite3 "$DB" 'pragma journal_mode')" "wal"
 
-# A read never creates an empty database either. The file the flag
-# names does not exist, and the read leaves it that way.
 ABSENT="$SCRATCH/never-created.db"
 run show --db "$ABSENT"
 check "a read of an absent store exits 0" "$STATUS" "0"
@@ -556,7 +507,6 @@ else
     pass "a read creates no empty database"
 fi
 
-# The help block is the verb's own text, and it documents every filter.
 run show --help
 check "show --help exits 0" "$STATUS" "0"
 for flag in --skill --machine --harness --repo --run --unresolved --last \
@@ -567,7 +517,6 @@ check "show --help ends with 2 to 4 real invocations" \
     "$(printf '%s\n' "$OUT" | sed -n '/^examples:$/,$p' | grep -c '^  ')" "3"
 check_contains "show --help keeps the read-only note" "$OUT" "never writes"
 
-# Nor does it create the directory that would hold one.
 FRESH="$SCRATCH/fresh/state/skill-log/skills.db"
 run show --db "$FRESH"
 check "a read of a fresh path exits 0" "$STATUS" "0"

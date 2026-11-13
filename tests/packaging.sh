@@ -86,8 +86,6 @@ require_tools docker tar sha256sum
 # ------------------------------------------------------------ the archive
 
 if [ -z "$ARCHIVE" ]; then
-    # The archive scripts/package.sh produces; the name is the release
-    # contract of SPEC.md §8.
     candidates=("$ROOT"/dist/skill-log-*-x86_64-unknown-linux-gnu.tar.gz)
     if [ ! -f "${candidates[0]}" ]; then
         printf 'packaging.sh: no dist/skill-log-*-x86_64-unknown-linux-gnu.tar.gz; run scripts/package.sh first\n' >&2
@@ -109,10 +107,6 @@ base="$(basename "$ARCHIVE")"
 version="${base#skill-log-}"
 version="${version%-x86_64-unknown-linux-gnu.tar.gz}"
 
-# ------------------------------------------------------- the packed shape
-#
-# Exactly the executable and its four libraries. Nothing from the tree
-# the build read is shipped, and the listing check proves it.
 
 listing="$(tar -tzf "$ARCHIVE" | sort)"
 expected="$(printf '%s\n' \
@@ -130,8 +124,6 @@ check_absent "archive: no src/ is shipped" "$listing" "src/"
 check_absent "archive: no vendor/ is shipped" "$listing" "vendor/"
 check_absent "archive: no docs/ is shipped" "$listing" "docs/"
 
-# The digest the release uploads beside the archive. It is part of the
-# artifact pair, so its absence is a failure, not a skip.
 DIGEST="$ARCHIVE.sha256"
 if [ ! -f "$DIGEST" ]; then
     fail "archive: $DIGEST is missing (run scripts/package.sh)"
@@ -158,8 +150,6 @@ INNER="$SCRATCH/inner.sh"
 
 cat >"$INNER" <<'INNER'
 #!/usr/bin/env bash
-# The in-container half of the packaging test. Sourced harness, plain
-# environment.
 set -uo pipefail
 
 # shellcheck disable=SC1091
@@ -198,20 +188,12 @@ check "--version: prints the release version" "$out" "$PKG_TEST_VERSION"
 check "--version: prints nothing on stderr" \
     "$(wc -c <"$SCRATCH/version.err" | tr -d ' ')" "0"
 
-# ---------------------------------------------------------- LD_DEBUG proof
-#
-# The loader must resolve libsqlite3.so.0 from the archive's own lib/,
-# not from anywhere in the image.
 
 LD_DEBUG=libs "$PKG/skill-log" --version \
     >"$SCRATCH/ld.out" 2>"$SCRATCH/ld.err"
 check "loader: resolves libsqlite3.so.0 from the archive's lib/" \
     "$(grep -c "calling init: $PKG/lib/libsqlite3.so.0" "$SCRATCH/ld.err")" "1"
 
-# ------------------------------------------------------ setup --dry-run
-#
-# A scratch repo. With git in the image the hook and report directory
-# show created; without git they are the named skip.
 
 mkdir -p "$REPO/skills"
 if command -v git >/dev/null 2>&1; then
@@ -248,11 +230,6 @@ check "setup --dry-run: writes no store" \
 check "setup --dry-run: writes no report directory" \
     "$(ls -d "$REPO/.skill-log" 2>/dev/null | wc -l | tr -d ' ')" "0"
 
-# -------------------------------------------------------------- negative
-#
-# The bundled copy removed and no system copy anywhere: the run must
-# fail with one named line. That proves the positive runs above loaded
-# the bundled file because it was the only one there.
 
 cp -a "$PKG" "$NEG"
 rm -f "$NEG/lib/libsqlite3.so.0"

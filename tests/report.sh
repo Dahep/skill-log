@@ -51,10 +51,6 @@ run() {
     ERR="$(cat "$SCRATCH/stderr")"
 }
 
-# ------------------------------------------------------------------ rows
-#
-# Four rows: two in one dispatched run (`--session` and `--parent`), one
-# clean, and one that a later change already resolved.
 
 run add --skill alpha --machine boxA --session ses_run \
     --problem "secret problem text"
@@ -66,14 +62,11 @@ check "the third row is written" "$STATUS" "0"
 run add --skill gamma --machine boxA
 check "the fourth row is written" "$STATUS" "0"
 
-# The row a later change already resolved: the CLI resolves it, the way
-# a real change does.
 run resolve --id 3 --fix abc123456789 --db "$DB"
 check "the third row is resolved" "$STATUS" "0"
 
 # --------------------------------------------------------------- checkouts
 
-# Artifact mode: the report directory exists.
 REPO="$SCRATCH/repo"
 mkdir -p "$REPO"
 git -C "$REPO" init -q
@@ -88,7 +81,6 @@ mkdir -p "$REPO/.skill-log/reports"
 REPORT="$REPO/.skill-log/reports/feature-thing.md"
 REL=".skill-log/reports/feature-thing.md"
 
-# Trailer mode: a checkout without the report directory.
 PLAIN="$SCRATCH/plain"
 mkdir -p "$PLAIN"
 git -C "$PLAIN" init -q
@@ -144,7 +136,6 @@ check "a second selection unions" "$OUT" "reported 2 markers in $REL"
 check "the file holds both markers, sorted" "$(cat "$REPORT")" \
     "$(printf 'boxA#1\nboxA#2')"
 
-# Re-running over an unchanged report writes nothing and says so.
 BEFORE_SUM="$(md5sum <"$REPORT")"
 BEFORE_MTIME="$(stat -c %Y "$REPORT")"
 run report --id 2
@@ -166,7 +157,6 @@ run report --skill alpha --slug alpha-report
 check "--skill selects that skill's rows" "$OUT" \
     "reported 2 markers in .skill-log/reports/alpha-report.md"
 
-# A row a change already closed is skipped and named, not rewritten.
 run report --id 3 --slug closed
 check "a resolved row exits 0" "$STATUS" "0"
 check "a resolved row reports nothing to write" "$OUT" \
@@ -224,7 +214,6 @@ check "an empty --skill exits 2" "$STATUS" "2"
 run report --slug ""
 check "an empty --slug exits 2" "$STATUS" "2"
 
-# A flag's value is taken as written: `--id -h` is the value `-h`.
 run report --id -h
 check "a --id value spelled -h is a value" "$STATUS" "2"
 check_contains "a --id value spelled -h is a malformed id" "$ERR" \
@@ -265,8 +254,6 @@ check "json says an unchanged report is already reported" \
 
 # -------------------------------------------------------------- union/check
 
-# A marker from another machine is kept, sorted, and warned about — its
-# store is elsewhere, and that machine resolves it.
 printf 'otherbox#7\n' >"$REPO/.skill-log/reports/union.md"
 run report --id 4 --slug union
 check "a foreign marker is kept in the union" \
@@ -284,14 +271,12 @@ check "the check's json carries the warnings" \
     "$(json_array "$OUT" warnings)" \
     "otherbox#7: not in this db (resolves where it is)"
 
-# A marker this store has and has already resolved is warned about too.
 printf 'boxA#3\n' >"$REPO/.skill-log/reports/closed.md"
 run report --check --slug closed
 check "a resolved marker is a warning, not a problem" "$STATUS" "0"
 check "the resolved marker names its commit" "$ERR" \
     "skill-log: boxA#3: already resolved by abc123456"
 
-# A line that is not a marker is a problem: fail, name the line.
 printf 'not a marker\n' >"$REPO/.skill-log/reports/broken.md"
 run report --check --slug broken
 check "a malformed line fails the check" "$STATUS" "1"
@@ -311,7 +296,6 @@ check "a write over a malformed report exits 1" "$STATUS" "1"
 check "a write over a malformed report leaves it alone" \
     "$(md5sum <"$REPO/.skill-log/reports/bad-write.md")" "$BEFORE_SUM"
 
-# A marker this store cannot parse back is never written into a file.
 sqlite3 "$DB" "update invocations set machine = 'bad#machine' where id = 4"
 run report --id 4 --slug bad-machine
 check "an unnameable machine is refused" "$STATUS" "1"
@@ -334,11 +318,6 @@ check "a missing report file exits 0" "$STATUS" "0"
 check "a missing report file says so" "$OUT" \
     "no report file at .skill-log/reports/no-such-report.md"
 
-# ------------------------------------------- the check names the right file
-#
-# The check reads two things: the report file and the store. A failure in
-# one is not a failure in the other, and the message has to name the one
-# that actually failed.
 printf 'boxA#4\n' >"$REPO/.skill-log/reports/unreadable.md"
 chmod 000 "$REPO/.skill-log/reports/unreadable.md"
 run report --check --slug unreadable
@@ -352,8 +331,6 @@ check_absent "an unreadable report is not called a store failure" "$ERR" \
 check_one_line "an unreadable report is one line" "$ERR"
 chmod 0644 "$REPO/.skill-log/reports/unreadable.md"
 
-# A report path that carries the vocabulary does not decide the store's
-# verdict: the check still succeeds, and the store is not named at all.
 printf 'boxA#4\n' >"$REPO/.skill-log/reports/malformed.md"
 run report --check --slug malformed --db "$SCRATCH/malformed/locked.db"
 check "a report path with a vocabulary word still checks" "$STATUS" "0"
@@ -373,7 +350,6 @@ else
     pass "a traversal slug stays inside the report directory"
 fi
 
-# Detached HEAD names no branch; --slug is the way out.
 git -C "$REPO" checkout -q --detach
 run report --id 4
 check "a detached HEAD exits 1" "$STATUS" "1"
@@ -443,8 +419,6 @@ check "a foreign store exits 1" "$STATUS" "1"
 check "a foreign store is named" \
     "$(printf '%s\n' "$ERR" | grep -c 'foreign store')" "1"
 
-# An existing but table-less store is an empty log: a named id is a
-# missing id, not a silent "nothing to report".
 : >"$SCRATCH/tableless.db"
 run report --id 99 --db "$SCRATCH/tableless.db" --slug tableless
 check "a table-less store names the missing id" "$STATUS" "1"
