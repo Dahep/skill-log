@@ -4,27 +4,13 @@
 #
 #   tests/parity.sh
 #
-# This suite ports the reference implementation's 25 cases to
-# `dist/skill-log`, with the intentionally changed commands adapted and the
-# case names kept comparable.
 #
-# The adaptations, and only these:
 #
-#   * the report-era `fix` verb and `.skill-log/fixes/` are now `report`
-#     and `.skill-log/reports/`;
-#   * the opencode adapter is opt-in in 1.0;
-#   * the store is never inherited or converted in 1.0;
-#   * the multi-machine `sync` cases are out of scope in 1.0 and are
-#     listed as explicit, reasoned skips below;
-#   * the race cases run against the 1.0 single-store writer.
 #
 # Discipline: the binary is the only seam. Every case runs the installed
 # artifact as a process against a sandboxed HOME and XDG state, with no
 # network. Nothing imports an internal.
 #
-# The clock: the contract names `SKILL_LOG_NOW` as the one clock injection,
-# and the binary honours it: the writer's stamp is the variable's value, so
-# a case can pin time without touching the store or sleeping.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -44,17 +30,12 @@ fi
 
 # ------------------------------------------------------------- the sandbox
 #
-# The suite refuses to run against the real HOME: the sandbox lives outside
-# the real home, and the home the binary sees is inside the sandbox.
 #
-# The guard is a function, so the suite can prove it fires.
 
 # sandbox_ok <base> <sandbox-home>: the guard's verdict. Zero when the
 # pair is safe: the sandbox is outside the real home, and the home the
 # binary sees is inside the sandbox.
 #
-# The paths are normalized first: a guard that matched a raw prefix would
-# accept `$S/../outside` as "inside $S".
 sandbox_ok() {
     local base home
     base="$(cd "$1" 2>/dev/null && pwd -P)" || return 1
@@ -85,8 +66,6 @@ if ! sandbox_ok "$BASE" "$S/home"; then
 fi
 export HOME="$S/home"
 
-# The binary reads XDG_STATE_HOME before HOME, so a host that sets it
-# would point the sandbox at the real log.
 unset XDG_STATE_HOME XDG_CONFIG_HOME
 unset SKILL_LOG_DB SKILL_LOG_TEMPLATE_DIR
 unset SKILL_LOG_ADAPTERS SKILL_LOG_HARNESS SKILL_LOG_SESSION
@@ -203,13 +182,10 @@ SQL
 H="$(hostname)"
 
 # =========================================================================
-# The reference's cases 1 to 25, ported.
 # =========================================================================
 
 # --- case 1: the migration becomes the refusal parity ---------------------
 #
-# The store is never inherited or converted, so an older file is refused
-# by name.
 say "parity: case 1 — an older store is refused, never converted"
 V1DB="$DBT/c1.db"
 mkolderdb "$V1DB"
@@ -234,8 +210,6 @@ check "case 1: the read names the older store" \
 
 # --- case 2: auto-detect from the local opencode store ---------------------
 #
-# Adapters are opt-in, so the case is twice: off by default the fields are
-# blank, on the adapter answers.
 say "parity: case 2 — the model comes from the session store, with the adapter on"
 C2="$DBT/c2.db"
 mkopdb ses_fixture '{"id": "m-test", "providerID": "prov-x"}'
@@ -268,12 +242,10 @@ rm -rf "$HOME/.local/share/opencode"
 OUT="$(OPENCODE_SESSION_ID=ses_remote T3CODE_HOST=fake-api-host \
     T3CODE_PORT=9999 SKILL_LOG_ADAPTERS=opencode "$BIN" add \
     --skill remote-skill --db "$DBT/c3.db" --json)"
-# Deliberate: the model is a local-store-only fact.
 check "case 3: a foreign session -> model empty" \
     "$(json_field "$OUT" model)" ""
 check "case 3: the session itself is still recorded" \
     "$(json_field "$OUT" session)" "ses_remote"
-# A store that WOULD answer ses_fixture, so the --model asserts bite.
 mkopdb ses_fixture '{"id": "m-test", "providerID": "prov-x"}'
 OUT="$(OPENCODE_SESSION_ID=ses_fixture SKILL_LOG_ADAPTERS=opencode \
     "$BIN" add --skill override-skill --model prov-m/m-fix \
@@ -288,7 +260,6 @@ check "case 3: a dry run with --model keeps the same override" \
 
 # --- case 4: read paths on a pre-migration db -----------------------------
 #
-# The rule refuses it by name instead.
 say "parity: case 4 — reads of an older store name it, and never read it as empty"
 V1R="$DBT/c4.db"
 mkolderdb "$V1R"
@@ -300,7 +271,6 @@ check "case 4: the read prints no rows" "$OUT" ""
 run stats --db "$V1R" --json
 check "case 4: stats on an older store exits 1" "$STATUS" "1"
 check "case 4: stats prints no rows" "$OUT" ""
-# A corrupt file is named as damaged, never read as an empty log.
 CORRUPT="$DBT/c4-corrupt.db"
 printf 'not a sqlite file at all' >"$CORRUPT"
 run stats --db "$CORRUPT" --by-model
@@ -339,8 +309,6 @@ check "case 5: the default table keeps the rate column" \
 
 # --- case 6: the parallel first write -------------------------------------
 #
-# The writer creates the store in one transaction and retries a busy
-# write, so the case is the real pair of processes.
 say "parity: case 6 — parallel first writes on one store both land"
 C6="$DBT/c6.db"
 "$BIN" add --skill race-a --model prov-p/m-a --db "$C6" >/dev/null &
@@ -383,7 +351,6 @@ check_contains "case 8: the show table carries the parent cell" \
 
 # --- case 9: a snapshot that carries the model but not the parent ---------
 #
-# The rule refuses an older file by name, whatever its permissions.
 say "parity: case 9: an older snapshot is refused, whatever its permissions"
 C9="$DBT/c9.db"
 mkolderdb "$C9"
@@ -407,8 +374,6 @@ chmod 644 "$C9"
 say "parity: case 10 — a write survives a real second writer holding the lock"
 C10="$DBT/c10.db"
 "$BIN" add --skill lock-holder --db "$C10" >/dev/null
-# A second process holds the write lock for longer than the connection's
-# busy timeout, but inside the write budget.
 hold_lock "$C10" "$S/lock-ready" 3 &
 LOCK_PID=$!
 wait_for "$S/lock-ready"
@@ -451,7 +416,6 @@ check "case 12: resolve --json echoes the fix" \
 OUT="$("$BIN" stats --db "$C12" --json)"
 check "case 12: stats counts the resolved row" \
     "$(json_field "$OUT" resolved)" "1"
-# The publisher's list: --unresolved drops a row once a fix resolved it.
 C12U="$DBT/c12-unresolved.db"
 "$BIN" add --skill resolved-row --db "$C12U" >/dev/null
 "$BIN" add --skill open-row --problem "still open" --db "$C12U" >/dev/null
@@ -460,22 +424,18 @@ OUT="$("$BIN" show --unresolved --db "$C12U" --json)"
 check "case 12: the unresolved filter lists only open rows" \
     "$(printf '%s' "$OUT" | python3 -c 'import json,sys; print(",".join(json.loads(l)["skill"] for l in sys.stdin))')" \
     "open-row"
-# Re-running is safe: same row, same fix.
 "$BIN" resolve --id 1 --fix abc1234 --db "$C12" >/dev/null
 OUT="$("$BIN" stats --db "$C12" --json)"
 check "case 12: re-running leaves the same resolved count" \
     "$(json_field "$OUT" resolved)" "1"
-# A missing id is a named failure, not a traceback.
 run resolve --id 99 --fix abc1234 --db "$C12"
 check "case 12: an unknown id exits 1" "$STATUS" "1"
 check_contains "case 12: an unknown id is named" "$ERR" "no invocation 99"
 check_one_line "case 12: an unknown id is one line" "$ERR"
-# A missing store is a named failure.
 run resolve --id 1 --fix abc1234 --db "$DBT/nope.db"
 check "case 12: a missing store exits 1" "$STATUS" "1"
 check_contains "case 12: a missing store is named" "$ERR" "no store at"
 check_one_line "case 12: a missing store is one line" "$ERR"
-# Dry-run writes nothing.
 OUT="$("$BIN" resolve --id 1 --fix deadbeef --db "$C12" --dry-run --json)"
 check "case 12: a dry run previews the fix" \
     "$(json_field "$OUT" fix)" "deadbeef"
@@ -484,8 +444,6 @@ check "case 12: a dry run leaves the row's fix" \
 
 # --- cases 13 to 17: the multi-machine sync cases --------------------------
 #
-# `sync`, an aggregate store, merged copies and owner authority left
-# scope in 1.0. They are listed with their reasons rather than dropped.
 skip "parity: case 13 — sync merges a remote log" \
     "multi-machine sync left scope in 1.0 (SPEC §10): no sync verb, no aggregate store, no owner authority"
 skip "parity: case 14 — the pull reads a live WAL" \
@@ -499,8 +457,6 @@ skip "parity: case 17 — the default remote path needs no flag" \
 
 # --- case 18: a concurrent write's collision retries ----------------------
 #
-# The store has no owner index, so the case is the write contention
-# itself: several writers against one store, and every row lands once.
 say "parity: case 18 — concurrent writers converge on one store"
 C18="$DBT/c18.db"
 for i in 1 2 3 4 5 6; do
@@ -530,7 +486,6 @@ check "case 19: the second row carries the same commit" \
     "$(fix_of "$DB19" 2)" "$(git -C "$R19" rev-parse HEAD)"
 check "case 19: stats counts both as resolved" \
     "$(sqlite3 "$DB19" "SELECT COUNT(*) FROM invocations WHERE fix <> ''")" "2"
-# Idempotent: the hook fires on every pull.
 OUT="$(cd "$R19" && "$BIN" resolve-merged --db "$DB19" --json 2>/dev/null)"
 check "case 19: re-running stamps nothing" "$(json_array "$OUT" resolved)" ""
 check "case 19: re-running names the rows it left alone" \
@@ -545,14 +500,12 @@ GIT_AUTHOR_DATE="2020-01-01T00:00:00+0000" \
     git -C "$R19" commit -q --allow-empty \
     -m "skills: name a row that does not exist yet" \
     -m "Skill-log-Fix: $H#3"
-# The row that carries that id is written now, after the commit.
 "$BIN" add --skill logged-later --db "$DB19" >/dev/null
 run_in "$R19" resolve-merged --db "$DB19"
 check "case 19: a row logged after the commit is skipped" "$STATUS" "0"
 check_contains "case 19: the later row is guarded" "$ERR" \
     "$H#3 skipped: logged_after_commit"
 check "case 19: the guarded row stays unresolved" "$(fix_of "$DB19" 3)" ""
-# An id this db does not have, and a documented placeholder.
 commit_trailers "$R19" "skills: name things that are not ours" \
     "Skill-log-Fix: $H#99, $H#4, otherbox#4, <id>, 7"
 run_in "$R19" resolve-merged --db "$DB19"
@@ -564,7 +517,6 @@ check_contains "case 19: a bare id is refused" "$ERR" \
     "not a Skill-log-Fix marker (machine#id): 7"
 check_contains "case 19: a foreign marker is reported" "$ERR" \
     "otherbox#4 skipped: foreign"
-# --since narrows the scan, and --dry-run writes nothing.
 DB19S="$DBT/c19-since.db"
 "$BIN" add --skill since-old --db "$DB19S" >/dev/null
 commit_trailers "$R19" "skills: name the old row" "Skill-log-Fix: $H#1"
@@ -602,7 +554,6 @@ check "case 20: a differently spelled host is foreign" \
 check "case 20: the differently spelled host is reported" \
     "$(json_array "$OUT" skipped | grep -c 'box.example.com#1')" "1"
 check "case 20: the foreign marker stamped nothing" "$(fix_of "$C20L" 1)" ""
-# The exact spelling does resolve.
 R20B="$(new_repo c20b)"
 "$BIN" add --skill boxed --machine "$H" --db "$C20L" >/dev/null
 printf y >"$R20B/f"
@@ -680,7 +631,6 @@ if find "$R23/.git/hooks" -maxdepth 1 -name 'post-merge.tmp.*' | grep -q .; then
 else
     pass "case 23: the installer left no temp file"
 fi
-# A hook this tool did not write is refused and preserved.
 rm -f "$HOOK23"
 printf '#!/bin/sh\necho foreign hook\n' >"$HOOK23"
 chmod +x "$HOOK23"
@@ -690,8 +640,6 @@ check_contains "case 23: the refusal names the ownership marker" "$ERR" \
     "ownership marker"
 check "case 23: the foreign hook is preserved byte-for-byte" \
     "$(grep -c 'echo foreign hook' "$HOOK23")" "1"
-# The owned hook goes into a fresh repository, so the pull cases below
-# run against a hook this tool wrote.
 R23B="$(new_repo c23b)"
 printf base >"$R23B/base"
 git -C "$R23B" add base
@@ -745,7 +693,6 @@ check_absent "case 23: the failing CLI leaked nothing into the pull" \
     "$(cat "$S/c23-pull2.err")" "invalid choice"
 check "case 23: the pull with an old CLI says nothing" \
     "$(cat "$S/c23-pull2.out")" ""
-# Outside a git checkout the installer skips cleanly.
 mkdir -p "$S/not-a-repo"
 run setup --repo "$S/not-a-repo"
 check "case 23: a non-git checkout exits 0" "$STATUS" "0"
@@ -754,8 +701,6 @@ check_contains "case 23: the non-git checkout skips with a named reason" "$OUT" 
 
 # --- case 24: report writes the repo report artifact ----------------------
 #
-# The reference-era verb was `fix` and the directory was
-# `.skill-log/fixes/`.
 say "parity: case 24 — report writes the repo report file, validated at authoring time"
 R24="$(new_repo c24)"
 DB24="$DBT/c24.db"
@@ -816,7 +761,6 @@ git -C "$R25" add -A
 git -C "$R25" commit -q -m "skills: fix by report" -m "Skill-log-Fix: $H#$ID25T"
 FIX25="$(git -C "$R25" rev-parse HEAD)"
 git -C "$R25" checkout -q main
-# The pull: the branch lands, and the hook's verb reads what it landed.
 git -C "$R25" merge -q --ff-only report-branch >/dev/null 2>&1
 run_in "$R25" resolve-merged --db "$DB25" --json
 check "case 25: the report file's commit stamps its row" \
@@ -825,14 +769,10 @@ check "case 25: a trailer is not read in artifact mode" \
     "$(fix_of "$DB25" "$ID25T")" ""
 check_contains "case 25: the ignored trailer is reported" "$ERR" \
     "resolves from .skill-log/reports"
-# A second scan of the same tree says nothing: the hook must not
-# narrate a pull.
 run_in "$R25" resolve-merged --db "$DB25" --json
 check "case 25: a second scan stamps nothing" "$(json_array "$OUT" resolved)" ""
 check "case 25: a second scan names the rows it left alone" \
     "$(json_array "$OUT" unchanged)" "$H#$ID25"
-# The reader stands on its own: a full scan of a repo that has the report
-# directory resolves from every report file in the tree.
 DB25M="$DBT/c25-manual.db"
 IDM="$("$BIN" add --skill c25-manual --db "$DB25M" --json | python3 -c 'import json,sys; print(json.loads(sys.stdin.read())["id"])')"
 printf '%s#%s\n' "$H" "$IDM" >"$R25/.skill-log/reports/manual.md"
@@ -843,18 +783,13 @@ check "case 25: a full scan resolves the report file's row" \
     "$(json_array "$OUT" resolved)" "$H#$IDM"
 
 # =========================================================================
-# The cases the new contract needs.
 # =========================================================================
 
 # --- case 26: the store matrix, per verb's policy -------------------------
 #
-# The policy, not the verb, decides what an absent, empty, damaged,
-# foreign, older or newer store means.
 say "parity: case 26 — the store matrix, per verb's policy"
 MATRIX="$S/matrix"
 mkdir -p "$MATRIX"
-# absent: the path names nothing.
-# empty: this schema, no rows.
 sqlite3 "$MATRIX/empty.db" <<'SQL'
 CREATE TABLE invocations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -880,22 +815,16 @@ CREATE TABLE problems (
 );
 PRAGMA user_version=1;
 SQL
-# damaged: not a database at all.
 printf 'not a sqlite file at all' >"$MATRIX/damaged.db"
-# foreign: a database, but not a skill-log store.
 sqlite3 "$MATRIX/foreign.db" 'CREATE TABLE something (x)'
-# older: a skill-log store of an older schema.
 mkolderdb "$MATRIX/older.db"
-# newer: this schema, stamped with a version this binary does not know.
 cp "$MATRIX/empty.db" "$MATRIX/newer.db"
 sqlite3 "$MATRIX/newer.db" 'PRAGMA user_version=99'
 
-# The create policy: an absent store is created; an empty one is filled.
 run add --skill matrix --db "$MATRIX/absent.db"
 check "case 26: add creates an absent store" "$STATUS" "0"
 check "case 26: the created store holds the row" \
     "$(count_rows "$MATRIX/absent.db")" "1"
-# The read policy: an absent or an empty store is the empty message.
 run show --db "$MATRIX/absent2.db"
 check "case 26: show on an absent store exits 0" "$STATUS" "0"
 check "case 26: show on an absent store is the empty message" "$OUT" \
@@ -912,18 +841,12 @@ run stats --db "$MATRIX/empty.db"
 check "case 26: stats on an empty store exits 0" "$STATUS" "0"
 check "case 26: stats on an empty store is the empty message" "$OUT" \
     "no invocations logged yet"
-# And the create policy fills it.
 run add --skill matrix --db "$MATRIX/empty.db"
 check "case 26: add fills an empty store" "$STATUS" "0"
 check "case 26: the filled store holds the row" \
     "$(count_rows "$MATRIX/empty.db")" "1"
-# The strict and write policies: an absent store is a refusal.
 R26="$(new_repo c26)"
-# A second checkout, in trailer mode: `setup` gives the first one a
-# report directory, and an artifact-mode scan reads the report files.
 R26T="$(new_repo c26t)"
-# The repository carries a marker, so the scan has something to look at
-# and the store is genuinely opened.
 commit_trailers "$R26" "skills: fix a row" "Skill-log-Fix: $H#1"
 commit_trailers "$R26T" "skills: fix a row" "Skill-log-Fix: $H#1"
 run_in "$R26" report --id 1 --slug m --db "$MATRIX/absent3.db"
@@ -934,8 +857,6 @@ run resolve --id 1 --fix abc --db "$MATRIX/absent3.db"
 check "case 26: resolve on an absent store exits 1" "$STATUS" "1"
 check_contains "case 26: resolve on an absent store is named" "$ERR" \
     "no store at"
-# The write policy distinguishes an absent store from an empty one: the
-# first has no store, the second has a store with no rows in it.
 sqlite3 "$MATRIX/empty2.db" <<'SQL'
 CREATE TABLE invocations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -966,18 +887,14 @@ check "case 26: resolve on an empty store exits 1" "$STATUS" "1"
 check_contains "case 26: resolve on an empty store names the missing id" \
     "$ERR" "no invocation 1"
 check_one_line "case 26: the empty store's refusal is one line" "$ERR"
-# The optional policy: an absent store is nothing to do.
 run_in "$R26T" resolve-merged --db "$MATRIX/absent4.db"
 check "case 26: resolve-merged on an absent store exits 0" "$STATUS" "0"
 check "case 26: resolve-merged on an absent store writes no store" \
     "$([ -e "$MATRIX/absent4.db" ] && echo created || echo absent)" "absent"
-# The verify policy: an absent store is drift.
 run setup --repo "$R26" --check --db "$MATRIX/absent5.db"
 check "case 26: setup --check on an absent store exits 1" "$STATUS" "1"
 check_contains "case 26: setup --check names the missing store" "$ERR" \
     "no store at"
-# The damaged, foreign, older and newer stores are refused by name, by
-# every verb that opens the store.
 for kind in damaged foreign older newer; do
     for verb in add show stats resolve; do
         case "$verb" in
@@ -992,8 +909,6 @@ for kind in damaged foreign older newer; do
             "$kind store"
         check_one_line "case 26: $verb's $kind refusal is one line" "$ERR"
     done
-    # The two verbs that read a checkout run inside one. The
-    # resolve-merged case needs a trailer-mode checkout.
     run_in "$R26" report --id 1 --slug m --db "$MATRIX/$kind.db"
     check "case 26: report refuses a $kind store" "$STATUS" "1"
     check_contains "case 26: report names the $kind store" "$ERR" \
@@ -1006,7 +921,6 @@ for kind in damaged foreign older newer; do
     check "case 26: setup refuses a $kind store" "$STATUS" "1"
     check_contains "case 26: setup names the $kind store" "$ERR" "$kind store"
 done
-# A refused store is never written into.
 for kind in damaged foreign older newer; do
     BEFORE_SUM="$(md5sum <"$MATRIX/$kind.db")"
     run add --skill x --db "$MATRIX/$kind.db"
@@ -1041,8 +955,6 @@ git -C "$R28" add -A
 git -C "$R28" commit -q -m "the report directory"
 DB28="$DBT/c28.db"
 "$BIN" add --skill reported --db "$DB28" >/dev/null
-# The report names the row, but the file was never committed: the fix has
-# not landed, so the row must stay open.
 printf '%s#1\n' "$H" >"$R28/.skill-log/reports/fix.md"
 run_in "$R28" resolve-merged --db "$DB28" --json
 check "case 28: an uncommitted report resolves nothing" \
@@ -1054,8 +966,6 @@ git -C "$R28" commit -q -m "the report"
 run_in "$R28" resolve-merged --db "$DB28" --json
 check "case 28: the committed report resolves the row" \
     "$(fix_of "$DB28" 1)" "$(git -C "$R28" rev-parse HEAD)"
-# And an edit on top of the committed report does not unresolve it, but
-# does not resolve a row the committed report does not name either.
 "$BIN" add --skill not-reported --db "$DB28" >/dev/null
 printf '%s#1\n%s#2\n' "$H" "$H" >"$R28/.skill-log/reports/fix.md"
 run_in "$R28" resolve-merged --db "$DB28" --json
@@ -1068,10 +978,7 @@ say "parity: case 29 — the time guard compares instants, not offset strings"
 R29="$(new_repo c29)"
 DB29="$DBT/c29.db"
 "$BIN" add --skill offset-row --db "$DB29" >/dev/null
-# The row's own stamp keeps the writer's offset (+02:00 written by hand,
-# so the row's offset differs from the commit's UTC).
 sqlite3 "$DB29" "UPDATE invocations SET ts = '2026-06-01T12:00:00+02:00' WHERE id = 1"
-# The commit is at 10:00 UTC, which is the same instant as 12:00 +02:00.
 GIT_COMMITTER_DATE="2026-06-01T10:00:00+0000" \
 GIT_AUTHOR_DATE="2026-06-01T10:00:00+0000" \
     git -C "$R29" commit -q --allow-empty -m "skills: fix the row" \
@@ -1079,12 +986,9 @@ GIT_AUTHOR_DATE="2026-06-01T10:00:00+0000" \
 run_in "$R29" resolve-merged --db "$DB29"
 check "case 29: the same instant in two offsets is not 'logged after'" \
     "$(fix_of "$DB29" 1)" "$(git -C "$R29" rev-parse HEAD)"
-# The row's stamp, read as an instant, is exactly the commit's time: the
-# guard is inclusive of the same second.
 check "case 29: the row's stamp is the offset it was written with" \
     "$(sqlite3 "$DB29" 'SELECT ts FROM invocations WHERE id = 1')" \
     "2026-06-01T12:00:00+02:00"
-# One second earlier, and the row was logged after the commit.
 sqlite3 "$DB29" "UPDATE invocations SET ts = '2026-06-01T12:00:01+02:00' WHERE id = 1"
 R29B="$(new_repo c29b)"
 printf base >"$R29B/base"
@@ -1147,8 +1051,6 @@ check "case 32: the machine is the hostname" \
 
 # --- case 33: the sandbox guard refuses the real home ---------------------
 #
-# The suite's own guard: it must refuse a sandbox inside the real home,
-# and a home outside the sandbox.
 say "parity: case 33 — the sandbox guard refuses the real home"
 if sandbox_ok "$REAL_HOME/inside" "$REAL_HOME/inside/home"; then
     fail "case 33: a sandbox inside the real home is refused"
@@ -1162,7 +1064,6 @@ else
 fi
 check "case 33: the sandbox the suite runs in is accepted" \
     "$(sandbox_ok "$S" "$S/home" && echo accepted || echo refused)" "accepted"
-# The suite writes nothing outside its sandbox.
 REAL_DB="$REAL_HOME/.local/state/skill-log/skills.db"
 REAL_SUM="$(md5sum <"$REAL_DB" 2>/dev/null || printf 'absent')"
 run add --skill must-not-reach-the-real-store
@@ -1180,8 +1081,6 @@ printf '\n'
 if [ "$SKIPPED" -gt 0 ]; then
     printf 'parity.sh: %d reference case(s) skipped as out of scope\n' "$SKIPPED"
 fi
-# The clock injection the contract names: SKILL_LOG_NOW pins the
-# writer's stamp, proved through the CLI rather than by writing the store.
 OUT="$(SKILL_LOG_NOW="2020-01-02T03:04:05+00:00" \
     "$BIN" add --skill clock-probe --dry-run --json 2>"$S/stderr")"
 STATUS=$?

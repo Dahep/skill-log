@@ -83,13 +83,10 @@ printf -- '---\nname: alpha; touch %s\ndescription: a hostile fixture\n---\n\n# 
 run skills adopt --dir "$HOSTILE"
 check "adopt renders a hostile skill name" "$STATUS" "0"
 HOSTILE_BLOCK="$(cat "$HOSTILE/skill/SKILL.md")"
-# The command line is quoted: the name stands inside single quotes, and
-# the embedded quote is closed, escaped and reopened.
 check_contains "the hostile name is quoted in the command line" \
     "$HOSTILE_BLOCK" "'alpha; touch $MARKER'"
 check_absent "the hostile name is not interpolated bare" \
     "$HOSTILE_BLOCK" "add --skill alpha; touch"
-# And the rendered line is safe to run.
 CMD_LINE="$(printf '%s\n' "$HOSTILE_BLOCK" \
     | grep -m1 -- '--skill' \
     | sed 's/^[[:space:]]*//')"
@@ -105,8 +102,6 @@ else
     pass "the quoted command line did not run the injected command"
 fi
 
-# A binary path with a space in it is quoted the same way, and the
-# rendered line still runs the binary.
 SPACEY="$SCRATCH/spacey bin"
 rm -rf "$SPACEY"
 mkdir -p "$SPACEY/lib"
@@ -187,8 +182,6 @@ check "the shipped usage-log source is named shipped" \
 check "a shipped default has not moved from itself" \
     "$(printf '%s' "$OUT" | python3 -c 'import json,sys; t=json.loads(sys.stdin.read())["templates"][0]; print(t["moved"])')" "False"
 
-# The snippet is the usage-log template, placeholders included: it is
-# what a skill outside the swept directory pastes.
 run skills template show
 check "template show exits 0" "$STATUS" "0"
 check_contains "template show prints the pasteable snippet" "$OUT" \
@@ -216,7 +209,6 @@ check "seed names the refusal" "$ERR" "skill-log: seed refused an existing copy"
 run skills template seed --force
 check "seed --force overwrites" "$STATUS" "0"
 
-# A dry run previews the write and writes nothing.
 rm -f "$TPL/skill-friction-review.md"
 run skills template seed --force --dry-run
 check "seed --dry-run exits 0" "$STATUS" "0"
@@ -227,8 +219,6 @@ check "seed --dry-run writes nothing" \
 run skills template seed --force
 check "seed --force restores the copy" "$STATUS" "0"
 
-# The JSON shape of seed and reset: one object per template, with `path`
-# and `action`.
 run skills template reset --force
 check "reset --force clears the copies for the JSON case" "$STATUS" "0"
 run skills template seed --json
@@ -246,7 +236,6 @@ check "seed --json seeds both templates" \
     "$(printf '%s\n' "$OUT" | python3 -c "import json,sys; print(','.join(o['action'] for o in [json.loads(l) for l in sys.stdin if l.strip()]))")" \
     "seeded,seeded"
 
-# A dry run previews the same shape and writes nothing.
 run skills template reset --force
 rm -f "$TPL/usage-log.md"
 run skills template seed --json --dry-run
@@ -256,7 +245,6 @@ check "seed --json --dry-run previews the action" \
 check "seed --json --dry-run writes nothing" \
     "$(test -f "$TPL/usage-log.md" && echo yes || echo no)" "no"
 
-# The refusal is a value too, not prose.
 run skills template seed --force --json
 check "seed --json --force exits 0" "$STATUS" "0"
 run skills template seed --json
@@ -267,7 +255,6 @@ check "seed --json names the refusal action" \
 run skills template seed --force --json
 check "seed --json --force exits 0" "$STATUS" "0"
 
-# reset has the same shape, with its own action vocabulary.
 run skills template reset --json
 check "reset --json refuses while copies exist" "$STATUS" "1"
 check "reset --json names the refusal action" \
@@ -284,20 +271,16 @@ check "reset --json names the deleted path" \
 check "reset --json names the deleted action" \
     "$(json_field "$(printf '%s\n' "$OUT" | head -1)" action)" "deleted"
 
-# A template that is not there is reported as absent, not as a deletion.
 run skills template reset --json --force
 check "reset --json on absent copies exits 0" "$STATUS" "0"
 check "reset --json names the absent action" \
     "$(json_field "$(printf '%s\n' "$OUT" | head -1)" action)" "absent"
 
-# The copies are back for the cases that follow.
 run skills template seed --force
 check "seed restores the copies for the later cases" "$STATUS" "0"
 
 # ------------------------------------------------- moved default report
 
-# Point the seeded-from record at a hash that is not the current shipped
-# default: the copy is then "seeded from a default that has moved".
 printf '0000000000000000\n' > "$SEEDED/usage-log.md"
 run skills template show
 check "a moved default exits 0" "$STATUS" "0"
@@ -314,15 +297,10 @@ run skills template show --json
 check "a moved default is reported in JSON" \
     "$(printf '%s' "$OUT" | python3 -c 'import json,sys; t=json.loads(sys.stdin.read())["templates"][0]; print(t["moved"])')" "True"
 
-# `audit` names a moved shipped default too, with the two commands that
-# adopt it. The name is the failure's one stderr line, and the exit code
-# says the directory is not conformant.
 AUDITDIR="$SCRATCH/audit-moved"
 rm -rf "$AUDITDIR"
 mkdir -p "$AUDITDIR/alpha"
 printf 'name: alpha\n' > "$AUDITDIR/alpha/SKILL.md"
-# The skill is conformant, so the moved default is the only reason the
-# audit fails.
 run skills adopt --dir "$AUDITDIR"
 check "the audit fixture is conformant" "$STATUS" "0"
 run skills audit --dir "$AUDITDIR"
@@ -332,8 +310,6 @@ check_contains "audit names seed --force" "$ERR" "skills template seed --force"
 check_contains "audit names adopt" "$ERR" "skills adopt"
 check_one_line "the moved-default note is one line" "$ERR"
 
-# The same answer in JSON: the per-skill objects are unchanged, and the
-# name is still on stderr.
 run skills audit --dir "$AUDITDIR" --json
 check "audit --json exits 1 on a moved default" "$STATUS" "1"
 check_contains "audit --json names the moved default" "$ERR" \
@@ -341,8 +317,6 @@ check_contains "audit --json names the moved default" "$ERR" \
 check "audit --json still emits one object per skill" \
     "$(printf '%s\n' "$OUT" | grep -c '^{')" "1"
 
-# The record is removed, so the copy is no longer known to be behind
-# and the audit is clean again.
 rm -f "$SEEDED/usage-log.md"
 run skills audit --dir "$AUDITDIR"
 check "audit is clean again without the record" "$STATUS" "0"
@@ -383,7 +357,6 @@ check "--template-dir wins" \
     "$(printf '%s' "$OUT" | python3 -c 'import json,sys; t=json.loads(sys.stdin.read())["templates"][0]; print(t["source"])')" \
     "$SCRATCH/custom/usage-log.md"
 
-# SKILL_LOG_TEMPLATE_DIR is the next source.
 export SKILL_LOG_TEMPLATE_DIR="$SCRATCH/custom"
 run skills template show --json
 check "SKILL_LOG_TEMPLATE_DIR wins when no flag" \
@@ -432,7 +405,6 @@ check_contains "the refusal says a placeholder may not be quoted" "$ERR" \
     "quote"
 check_one_line "the refusal for a quoted placeholder is one line" "$ERR"
 
-# The same for the review template.
 mkdir -p "$SCRATCH/quoted-review"
 printf 'review with <command>\n' > "$SCRATCH/quoted-review/skill-friction-review.md"
 printf "    <command> add --skill '<name>'\n" > "$SCRATCH/quoted-review/usage-log.md"
@@ -443,16 +415,9 @@ check_contains "the refusal names the single-quoted placeholder" "$ERR" \
 check_contains "the refusal says a placeholder may not be quoted" "$ERR" \
     "quote"
 
-# And the hostile name must not run through either path: the default
-# template (which quotes the value itself) and the quoted override (which
-# is refused before it renders).
-# The command substitution is literal on purpose: it is the payload the
-# case is about.
 # shellcheck disable=SC2016  # the substitution is the payload, not a command
 HOSTILE_NAME='$(touch '"$SCRATCH"'/quoted-pwned)'
 
-# The default template: the value is quoted by the tool, so the name is
-# a word and not a command.
 rm -rf "$SCRATCH/hostile-quoted"
 mkdir -p "$SCRATCH/hostile-quoted/evil"
 printf -- '---\nname: %s\n---\n' "$HOSTILE_NAME" \
@@ -473,8 +438,6 @@ else
     pass "the default template did not run the injected command"
 fi
 
-# The quoted override: refused before it renders, so nothing is written
-# and nothing can run.
 rm -rf "$SCRATCH/hostile-override"
 mkdir -p "$SCRATCH/hostile-override/evil"
 printf -- '---\nname: %s\n---\n' "$HOSTILE_NAME" \
@@ -491,16 +454,10 @@ else
     pass "the quoted override did not run the injected command"
 fi
 
-# The resolved binary the block names: the tool resolves its own path, so
-# the suite computes the same answer independently.
 EXPECTED_CMD="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$BIN")"
 
 # ------------------------------------------------------- the fixtures
 
-# Build the five state fixtures. The current render is what `ok` matches.
-# The stale block is an older render of the same template. The edited
-# block is a current render with its content changed after the fence hash
-# was written.
 SKILLS="$SCRATCH/skills"
 rm -rf "$SKILLS"
 for s in ok missing stale edited vendored; do
@@ -508,10 +465,6 @@ for s in ok missing stale edited vendored; do
     printf 'name: %s\n' "$s" > "$SKILLS/$s/SKILL.md"
 done
 
-# The current render, through the CLI's own template. The suite reads the
-# template source from `skills template show --json` and replicates the
-# render (same substitution, same FNV-1a hash) to build a fixture without
-# hardcoding a hash.
 TEMPLATE_JSON="$("$BIN" skills template show --json)"
 USAGE_TEMPLATE="$(printf '%s' "$TEMPLATE_JSON" | python3 -c 'import json,sys; print(json.loads(sys.stdin.read())["templates"][0]["content"])')"
 
@@ -571,8 +524,6 @@ def substitute_line(line, name, command):
         elif tag == "<command>":
             value = command
         else:
-            # An unknown placeholder is left alone: the template's own
-            # text is the user's, and the tool does not rewrite it.
             out.append(line[at:open_at + 1])
             at = open_at + 1
             continue
@@ -626,12 +577,10 @@ printf -- '---\nname: %s\n---\n' "$TOKEN_NAME" > "$TOKEN_DIR/evil/SKILL.md"
 run skills adopt --dir "$TOKEN_DIR"
 check "the token-name skill adopts" "$STATUS" "0"
 TOKEN_BLOCK="$(cat "$TOKEN_DIR/evil/SKILL.md")"
-# The tool left the token in the name: it substituted once.
 check_contains "the tool does not re-substitute a value" "$TOKEN_BLOCK" \
     "'$TOKEN_NAME'"
 check_absent "the tool did not substitute the token inside the value" \
     "$TOKEN_BLOCK" "'skill$EXPECTED_CMD"
-# And the mirror agrees with it: the same render, byte for byte.
 TOKEN_MIRROR="$(render_block "$TOKEN_NAME" "$EXPECTED_CMD" "$USAGE_TEMPLATE" \
     | sed 's/^<!--.*-->$/<!-- fence -->/')"
 TOKEN_TOOL="$(printf '%s\n' "$TOKEN_BLOCK" \
@@ -640,18 +589,15 @@ TOKEN_TOOL="$(printf '%s\n' "$TOKEN_BLOCK" \
 check "the mirror renders what the tool renders" \
     "$TOKEN_MIRROR" "$TOKEN_TOOL"
 
-# stale: an older render — a different template's block.
 render_block ok "$EXPECTED_CMD" '## Usage log
 
 old wording
 ' > "$SCRATCH/block_stale.txt"
 cat "$SCRATCH/block_stale.txt" >> "$SKILLS/stale/SKILL.md"
 
-# edited: a current render whose content was changed after the fence.
 cat "$SCRATCH/block.txt" >> "$SKILLS/edited/SKILL.md"
 sed -i 's/silent write/quiet write/' "$SKILLS/edited/SKILL.md"
 
-# vendored: the vendor stamp plus a block (which must be skipped entirely).
 {
     printf -- '---\n'
     printf 'name: vendored\n'
@@ -661,8 +607,6 @@ sed -i 's/silent write/quiet write/' "$SKILLS/edited/SKILL.md"
 } > "$SKILLS/vendored/SKILL.md"
 cat "$SCRATCH/block_stale.txt" >> "$SKILLS/vendored/SKILL.md"
 
-# missing, with stale unfenced usage-log text nearby — which the tool must
-# never read or touch.
 UNFENCED='## Usage log
 
 this is old unfenced usage-log text that must never be matched or rewritten'
@@ -700,7 +644,6 @@ check "audit --json classifies all five states" \
     "$(printf '%s\n' "$OUT" | python3 -c 'import json,sys; s={json.loads(l)["state"] for l in sys.stdin if l.strip()}; print(" ".join(sorted(s)))')" \
     "edited missing ok stale vendored"
 
-# A clean directory (only ok and vendored) exits 0.
 CLEAN="$SCRATCH/clean"
 rm -rf "$CLEAN"
 mkdir -p "$CLEAN/ok" "$CLEAN/vendored"
@@ -723,8 +666,6 @@ check "an empty directory is refused" "$STATUS" "1"
 check "the refusal names the directory" "$ERR" \
     "skill-log: no skills in $EMPTY (no subdirectory holds a SKILL.md)"
 
-# The audit writes nothing: no state directory, no store, nothing in the
-# skills dir. The state dir is removed first so its absence is meaningful.
 rm -rf "$XDG_STATE_HOME"
 AFTER_BEFORE="$(md5sum < "$SKILLS/edited/SKILL.md")"
 run skills audit --dir "$SKILLS" --json >/dev/null 2>&1
@@ -741,10 +682,6 @@ check "the audit still writes nothing with --dry-run" \
 
 # ------------------------------------------------------------- adopt
 
-# adopt writes: it appends a block where there is none, rewrites a stale
-# one, rewrites an edited one only with --force, skips vendored skills
-# and leaves an ok one alone. Their originals are kept so byte-exactness
-# can be proved by removing the fence block again.
 cp -r "$SKILLS" "$SCRATCH/skills.orig"
 
 # strip_block <file>: the file with its fenced usage-log block removed —
@@ -767,7 +704,6 @@ sys.stdout.write("".join(out))
 PY
 }
 
-# adopt's dry run previews every action and writes nothing.
 run skills adopt --dir "$SKILLS" --json --dry-run
 check "adopt --dry-run exits 1 when a skill would be refused" "$STATUS" "1"
 check "adopt --dry-run emits one object per skill" \
@@ -784,8 +720,6 @@ check "adopt --dry-run previews all five actions" \
 check "adopt --dry-run writes nothing" \
     "$(diff -r "$SCRATCH/skills.orig" "$SKILLS" >/dev/null 2>&1 && echo same || echo differ)" "same"
 
-# The real run does what the dry run said and prints the same lines,
-# and exits 1 because the edited block was refused without --force.
 run skills adopt --dir "$SKILLS" --dry-run
 DRY_TEXT="$OUT"
 run skills adopt --dir "$SKILLS"
@@ -799,9 +733,6 @@ check_contains "adopt reports the refusal" "$OUT" "refused  edited  edited  $SKI
 check_contains "adopt reports the skip" "$OUT" "skipped  vendored  vendored  $SKILLS/vendored"
 check_contains "adopt reports the unchanged skill" "$OUT" "unchanged  ok  ok  $SKILLS/ok"
 
-# missing: the block is appended at the end, rendered for the skill —
-# <name> from its frontmatter (absent here: the directory name), and
-# <command> the resolved binary path.
 check "the missing skill got exactly one block appended" \
     "$(grep -c '^<!-- skill-log:usage-log' "$SKILLS/missing/SKILL.md")" "1"
 check_contains "the appended block names the skill" \
@@ -823,8 +754,6 @@ check_contains "the unfenced usage-log text survives beyond the block" \
 check_absent "the unfenced text was not folded into the block" \
     "$(strip_block "$SKILLS/missing/SKILL.md")" "skill-log:usage-log"
 
-# The rendered <name> is the skill's frontmatter name, not its
-# directory name.
 FRONT="$SCRATCH/front"
 rm -rf "$FRONT"
 mkdir -p "$FRONT/dirname"
@@ -837,9 +766,6 @@ check_contains "the block names the frontmatter name" \
 check_absent "the block does not fall back to the directory name" \
     "$(cat "$FRONT/dirname/SKILL.md")" "add --skill dirname"
 
-# stale: the block is rewritten inside its fence and the file is exactly
-# the original outside of it. The expected file is the untouched prefix
-# plus the render the current template produces for that skill.
 {
     printf 'name: stale\n'
     render_block stale "$EXPECTED_CMD" "$USAGE_TEMPLATE"
@@ -857,7 +783,6 @@ check "the edited skill is untouched without --force" \
     "$(md5sum < "$SKILLS/edited/SKILL.md")" \
     "$(md5sum < "$SCRATCH/skills.orig/edited/SKILL.md")"
 
-# ok and vendored are never written, even under --force.
 check "the ok skill is untouched" \
     "$(md5sum < "$SKILLS/ok/SKILL.md")" \
     "$(md5sum < "$SCRATCH/skills.orig/ok/SKILL.md")"
@@ -881,8 +806,6 @@ check "the vendored skill stays untouched under --force" \
     "$(md5sum < "$SKILLS/vendored/SKILL.md")" \
     "$(md5sum < "$SCRATCH/skills.orig/vendored/SKILL.md")"
 
-# Idempotent: a second run changes nothing and every skill is
-# unchanged or skipped.
 cp -r "$SKILLS" "$SCRATCH/skills.adopted"
 run skills adopt --dir "$SKILLS" --json
 check "a second adopt exits 0" "$STATUS" "0"
@@ -916,8 +839,6 @@ check "the moved binary writes the block" \
 check_contains "the block names the moved binary" \
     "$(cat "$MOVE/beta/SKILL.md")" "$MOVED_CMD"
 
-# The installed binary resolves to a different path, so the same block
-# is an older render: stale, not ok.
 run skills audit --dir "$MOVE" --json
 check "audit exits 1 when the block names a moved binary" "$STATUS" "1"
 check "the moved-binary block is stale" \
@@ -937,8 +858,6 @@ check "the rewritten block is ok" \
     "$(printf '%s\n' "$OUT" | python3 -c 'import json,sys; print(json.loads(sys.stdin.read())["state"])')" \
     "ok"
 
-# A renamed skill is stale too: the block names the skill it was
-# rendered for.
 RENAME="$SCRATCH/renamed"
 rm -rf "$RENAME"
 mkdir -p "$RENAME/before"
@@ -956,8 +875,6 @@ check_contains "the rewritten block names the new skill" \
     "$(cat "$RENAME/after/SKILL.md")" "add --skill 'after'"
 
 
-# A file with no trailing newline still gets its block on its own line;
-# the original bytes survive as a prefix and the second run is a no-op.
 NONL="$SCRATCH/nonl"
 rm -rf "$NONL"
 mkdir -p "$NONL/gamma"
@@ -975,8 +892,6 @@ run skills adopt --dir "$NONL"
 check "the no-newline file is idempotent" \
     "$(diff "$SCRATCH/gamma.adopted" "$NONL/gamma/SKILL.md" >/dev/null 2>&1 && echo same || echo differ)" "same"
 
-# An empty directory (no SKILL.md subdirectories) is refused, exactly as
-# the audit refuses it.
 run skills adopt --dir "$EMPTY"
 check "adopt refuses an empty directory" "$STATUS" "1"
 check "the refusal names the directory" "$ERR" \
@@ -984,8 +899,6 @@ check "the refusal names the directory" "$ERR" \
 
 # ------------------------------- a moved user template makes blocks stale
 
-# The block was written from the shipped default; a user copy that
-# differs is the current render, so the block is an older one — stale.
 run skills template seed
 check "seed writes a user copy for the adopt fixtures" "$STATUS" "0"
 MOVED="$SCRATCH/moved"
@@ -1012,7 +925,6 @@ run skills adopt --dir "$MOVED" --json
 check "the rewritten block is idempotent" \
     "$(diff "$SCRATCH/alpha.adopted" "$MOVED/alpha/SKILL.md" >/dev/null 2>&1 && echo same || echo differ)" "same"
 
-# Back to the shipped defaults for whatever runs next.
 run skills template reset --force
 check "reset returns to the shipped defaults" "$STATUS" "0"
 
