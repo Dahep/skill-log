@@ -93,8 +93,14 @@ from. That is why they belong in typed columns rather than a free-form bag.
    - `opencode` (the 1.0 target) fills `harness=opencode`, `session` from
      `OPENCODE_SESSION_ID`, and `model` from `session_v2` in
      `~/.local/share/opencode/opencode.db`, read-only.
+     The `model` column holds a JSON value, and the adapter reads the one field
+     it needs out of it with a small targeted scanner rather than a JSON
+     parser: the tool writes JSON and never parses it, and a foreign schema is
+     not this tool's contract.
    - `t3` (optional) fills `project` from
-     `$T3CODE_HOME/worktrees/<project>/…` when `worktree` is under it.
+     `$T3CODE_HOME/worktrees/<project>/…` when `worktree` is under it, and
+     from `$HOME/.t3/worktrees/<project>/…` when `T3CODE_HOME` is unset —
+     T3's own default home is `~/.t3`.
      `t3_thread` stays caller-supplied: the adapter cannot invent a thread id,
      and the dispatching skill already knows it.
    - This machine's wrapper exports `SKILL_LOG_ADAPTERS=opencode`, so every
@@ -134,6 +140,12 @@ from. That is why they belong in typed columns rather than a free-form bag.
    ("not a skill-log store" or "an older skill-log store"), with no
    half-migration. `PRAGMA user_version = 1` stamps the schema; a store
    stamped newer than the binary is refused by name.
+
+   The refusal kind is a value carried by the store layer, never a word
+   re-derived from an error message. The message names the path the caller
+   gave, and a path can contain any word in the vocabulary (`/tmp/older/x.db`,
+   `newer5.db`), so text matching would let the path choose the answer — and
+   `newer5` would even supply the version number the refusal reports.
 
 9. **One store per machine.** Multi-machine consolidation — `sync`, an
    aggregate store, merged copies, owner authority — is out of scope for this

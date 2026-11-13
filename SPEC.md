@@ -61,7 +61,10 @@ The product is one loop, and every command is a step in it:
   contracts, not APIs.
 - A marker is `machine#id`. The machine is required because ids are per store.
 - A marker naming another machine is **foreign**: reported, never stamped.
-  There is no owner lookup and no cross-machine resolution in 1.0.
+  There is no owner lookup and no cross-machine resolution in 1.0. The rows a
+  store holds do not change that: only this host's own spelling stamps. The one
+  exception is a stored row with an empty `machine` column — written before
+  `add` always filled it — and that row belongs to the machine reading it.
 - Reports carry machine names and local ids only — never problem text or
   project details.
 - Newest marker wins. A row whose timestamp is after the named commit is
@@ -109,7 +112,7 @@ whole-attempt retry budget for writes.
 
 All text columns are `NOT NULL DEFAULT ''`. Empty means "unknown or not
 applicable", so the SQL layer has no NULL semantics and every JSON field keeps
-one type.
+one type — except the preview's `id`, which is null.
 
 `problems` is keyed `(invocation_id, ordinal)`, carries one sentence of
 friction per row, and cascades with its invocation. Problems are separate rows
@@ -131,8 +134,9 @@ They existed to make multi-machine merging idempotent, and merging left scope
 - An existing file that is not this schema is refused by name: "not a
   skill-log store", "an older skill-log store", or "a newer skill-log store".
   There is no half-migration and no column convergence.
-- A corrupt file is named as damaged. A read never reports "no invocations
-  logged yet" over a file it could not read.
+- A corrupt file is named as damaged. A store another writer is holding is
+  named as locked. A read never reports "no invocations logged yet" over a file
+  it could not read.
 - Reads create nothing. An absent store is not an error on every verb; see the
   policies below.
 
@@ -146,13 +150,34 @@ older or newer store means.
 | `add`, `setup` | create | create it |
 | `show`, `stats` | read | the empty message, exit 0 |
 | `report` | strict | refusal, exit 1, no file written |
+| `report --check` | syntax | the report is still checked, exit 0 when it is well formed |
 | `resolve` | write | refusal, exit 1 |
 | `resolve-merged` | optional | nothing to do, exit 0 |
 | `setup --check` | verify | drift, exit 1 |
 
+`report --check` is the one exception to the strict policy: it validates the
+branch's existing report and needs no store. A fresh clone or a CI job has no
+store and must still check the file, so the syntax check stands alone — a
+marker this store does not own is a warning, not a failure.
+
 The store classifies and returns a typed refusal. The CLI boundary renders the
 one-line message and maps the exit code; no handler inspects a SQLite error or
-a store's absence on its own.
+a store's absence on its own. The store classifies a SQLite failure the same
+way on both paths: damage is damage, a lock is a lock, a file that cannot be
+written is read-only, a store path that cannot be opened at all is unusable,
+and anything else is the generic operational failure.
+
+The classification never reads the caller's path: the path is stripped from
+the message first, because a path can carry any word in the vocabulary and
+must not choose the answer. Only a recognized filename field is stripped — the
+path in the engine's own quoting, and the path the engine names after a colon.
+A path that merely reads like a word of the vocabulary stays in the message, so
+a store named `locked` does not turn "database is locked" into something the
+write path cannot recognise as a lock.
+
+A lock is not a refusal — a refusal is final, and a lock is retryable. The
+write path retries a busy failure as a whole attempt inside its budget, and
+names the lock only when the budget is spent.
 
 ### Location and overrides
 
@@ -301,9 +326,10 @@ Write the committed report listing the rows a change resolves. Policy
 - Ids are validated against the store; unknown ids are named. Already-resolved
   rows are skipped and reported.
 - New markers are unioned with the file's current contents. Existing lines are
-  preserved byte-for-byte, including a marker naming another machine: the tool
-  never adds a foreign marker, and never removes one a previous report carried.
-  Problem text and project details never appear.
+  preserved in their canonical spelling; a hand-written non-canonical line is
+  rewritten to it, never removed. A marker naming another machine is kept: the
+  tool never adds a foreign marker, and never removes one a previous report
+  carried. Problem text and project details never appear.
 - `--check` validates an existing report without writing. `--dry-run` writes
   nothing. `--json` carries the path and the markers.
 - Re-running over an unchanged report prints that it is already reported.
@@ -388,7 +414,8 @@ Read-only. Reports each skill's usage-log state and writes nothing.
 - `--dir <dir>` is required. `--json` for pipes. `--dry-run` is accepted and
   changes nothing.
 - One line per skill. Exit 1 on any state other than `ok` or `vendored`, 0
-  when clean.
+  when clean. A shipped default that moved since the user copy was seeded also
+  exits 1, even when every skill's own state is `ok`.
 - A directory that holds no skills is refused.
 - §7 defines the states and the fence.
 
@@ -432,21 +459,24 @@ part of the contract; no verb adds or drops keys between runs.
 **The invocation object** is emitted by `add` and `show`, and by either with
 `--dry-run`. Its keys are `id`, `ts`, `skill`, `harness`, `session`, `parent`,
 `model`, `repo`, `worktree`, `project`, `t3_thread`, `machine`, `fix`,
-`resolved_at`, `marker`, `problems` (an array of strings).
+`resolved_at`, `marker`, `problems` (an array of strings). A `--dry-run`
+preview carries `id: null` and an empty `marker`: the row does not exist yet, so
+it has no id and no marker.
 
 | Verb | Shape |
 |---|---|
 | `add` | one invocation object |
 | `show` | one invocation object per row |
 | `stats` | `invocations`, `with_problems`, `problems`, `resolved`, `problems_per_invocation`, plus the grouping column named by `--by` |
-| `report` | `path`, `markers` |
-| `resolve` | `id`, `skill`, `fix`, `resolved_at` |
+| `report` | `path`, `markers`, `already_resolved` (markers), `already_reported`, `dry_run`, `trailer` |
+| `report --check` | `path`, `markers`, `problems`, `warnings` |
+| `resolve` | `id`, `marker`, `skill`, `fix`, `resolved_at`, `changed`, `dry_run` |
 | `resolve-merged` | `resolved` (markers), `unchanged` (markers), `skipped` (objects of `row` and `reason`), `ignored` (hidden and malformed marker text), `dry_run` |
 | `setup` | one object per artifact examined: `artifact` (`store`, `hook`, `report_dir`, `skills`), `status` (`created`, `updated`, `unchanged`, `drift`, `skipped`), `detail` |
 | `skills audit` | one object per skill: `skill`, `path`, `state` |
 | `skills adopt` | one object per skill: `skill`, `path`, `state`, `action` (`appended`, `rewritten`, `unchanged`, `refused`, `skipped`) |
 | `skills template show` | `templates`: one object per template — `name`, `source`, `content`, `template_hash`, `content_hash`, `moved` |
-| `skills template seed`, `reset` | `path`, `action` |
+| `skills template seed`, `reset` | `path`, `action` (`seeded`, `would_seed`, `refused`, `deleted`, `would_delete`, `absent`) |
 
 `resolve-merged` skip reasons are exactly `unknown_id`, `foreign` and
 `logged_after_commit`.
@@ -489,7 +519,19 @@ directory, then the defaults shipped in the binary.
 Placeholders: `<name>` (the skill's name) and `<command>` (the resolved binary
 path). `usage-log.md` requires both, and `audit` rejects a template that lacks
 `<name>` or an invocation of `<command> add` — a typo there would silently stop
-every skill from logging. The review template requires `<command>`.
+every skill from logging. The review template requires `<command>`. A
+placeholder may not sit next to a quote character: the tool quotes a
+placeholder's value itself, and a template that quoted the placeholder would
+nest the two, so the value would reach the shell where a shell expands it.
+
+The rendered block is shell source: the reader copies a command line out of
+it and runs it. So a substituted value is shell-quoted on every command line
+— single quotes, with an embedded quote closed, escaped and reopened — and
+left plain in prose. A command line is one that starts a command: the
+placeholder is the first thing on the line after the indentation, or it
+follows a markdown list item's label and colon. A skill named
+`alpha; touch /tmp/pwned` therefore renders a command line that runs the
+skill and nothing else.
 
 The default template is expected to change between releases. The default moving
 never touches a user copy: the state directory records the hash of the shipped
@@ -529,6 +571,11 @@ Unfenced text is user-owned and is not classified at all: the tool never reads,
 matches, rewrites or deletes it. A skill that has usage-log text but no fence
 is `missing`, and adoption appends a fenced block; reconciling the old section
 is a human task.
+
+The vendor stamp is a frontmatter `metadata:` block carrying a `source:` key.
+Such a skill is skipped entirely: its wording belongs to its upstream, not to
+this tool. The stamp is recognised by its shape, not by a YAML parser — a
+`source:` key at the start of a line inside a frontmatter `metadata:` block.
 
 ### Bundled skills
 
@@ -573,10 +620,16 @@ session decides how the log gets read. Neither changes the other's contract.
 
 - **Language**: Mojo 1.2, toolchain pinned as a mise tool (`pypi:mojo@1.2.0`),
   locked in `mise.toml`.
-- **Storage**: SQLite through `ehsanmok/sqlite` v0.2.2 (MIT), vendored as
+- **Storage**: SQLite through `ehsanmok/sqlite` at `07b8d8a` (post-v0.2.2; MIT), vendored as
   `vendor/sqlite/ffi.mojo` + `db.mojo` with the upstream commit and license
   recorded. No ORM layer, no `morph`, no live dependency. Upgrades are a
   deliberate copy-forward.
+- **SQLite floor**: the bundled library is the pinned jammy
+  `libsqlite3-0_3.37.2-2ubuntu0.8_amd64.deb`, so the tool's SQL stays inside
+  what SQLite 3.37 has. In particular the epoch seconds come from
+  `strftime('%s', ...)`: `unixepoch()` was added in 3.38 and the release does
+  not bundle it. `tests/sqlite.sh` runs the artifact against the pinned
+  library, so a query the release cannot answer fails the gate.
 - **Artifact**: one release archive, installable with mise's `github:` backend:
 
   ```
@@ -607,11 +660,14 @@ session decides how the log gets read. Neither changes the other's contract.
 - **Deliverables**: the binary, the two bundled skills, and a short operator
   guide. Consumer integration instructions are documentation, not code.
 - **Hand-written infrastructure** (the ecosystem does not provide it):
-  subcommand dispatch; local dates through libc `localtime_r`/`strftime`;
-  process execution with an exit status through `fork`/`exec`/`wait` via FFI;
-  the JSON writer (the tool writes JSON and never parses it); marker and
-  report parsing. [ADR-0001](docs/adr/0001-mojo-binary-and-sqlite.md) records
-  why.
+  subcommand dispatch; the writer's clock, read through SQLite's own `now` and
+  the hostname through libc `gethostname`; the JSON writer (the tool writes
+  JSON and does not parse it — the one exception is the opencode adapter's
+  single-field scan of another program's session file, which reads one string
+  field out of a JSON object); marker and report parsing; the read-only SQLite
+  reader for another tool's store. Process execution is not hand-written:
+  git is run through the standard library's `std.subprocess`.
+  [ADR-0001](docs/adr/0001-mojo-binary-and-sqlite.md) records why.
 
 ### Migration
 
@@ -638,6 +694,11 @@ session decides how the log gets read. Neither changes the other's contract.
 - **Write contention** is exercised with a real second process holding a write
   lock, not another injection variable. The bounded retry budget is what the
   case asserts.
+- **The artifact runs against the SQLite it ships.** The default gate builds
+  against the machine's own SQLite, which is newer than the release's pinned
+  one, so `tests/sqlite.sh` builds the artifact against the pinned library and
+  runs the write, read and resolve paths against it. A query the release cannot
+  answer fails the gate.
 - **Coverage that the contract names**: the store matrix (absent, empty,
   damaged, foreign, older, newer) per verb; an adapter off by default;
   flag-over-adapter precedence; repo and worktree inside, outside and across

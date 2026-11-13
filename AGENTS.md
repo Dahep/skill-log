@@ -14,6 +14,27 @@ lives in `CONTEXT.md`; design decisions in `docs/adr/`.
 - Issues carry work items: acceptance criteria and blockers. They may cite
   `SPEC.md`; they may not restate it.
 
+## Build and test
+
+- `scripts/build.sh` — the release-shaped artifact: `dist/skill-log` plus
+  `dist/lib/`, rpath `$ORIGIN/lib`, the version baked in. Needs `mise` (the
+  Mojo pin in `mise.toml`), `patchelf`, and a system `libsqlite3.so.0` to
+  bundle.
+- `scripts/test.sh` — the suites under `tests/`, against `dist/`.
+  `--build` rebuilds first. Each suite also runs on its own.
+  `tests/packaging.sh` is the one suite the default gate leaves out: it needs
+  docker, so it runs on CI and on demand, not in the offline gate.
+  `tests/sqlite.sh` builds the artifact against the pinned release SQLite and
+  skips when that library is not on the machine.
+- The suites are black-box: they run the binary as a process with a scratch
+  HOME and a scratch store. `tests/lib.sh` holds the shared assertions —
+  `check`, `check_contains`, `check_absent`, `check_one_line`, `tally`, and
+  the JSON readers. Assert on what a case can actually distinguish: a `like
+  '%a%b%'` check passes across a newline, and a `sed` field reader mangles a
+  value the writer escapes, so both prove less than they look like they do.
+- `bwrap` (sandbox checks) and `script` (the terminal case) are optional; a
+  missing one prints a `skip` line rather than pretending it ran.
+
 ## Agent skills
 
 ### Issue tracker

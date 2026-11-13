@@ -31,10 +31,12 @@ command.
 
 1. **Language: Mojo 1.2**, toolchain pinned as a mise tool (`pypi:mojo@1.2.0`).
    `mojo build` produces the executable.
-2. **Storage: SQLite, unchanged**, reached through `ehsanmok/sqlite` v0.2.2
+2. **Storage: SQLite, unchanged**, reached through `ehsanmok/sqlite` (vendored at `07b8d8a`)
    (MIT), vendored as `vendor/sqlite/{ffi,db}.mojo`, with the ORM layer and its
    `morph` dependency left out. The store schema, migrations and SQL are the
-   ones #1 defines.
+   ones #1 defines. The SQL stays inside what the bundled library has: the
+   release ships the pinned jammy SQLite 3.37, so the epoch seconds come from
+   `strftime('%s', ...)` and not from `unixepoch()`, which 3.38 added.
 3. **Artifact:** a release tarball containing the executable plus `lib/` — the
    three Mojo runtime `.so` files and `libsqlite3.so.0` — with
    `patchelf --set-rpath '$ORIGIN/lib'`.
@@ -82,9 +84,13 @@ command.
   platform is a new CI matrix entry, not a flag.
 - glibc floor: the binary runs where the runner's glibc runs.
 - Mojo 1.2 has no calendar/timezone, no regex, no argument parser and no JSON
-  parser, so local dates need libc `localtime_r`/`strftime`, and git calls need
-  `fork`/`exec`/`wait` because `std.subprocess.run` is `popen` without an exit
-  status.
+  parser, so the writer's clock and the hostname are read through the SQLite
+  binding and libc `gethostname`, and the tool needs its own JSON writer, its
+  own argument parsing and its own marker grammar. The dates were first
+  planned as libc `localtime_r`/`strftime` and the git calls as
+  `fork`/`exec`/`wait`; the implementation reads the clock through SQLite's own
+  `now` and runs git through the standard library's `std.subprocess`, which
+  does carry an exit status on this toolchain.
 - A vendored third-party package (one maintainer, 0.2.x) has to be
   copy-forwarded deliberately.
 - The binary's runtime is tied to the compiler release; a Mojo upgrade is a

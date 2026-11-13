@@ -198,6 +198,86 @@ unit harness.
 - `setup --check` after an audit on a freshly adopted skills directory is
   clean, which is the test that install and audit agree.
 
+## Implementation status
+
+This record was written before the port. The port is done, and it kept some of
+the shape below and not all of it. What shipped, what did not, and why — so the
+next reader does not take the map above for the tree as it is.
+
+### Shipped
+
+- **The marker grammar is a leaf.** `markers.mojo` depends on nothing and owns
+  `marker_text(machine, id)`; the store, the resolver and the report all call
+  it, so nobody builds `machine#id` by hand. The scan data (`Located`) is
+  separate from the grammar, as §2 promised.
+- **The resolution plan is pure.** `plan(located, rows, host)` decides with no
+  git, no clock and no store, and the writer applies what it decided. The
+  newest-marker rule, the unknown id, the same-commit no-op, the restamp and
+  the foreign marker are all decided in one place.
+- **The store owns the taxonomy.** A refusal is a value (`Refusal`), never a
+  word inside a message, and a SQLite failure is classified by the store
+  rather than inspected by a handler — damage is damage, a lock is a lock,
+  and a file that cannot be written is read-only. The read path's
+  classifier is `read_failure` and the write path's is `write_failure`, and
+  no handler reads a SQLite message: `show`, `stats` and `report` render
+  what the store answered. That much of §1's promise is kept, on both
+  paths.
+- **The document module answers the five questions.** `parse` splits at the
+  fence, `classify` decides the state, `rewrite` and `append` splice without
+  touching a byte outside the fence.
+- **The CLI is the only seam.** Every suite runs the installed binary as a
+  process, and `SKILL_LOG_NOW` is the only clock injection.
+
+### Shipped since this record
+
+The port has since closed most of the gap:
+
+- **One git seam.** `git.mojo` is the single `git(argv)` wrapper; `detect` and
+  `merged` no longer build command strings or decode an empty answer.
+- **One help renderer.** The verb table carries nested verbs, and `help.mojo`
+  renders every level; `skills` no longer builds its own blocks.
+- **One schema column list**, read by the DDL, the single-row read and the
+  multi-row read.
+- **One JSON object builder**, so key order and escaping have one owner.
+- **One settings module** for the XDG paths and the binary-path resolver.
+- **One value-flag declaration per verb**, read by the parser and dispatcher.
+- **One busy-retry budget** for the three writes.
+- **One SQLite image for the read path.** The vendored binding was upgraded to
+  a `main` commit after v0.2.2, which carries `Database(path, flags=...)` over
+  `sqlite3_open_v2`; `opendb.mojo` now opens read-only through it instead of
+  `dlopen`ing SQLite itself and planting a handle, so the handle and the
+  function pointers belong to the same image.
+
+### Not shipped
+
+- **A typed store surface.** §1 says the surface is typed operations and that
+  "SQL never leaves the module". The SQL does stay in the store, and the
+  taxonomy is one place, but the handle still leaves it: a verb holds a
+  `Database` and hands it to the store's read functions. A `Store` wrapper was
+  built and then reverted — it had to expose `raw_prepare`/`raw_transaction`
+  for the read paths, so it added lines without hiding the connection.
+- **A settings descriptor table.** §4 wants one row per context key emitting
+  the flag, the environment name, the help line and the precedence order.
+  The value-flag lists are single-sourced; the descriptor is not.
+
+### Why
+
+The behaviour is met and the contract holds — every promise in `SPEC.md` is
+pinned by a suite, and the four reviews that examined the tree found no
+contract violation in any of these. What is missing is the *shape*: the same
+decisions are still re-derived in more than one place, and each of the items
+above is one of them. A rewrite of the tree is out of proportion to a
+behaviour that is already right, so the debt is recorded here and worked as a
+separate change.
+
+The follow-up is
+[issue #26](https://github.com/Dahep/skill-log/issues/26), labelled
+`ready-for-agent`: it lists the three remaining shape items with this section
+as the review evidence, and its acceptance criteria are shape, not behaviour.
+The read-only-open seam's latent risk — one SQLite image for the read path —
+is the only one whose fix belongs in the vendored binding:
+`Database.open_v2(path, flags)`.
+
 ## Alternatives rejected
 
 - **A connection plus retry helper** instead of typed operations: closer to

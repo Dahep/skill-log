@@ -1,0 +1,9 @@
+# Build output
+/dist/
+/build/
+
+# Release packaging cache (scripts/package.sh)
+/.package-cache/
+
+# Python bytecode
+__pycache__/
