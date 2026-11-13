@@ -228,45 +228,38 @@ next reader does not take the map above for the tree as it is.
 - **The CLI is the only seam.** Every suite runs the installed binary as a
   process, and `SKILL_LOG_NOW` is the only clock injection.
 
+### Shipped since this record
+
+The port has since closed most of the gap:
+
+- **One git seam.** `git.mojo` is the single `git(argv)` wrapper; `detect` and
+  `merged` no longer build command strings or decode an empty answer.
+- **One help renderer.** The verb table carries nested verbs, and `help.mojo`
+  renders every level; `skills` no longer builds its own blocks.
+- **One schema column list**, read by the DDL, the single-row read and the
+  multi-row read.
+- **One JSON object builder**, so key order and escaping have one owner.
+- **One settings module** for the XDG paths and the binary-path resolver.
+- **One value-flag declaration per verb**, read by the parser and dispatcher.
+- **One busy-retry budget** for the three writes.
+
 ### Not shipped
 
 - **A typed store surface.** §1 says the surface is typed operations and that
-  "SQL never leaves the module". The SQL does stay in the store — the verbs
-  build no statement of their own — but the *handle* leaves it: `report.mojo`
-  imports `sqlite.db`'s `Database`, holds one, and hands it to the store's
-  read functions, and those functions take a `Database` rather than being the
-  operations the module was supposed to expose. The taxonomy is one place; the
-  queries are one place; the handle that reaches them is not.
-- **A settings descriptor table.** §4 wants one descriptor per context key,
-  emitting the flag, the environment name, the help line and the precedence
-  order from the same row. Today a key is spelled out in `flags`, in `add`, in
-  `context` and in the help text, and the precedence is a hand-written chain.
-- **A `Process` seam.** §3 wants `run(argv)` and `git(argv)` with typed
-  causes, so no caller decodes an error string. `detect.mojo` and
-  `merged.mojo` still build shell command strings and still read an empty
-  answer as a failure — and the two git wrappers still have opposite failure
-  semantics, which is what §3 set out to remove.
-- **One help renderer.** The verb table and the top-level block share a
-  renderer, but `skills` builds its own blocks in `skills.mojo`, and the two
-  disagree about what a block contains.
-- **A single-sourced schema column list.** `store_column_names()` writes the
-  `invocations` columns by hand, and the single-row read and the multi-row
-  read spell out the same list, in the same order, twice more. One list, read
-  by all three, is the whole change.
-- **One SQLite image for the read path.** The read path opens the store
-  read-only, because the vendored binding opens read-write and a read must
-  never create the store. That open lives in `opendb.mojo`, which `dlopen`s
-  `libsqlite3.so.0` itself and plants the handle in the vendored
-  `Database._handle`. The vendored binding loads the library its own way —
-  `_find_sqlite3_library()` honours `$CONDA_PREFIX` — so a machine with
-  `CONDA_PREFIX` set can make the two resolve **two different images**: the
-  handle belongs to one and the binding's function pointers to the other, and
-  the calls then run against a library that never opened the file. The latent
-  risk is real but unobserved: the release ships without a toolchain and
-  without `CONDA_PREFIX`, so the two paths agree there. The fix belongs in
-  the vendored binding: a `Database.open_v2(path, flags)` that opens with
-  SQLite's own flags and returns a handle from the *same* image the binding
-  calls through.
+  "SQL never leaves the module". The SQL does stay in the store, and the
+  taxonomy is one place, but the handle still leaves it: a verb holds a
+  `Database` and hands it to the store's read functions. A `Store` wrapper was
+  built and then reverted — it had to expose `raw_prepare`/`raw_transaction`
+  for the read paths, so it added lines without hiding the connection.
+- **A settings descriptor table.** §4 wants one row per context key emitting
+  the flag, the environment name, the help line and the precedence order.
+  The value-flag lists are single-sourced; the descriptor is not.
+- **One SQLite image for the read path.** The read-only open in `opendb.mojo`
+  `dlopen`s the library itself and plants the handle in the vendored
+  `Database`, while the binding resolves its own image (and honours
+  `$CONDA_PREFIX`). Latent, not observed: the release ships without a
+  toolchain and without `CONDA_PREFIX`. The fix belongs in the binding:
+  `Database.open_v2(path, flags)`.
 
 ### Why
 
@@ -280,11 +273,11 @@ separate change.
 
 The follow-up is
 [issue #26](https://github.com/Dahep/skill-log/issues/26), labelled
-`ready-for-agent`: it lists the shape items with this section as the review
-evidence, and its acceptance criteria are shape, not behaviour. The
-read-only-open seam's latent risk — one SQLite image for the read path — is
-the sixth of them, and it is the only one with a fix that belongs in the
-vendored binding: a `Database.open_v2(path, flags)`.
+`ready-for-agent`: it lists the three remaining shape items with this section
+as the review evidence, and its acceptance criteria are shape, not behaviour.
+The read-only-open seam's latent risk — one SQLite image for the read path —
+is the only one whose fix belongs in the vendored binding:
+`Database.open_v2(path, flags)`.
 
 ## Alternatives rejected
 
