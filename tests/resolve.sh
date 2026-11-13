@@ -6,7 +6,7 @@
 # It exercises the escape hatch: one row, one commit, one timestamp. The
 # cases are the four promises — the stamp lands, the same call changes
 # nothing, a dry run writes nothing, and an unknown id or a missing store
-# is named. The store is built through `add`; `sqlite3` only inspects it.
+# is named.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -16,9 +16,8 @@ BIN="$DIST/skill-log"
 
 SCRATCH_GIVEN="${SCRATCH:-}"
 SCRATCH="${SCRATCH:-$(mktemp -d /tmp/opencode/skill-log-resolve-XXXXXX)}"
-# The suite owns a scratch directory only when it made one: a
-# caller's SCRATCH is theirs to clean up. A fixed path would let two
-# runs on one machine clobber each other's stores.
+# The suite owns a scratch directory only when it made one: a caller's
+# SCRATCH is theirs to clean up.
 if [ -z "$SCRATCH_GIVEN" ]; then
     trap 'rm -rf "$SCRATCH"' EXIT
 fi
@@ -45,8 +44,7 @@ unset OPENCODE_SESSION_ID T3CODE_HOME
 
 DB="$HOME/.local/state/skill-log/skills.db"
 
-# run <args...>: the binary with the sandbox's environment. Output lands
-# in $OUT and $ERR, the status in $STATUS.
+# run <args...>: the binary with the sandbox's environment.
 run() {
     OUT="$("$BIN" "$@" 2>"$SCRATCH/stderr")"
     STATUS=$?
@@ -219,8 +217,7 @@ check "a help flag after a value still asks for help" "$STATUS" "0"
 check "the help block is the verb's usage" \
     "$(printf '%s\n' "$OUT" | grep -c '^usage:$')" "1"
 
-# An existing but table-less store is an empty log: the id is unknown,
-# not a query against tables that do not exist.
+# An existing but table-less store is an empty log: the id is unknown.
 : >"$SCRATCH/tableless.db"
 run resolve --id 1 --fix abc --db "$SCRATCH/tableless.db"
 check "a table-less store names the unknown id" "$STATUS" "1"
@@ -231,8 +228,7 @@ check "a table-less store does not fail on the missing tables" "$ERR" \
 #
 # Six identical resolves of one row run at once. The read that decides
 # "already resolved" happens inside the write transaction, so exactly one
-# of them stamps and the rest see that stamp: one `changed`, one
-# timestamp, six successes.
+# of them stamps and the rest see that stamp.
 run add --skill parallel --machine boxA
 check "the race fixture row is written" "$STATUS" "0"
 RACE_ID="$(sqlite3 "$DB" 'select max(id) from invocations')"

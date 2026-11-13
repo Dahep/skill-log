@@ -5,8 +5,7 @@
 #
 # The hook's entry point, exercised as a process: commit trailers, a
 # report directory, a bounded range, a reused id, a hidden marker, and
-# the failures that must stay failures. The store is built through `add`;
-# `sqlite3` only inspects it.
+# the failures that must stay failures.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -16,9 +15,8 @@ BIN="$DIST/skill-log"
 
 SCRATCH_GIVEN="${SCRATCH:-}"
 SCRATCH="${SCRATCH:-$(mktemp -d /tmp/opencode/skill-log-merged-XXXXXX)}"
-# The suite owns a scratch directory only when it made one: a
-# caller's SCRATCH is theirs to clean up. A fixed path would let two
-# runs on one machine clobber each other's stores.
+# The suite owns a scratch directory only when it made one: a caller's
+# SCRATCH is theirs to clean up.
 if [ -z "$SCRATCH_GIVEN" ]; then
     trap 'rm -rf "$SCRATCH"' EXIT
 fi
@@ -164,10 +162,8 @@ check "the unknown id's reason is the contract token" \
             if s["row"] == sys.argv[1]))' "$H#99")" \
     "unknown_id"
 
-# SPEC §5.6: hidden and malformed markers are reported with their ids or
-# text in `ignored`, never silently dropped. The malformed text is
-# therefore in the JSON array too, not only on stderr — a `--quiet --json`
-# caller must still learn about it.
+# Hidden and malformed markers are reported with their ids or text in
+# `ignored`, never silently dropped.
 check "a malformed marker is in the ignored array" \
     "$(json_array "$(cat "$SCRATCH/bad.json")" ignored | grep -c '<id>')" "1"
 check "a bare id is in the ignored array" \
@@ -212,11 +208,8 @@ check "a foreign marker is never stamped in the answer" \
     "$(json_array "$(cat "$SCRATCH/foreign.json")" resolved)" ""
 
 # A stored row that carries another machine's name does not make that
-# machine this store's own: SPEC §2 says a marker naming another
-# machine is foreign and is never stamped, and the store holds one row
-# per machine only in a consolidated copy. This store is a machine's
-# own store, so the spelling that is not this host's is foreign even
-# when a row happens to carry it.
+# machine this store's own: a marker naming another machine is foreign
+# and is never stamped.
 REPO_FM="$(new_repo foreign-row)"
 DB_FM="$SCRATCH/foreign-row.db"
 "$BIN" add --skill owned-elsewhere --machine otherbox --db "$DB_FM" >/dev/null
@@ -242,13 +235,9 @@ check "the foreign marker is not in the resolved answer" \
 
 # ------------------------------------------------------- an empty machine
 #
-# SPEC §2's one exception: a stored row with an empty `machine` column
-# — written before `add` always filled it — belongs to the machine
-# reading it. So a marker naming this host's spelling stamps such a row,
-# even though the row itself names no machine.
-#
-# No CLI writes an empty machine, so the column is emptied with sqlite3:
-# the row is then exactly what the rule is about.
+# The one exception: a stored row with an empty `machine` column belongs
+# to the machine reading it. No CLI writes an empty machine, so the
+# column is emptied with sqlite3.
 REPO_EM="$(new_repo empty-machine)"
 DB_EM="$SCRATCH/empty-machine.db"
 "$BIN" add --skill before-the-column --machine "$H" --db "$DB_EM" >/dev/null
@@ -287,8 +276,7 @@ check_contains "the hidden note says why" \
 check "the hidden marker stamped nothing" \
     "$(sqlite3 "$DB" 'select fix from invocations where id = 4')" ""
 # The ignored array carries the hidden marker and the malformed values
-# this repo's earlier commits left behind (SPEC §5.6: one array for
-# both). The hidden one is named by the commit it was buried in.
+# this repo's earlier commits left behind: one array for both.
 check "the JSON names the hidden marker" \
     "$(json_array "$(cat "$SCRATCH/hidden.json")" ignored \
         | grep -c "not in the commit's last trailer block")" "1"
@@ -305,8 +293,7 @@ check "--quiet hides the ignored marker" \
 #
 # Two marker blocks in one body: git's trailer parser returns only the
 # last one, so the earlier one is buried. The buried marker must be
-# reported, not dropped — and it must be reported even when the last
-# block did return a value, which is the case the old scan missed.
+# reported, not dropped — even when the last block did return a value.
 REPO_PB="$(new_repo partial-burial)"
 DB_PB="$SCRATCH/partial-burial.db"
 "$BIN" add --skill buried-row --machine "$H" --db "$DB_PB" >/dev/null
@@ -342,11 +329,7 @@ check "the buried marker stamped nothing" \
 # The scan reads every commit in one `git log` call, so the records are
 # separated by a byte the format writes. That byte must be one a commit
 # message cannot carry: 0x1e is the ASCII record separator, and a body
-# that holds one splits the scan in the wrong place, so every marker
-# after it was lost — not even reported.
-#
-# The case: a commit body that carries a literal 0x1e and then a marker.
-# The marker must still be found.
+# that holds one splits the scan in the wrong place.
 REPO_RS="$(new_repo record-separator)"
 DB_RS="$SCRATCH/record-separator.db"
 "$BIN" add --skill after-the-separator --machine "$H" --db "$DB_RS" >/dev/null
@@ -361,9 +344,8 @@ git -C "$REPO_RS" commit -q -F "$SCRATCH/rs-body.txt"
     "$BIN" resolve-merged --db "$DB_RS" --json \
         >"$SCRATCH/record-sep.json" 2>"$SCRATCH/record-sep.err"
 )
-# The marker is found and named. Git's own trailer parser cannot read a
-# block that follows a stray 0x1e, so the marker is reported the way any
-# marker the last-trailer-block rule hid is: named, never dropped.
+# The marker is found and named: git's own trailer parser cannot read a
+# block that follows a stray 0x1e.
 check "a marker after a 0x1e in the body is found" \
     "$(json_array "$(cat "$SCRATCH/record-sep.json")" ignored | grep -c "$H#1")" "1"
 check_contains "the marker after a 0x1e is reported" \
@@ -394,8 +376,7 @@ check "the row appears once in the answer" \
 # --------------------------------------------------- restamp on a new commit
 
 # An amended fix supersedes an earlier one: a row already stamped with a
-# different commit is restamped, and the stamp moves. Idempotency is a
-# second scan of the *same* commit, not a freeze on the first fix.
+# different commit is restamped.
 REPO7="$(new_repo restamp)"
 DB7="$SCRATCH/restamp.db"
 "$BIN" add --skill amended --machine "$H" --db "$DB7" >/dev/null
@@ -630,9 +611,7 @@ check_contains "outside a checkout is named" "$(cat "$SCRATCH/norepo.err")" \
     "inside a git checkout"
 
 # A store the scan can read but cannot write: the write path has its own
-# taxonomy (SPEC §3), and a raw SQLite message is not a name. The fixture
-# is its own store and its own commit, so the scan really wants to
-# stamp something and the write really happens.
+# taxonomy, and a raw SQLite message is not a name.
 RO_REPO="$(new_repo readonly-merged)"
 RO_DB="$SCRATCH/readonly-merged.db"
 "$BIN" add --skill never-stamped --machine "$H" --db "$RO_DB" >/dev/null

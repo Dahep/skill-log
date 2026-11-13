@@ -8,17 +8,6 @@
 # directory, and temporary git repositories (one linked as a worktree, to
 # prove the common hooks directory is used). No real store and no real
 # hook is anywhere near it.
-#
-# Cases: creation and the no-op re-run, --check clean and per-artifact
-# drift with nothing written, a foreign post-merge refused and preserved,
-# --remove-hook on a marked and on a foreign hook, a non-git checkout
-# skipped with exit 0, --no-hook/--no-report-dir, the --json shape,
-# --dry-run writing nothing, a report directory with content left
-# byte-for-byte alone, the generated hook's CLI-resolution fallbacks and
-# its --since argument, pulls that keep their exit status with a failing
-# or absent CLI, the machine line, the skills install (--skills-dir,
-# the version stamp, the differing-copy rule, --check drifts), the store
-# refusals, and usage errors.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -28,9 +17,8 @@ BIN="$DIST/skill-log"
 
 SCRATCH_GIVEN="${SCRATCH:-}"
 SCRATCH="${SCRATCH:-$(mktemp -d /tmp/opencode/skill-log-setup-XXXXXX)}"
-# The suite owns a scratch directory only when it made one: a
-# caller's SCRATCH is theirs to clean up. A fixed path would let two
-# runs on one machine clobber each other's stores.
+# The suite owns a scratch directory only when it made one: a caller's
+# SCRATCH is theirs to clean up.
 if [ -z "$SCRATCH_GIVEN" ]; then
     trap 'rm -rf "$SCRATCH"' EXIT
 fi
@@ -65,8 +53,8 @@ run() {
 DB="$HOME_DIR/.local/state/skill-log/skills.db"
 
 # get <args...>: the binary's stdout alone, for values another case
-# compares against (the baked version, template text). No stderr file,
-# so it cannot clobber the one `run` owns.
+# compares against. No stderr file, so it cannot clobber the one `run`
+# owns.
 get() {
     env -u XDG_STATE_HOME -u SKILL_LOG_DB -u XDG_CONFIG_HOME \
         -u SKILL_LOG_TEMPLATE_DIR \
@@ -218,9 +206,6 @@ fi
 # drift: the hook is not executable. Git skips a hook it cannot run, so
 # the merged reports stop resolving — silently. The executable bit is
 # part of the hook's install, and --check sees it.
-#
-# The hook is installed first: the case before this one stripped the
-# ownership marker, and an unmarked hook is refused by name.
 rm -f "$HOOK"
 run setup --repo "$TMP/r1"
 chmod 0644 "$HOOK"
@@ -247,8 +232,7 @@ check "check: a repaired hook is green" "$STATUS" "0"
 
 # drift: the hook carries an execute bit, but not the owner's. Git runs
 # the hook as the user who pulled, which is the owner here — and the
-# owner cannot execute it, so git skips it silently. "any execute bit"
-# is not the question the install asks; the owner's bit is.
+# owner cannot execute it, so git skips it silently.
 rm -f "$HOOK"
 run setup --repo "$TMP/r1"
 chmod 0641 "$HOOK"
@@ -262,9 +246,7 @@ check "check: the hook the owner cannot execute is not rewritten" \
     "$(stat -c %a "$HOOK")" "641"
 
 # A normal run repairs the mode, and says it did. The repair adds the
-# owner's execute bit and leaves the file's other bits alone: the
-# installer owns the file, and the owner's bit is the one the run
-# needs.
+# owner's execute bit and leaves the file's other bits alone.
 run setup --repo "$TMP/r1"
 check "a hook the owner cannot execute: the run exits 0" "$STATUS" "0"
 check "a hook the owner cannot execute: the mode is repaired" \
@@ -682,8 +664,7 @@ fi
 # --skills-dir installs the two bundled skills: the read-and-report
 # skill copied verbatim with its version stamp, and the review skill
 # rendered from its template followed by its own usage-log block. A
-# differing copy is left alone unless --force; --check verifies the
-# install (the stamp and the content) and drifts on anything else.
+# differing copy is left alone unless --force.
 
 DIR="$TMP/skillsdir"
 run setup --repo "$TMP/r1" --skills-dir "$DIR" --db "$TMP/skills-store.db"
@@ -927,11 +908,8 @@ check "template override: --check is green" "$STATUS" "0"
 
 # ------------------------------------------- a moved shipped default
 #
-# SPEC §7: a shipped default that moved since the user copy was seeded
-# is named by `setup --check`, with the two commands that adopt it.
-# The user copy is what makes the question meaningful, so the copies
-# are seeded first; the seeded-from record is then pointed at a hash
-# that is not the current shipped default.
+# A shipped default that moved since the user copy was seeded is named
+# by `setup --check`, with the two commands that adopt it.
 run skills template seed --force
 check "the user copies are seeded" "$STATUS" "0"
 SEEDED_DIR="$HOME_DIR/.local/state/skill-log/seeded-from"
@@ -999,11 +977,9 @@ fi
 # creation that fails is classified the way every other write failure is
 # classified: one named line, never the engine's raw wording.
 #
-# A directory where the store's file should be is the case: the store
-# cannot be created there, and SQLite's own answer ("sqlite3_open(...)
-# failed (sqlite3 rc=14)") says nothing a reader can act on. The same
-# path through `add` is classified, and setup must classify it the same
-# way.
+# A directory where the store's file should be is the case: SQLite's own
+# answer ("sqlite3_open(...) failed (sqlite3 rc=14)") says nothing a
+# reader can act on.
 mkdir -p "$TMP/store-is-a-dir"
 run setup --repo "$TMP/rref" --db "$TMP/store-is-a-dir"
 check "a store that cannot be created exits 1" "$STATUS" "1"
@@ -1026,8 +1002,7 @@ check_absent "add on the same path leaks no engine wording" \
 
 # ------------------------------------------------------------- usage
 #
-# Every help level ends with 2 to 4 real invocations, and a usage error
-# exits 2.
+# Every help level ends with 2 to 4 real invocations.
 
 run setup --help
 check "help exits 0" "$STATUS" "0"

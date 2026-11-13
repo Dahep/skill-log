@@ -3,9 +3,9 @@
 #
 #   tests/context.sh
 #
-# It exercises ADR-0002's precedence chain against the built artifact:
-# the explicit flag, then the field's SKILL_LOG_* variable, then an
-# enabled adapter, then the built-in detection — one field at a time.
+# It exercises the precedence chain against the built artifact: the
+# explicit flag, then the field's SKILL_LOG_* variable, then an enabled
+# adapter, then the built-in detection — one field at a time.
 #
 # Everything runs in a sandbox: a temporary HOME, a temporary store, and
 # temporary git repositories. The detection reads the working tree the row
@@ -23,9 +23,8 @@ BIN="$DIST/skill-log"
 
 SCRATCH_GIVEN="${SCRATCH:-}"
 SCRATCH="${SCRATCH:-$(mktemp -d /tmp/opencode/skill-log-context-XXXXXX)}"
-# The suite owns a scratch directory only when it made one: a
-# caller's SCRATCH is theirs to clean up. A fixed path would let two
-# runs on one machine clobber each other's stores.
+# The suite owns a scratch directory only when it made one: a caller's
+# SCRATCH is theirs to clean up.
 if [ -z "$SCRATCH_GIVEN" ]; then
     trap 'rm -rf "$SCRATCH"' EXIT
 fi
@@ -56,8 +55,7 @@ unset OPENCODE_SESSION_ID T3CODE_HOME
 
 DB="$HOME_DIR/.local/state/skill-log/skills.db"
 
-# run <args...>: the binary with the sandbox's environment. Output lands
-# in $OUT and $ERR, the status in $STATUS.
+# run <args...>: the binary with the sandbox's environment.
 run() {
     OUT="$("$BIN" "$@" 2>"$SCRATCH/stderr")"
     STATUS=$?
@@ -133,9 +131,8 @@ check "an ssh remote's basename is the repo" "$(json_field "$OUT" repo)" "thing"
 
 # ------------------------------------------------- a named worktree wins
 #
-# `repo` and `worktree` must describe the same checkout. When the caller
-# names the worktree, the repository comes from *that* tree, not from the
-# process's own directory.
+# When the caller names the worktree, the repository comes from *that*
+# tree, not from the process's own directory.
 
 OTHER="$SCRATCH/other-repo"
 make_repo "$OTHER" other
@@ -155,8 +152,7 @@ check "a path that is not a checkout names no repo" \
     "$(json_field "$OUT" repo)" ""
 
 # A path with a shell metacharacter in it is one argument, not two: the
-# detection quotes it. A repository under a name with a single quote is
-# the case a naive command string gets wrong.
+# detection quotes it.
 QUOTED="$SCRATCH/it's repo"
 make_repo "$QUOTED" quoted
 run add --skill detect --dry-run --json --worktree "$QUOTED"
@@ -249,9 +245,7 @@ OUT="$(HOME="$OC_HOME" OPENCODE_SESSION_ID=ses_nested \
 check "the model reader takes the top-level id" \
     "$(json_field "$OUT" model)" "p/real"
 
-# An escape this reader cannot decode is refused rather than mangled:
-# the value falls back to the raw text, which is what the reference does
-# for a shape it cannot parse.
+# An escape this reader cannot decode is refused rather than mangled.
 OUT="$(HOME="$OC_HOME" OPENCODE_SESSION_ID=ses_escaped \
     "$BIN" add --skill adapters --dry-run --json --adapter opencode)"
 check "an undecodable escape falls back to the raw value" \
@@ -367,10 +361,9 @@ check "--problem - reads the text from a file" "$(json_problem "$OUT")" \
 
 # On a terminal there is nothing to read, and the command must not wait.
 #
-# The redirect lives inside the `script` command string: `script` runs
-# the command on a pty, and a pty is one stream, so a redirect outside
-# the string would capture the pty itself rather than the command's
-# stderr.
+# The redirect lives inside the `script` command string: `script` runs the
+# command on a pty, and a pty is one stream, so a redirect outside the
+# string would capture the pty itself rather than the command's stderr.
 if command -v script >/dev/null 2>&1; then
     script -qec "$BIN add --skill stdin --dry-run --problem - 2>$SCRATCH/tty.err" \
         /dev/null >"$SCRATCH/tty.out"

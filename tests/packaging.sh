@@ -14,18 +14,14 @@
 # be the only source, not merely present.
 #
 # The default image is debian:bookworm-slim: no toolchain, no system
-# SQLite, glibc 2.36 above the artifact's 2.35 floor. Once the image is
-# present the test needs no network (the run is --pull=never); a missing
-# image is pulled once, explicitly. Override the image with --image or
-# SKILL_LOG_PACKAGING_IMAGE. The release workflow runs this same script
-# on ubuntu:22.04, the glibc floor itself.
+# SQLite, glibc 2.36 above the artifact's 2.35 floor. Override the image
+# with --image or SKILL_LOG_PACKAGING_IMAGE.
 #
 # The image carries no git, so `setup --dry-run`'s repo-scoped artifacts
-# are asserted through the named skip ("not a git checkout"); an image
-# with git gets the created-verdict assertions instead.
+# are asserted through the named skip.
 #
 # This is not part of scripts/test.sh: it needs docker, so the default
-# gate stays offline and fast. Run it directly, and on CI.
+# gate stays offline and fast.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -33,9 +29,8 @@ ROOT="$(cd "$HERE/.." && pwd)"
 
 SCRATCH_GIVEN="${SCRATCH:-}"
 SCRATCH="${SCRATCH:-$(mktemp -d /tmp/opencode/skill-log-packaging-XXXXXX)}"
-# The suite owns a scratch directory only when it made one: a
-# caller's SCRATCH is theirs to clean up. A fixed path would let two
-# runs on one machine clobber each other's stores.
+# The suite owns a scratch directory only when it made one: a caller's
+# SCRATCH is theirs to clean up.
 if [ -z "$SCRATCH_GIVEN" ]; then
     trap 'rm -rf "$SCRATCH"' EXIT
 fi

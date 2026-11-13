@@ -4,81 +4,28 @@
 #
 #   tests/parity.sh
 #
-# The reference implementation (the report-era Python CLI and its 25-case
-# bash harness) was kept verbatim under `reference/` during the port and
-# removed once this suite passed: history is in git, the cases below are
-# the record. This suite ports those 25 cases to `dist/skill-log`, with
-# the intentionally changed commands adapted and the case names kept
-# comparable.
+# This suite ports the reference implementation's 25 cases to
+# `dist/skill-log`, with the intentionally changed commands adapted and the
+# case names kept comparable.
 #
 # The adaptations, and only these:
 #
 #   * the report-era `fix` verb and `.skill-log/fixes/` are now `report`
 #     and `.skill-log/reports/`;
-#   * the opencode adapter is opt-in in 1.0 (`--adapter opencode` or
-#     `SKILL_LOG_ADAPTERS=opencode`), so the reference's default-detect
-#     cases become "adapter off by default -> blank" plus "adapter on ->
-#     filled";
-#   * the store is never inherited or converted in 1.0 (SPEC §3), so the
-#     reference's migration cases become the refusal parity: an older or
-#     foreign file is refused by name, and the tool writes nothing into it;
-#   * the multi-machine `sync` cases are out of scope in 1.0 (SPEC §10) and
-#     are listed as explicit, reasoned skips below;
-#   * the race cases run against the 1.0 single-store writer: a real
-#     second process holds the write lock, the retry budget is bounded, and
-#     a failure is one stderr line.
+#   * the opencode adapter is opt-in in 1.0;
+#   * the store is never inherited or converted in 1.0, so the reference's
+#     migration cases become the refusal parity;
+#   * the multi-machine `sync` cases are out of scope in 1.0 and are
+#     listed as explicit, reasoned skips below;
+#   * the race cases run against the 1.0 single-store writer.
 #
-# Discipline (SPEC §9): the binary is the only seam. Every case runs the
-# installed artifact as a process against a sandboxed HOME and XDG state,
-# in temporary git repositories, with no network. Nothing imports an
-# internal.
+# Discipline: the binary is the only seam. Every case runs the installed
+# artifact as a process against a sandboxed HOME and XDG state, in
+# temporary git repositories, with no network. Nothing imports an internal.
 #
-# The clock: the contract names `SKILL_LOG_NOW` as the one clock
-# injection (SPEC §9, ADR-0003), and the binary honours it: the writer's
-# stamp is the variable's value when it is set, so a case can pin time
-# without touching the store or sleeping. The clock case at the end of
-# this suite proves it; the one case that needs a fixed comparison (case
-# 29, the time guard) also fixes the commit side with a git commit date,
-# because the guard compares the row's own stamp with the commit's time.
-#
-# Coverage the contract names, and where it lives. This map keeps the
-# ticket auditable without duplicating the suites that already prove a
-# rule; every line below is a rule the contract names (SPEC §9), and the
-# "proved by" column names the suite that already holds it down. A rule
-# this suite owns says so.
-#
-#   rule                                        proved by
-#   -----------------------------------------   ----------------------------
-#   store matrix: absent                       parity: case 26, tests/show.sh
-#   store matrix: empty                        parity: case 26, tests/show.sh
-#   store matrix: damaged                      parity: case 26, tests/store.sh
-#   store matrix: foreign                      parity: case 26, tests/store.sh
-#   store matrix: older                        parity: case 26, tests/store.sh
-#   store matrix: newer                        parity: case 26, tests/store.sh
-#   the matrix per verb's policy               parity: case 26
-#   adapter off by default                     parity: case 2, tests/context.sh
-#   flag-over-adapter precedence               parity: case 3, tests/context.sh
-#   repo/worktree inside                       parity: case 31, tests/context.sh
-#   repo/worktree outside                      parity: case 31, tests/context.sh
-#   repo/worktree across linked worktrees      parity: case 31, tests/context.sh
-#   add is not idempotent                      parity: case 30, tests/store.sh
-#   all five document states                   tests/skills.sh
-#   restamp on a differing commit              tests/merged.sh
-#   a foreign marker                           parity: case 20, tests/merged.sh
-#   hidden and malformed marker reports        parity: case 21, tests/merged.sh
-#   report --check without a selector          parity: case 27
-#   uncommitted report edits resolve nothing   parity: case 28
-#   a non-git checkout                         parity: case 23, tests/setup.sh
-#   a missing CLI in the hook                  parity: case 23, tests/setup.sh
-#   an older CLI in the hook                   parity: case 23, tests/setup.sh
-#   a time guard across differing offsets      parity: case 29
-#   a fixed clock uses SKILL_LOG_NOW           parity: case 34, tests/store.sh
-#   the packaging assumptions                  tests/packaging.sh
-#
-# The rules the parity suite owns outright are the reference's own: the
-# refused older store, the adapter's default, the model's precedence, the
-# report artifact, the hidden marker, the hook's promises, and the write
-# contention.
+# The clock: the contract names `SKILL_LOG_NOW` as the one clock injection,
+# and the binary honours it: the writer's stamp is the variable's value when
+# it is set, so a case can pin time without touching the store or sleeping.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -98,23 +45,19 @@ fi
 
 # ------------------------------------------------------------- the sandbox
 #
-# The suite refuses to run against the real HOME. The reference's guard is
-# the model: the sandbox lives outside the real home, and the home the
-# binary sees is inside the sandbox. A suite that ran against the real
-# home would write the real store, and a suite that could not tell would
-# not know it had.
+# The suite refuses to run against the real HOME: the sandbox lives outside
+# the real home, and the home the binary sees is inside the sandbox. A
+# suite that ran against the real home would write the real store.
 #
-# The guard is a function, so the suite can prove it fires: a case below
-# hands it a sandbox inside the real home and a home outside the sandbox,
-# and both must be refused.
+# The guard is a function, so the suite can prove it fires.
 
 # sandbox_ok <base> <sandbox-home>: the guard's verdict. Zero when the
 # pair is safe: the sandbox is outside the real home, and the home the
 # binary sees is inside the sandbox.
 #
-# The paths are normalized first: a guard that matched a raw prefix
-# would accept `$S/../outside` as "inside $S", which is the opposite of
-# what it claims.
+# The paths are normalized first: a guard that matched a raw prefix would
+# accept `$S/../outside` as "inside $S", which is the opposite of what it
+# claims.
 sandbox_ok() {
     local base home
     base="$(cd "$1" 2>/dev/null && pwd -P)" || return 1
@@ -165,8 +108,7 @@ run() {
 }
 
 # run_in <dir> <args...>: the same, from inside a directory. The verbs
-# that read a checkout — report, resolve-merged — are about the tree the
-# caller stands in, so the case runs where the tree is.
+# that read a checkout are about the tree the caller stands in.
 run_in() {
     local dir="$1"
     shift
@@ -198,8 +140,8 @@ fix_of() {
 }
 
 # new_repo <name>: an empty git repository under the scratch root. The
-# branch is named explicitly, so the report file's name does not depend
-# on the machine's `init.defaultBranch`.
+# branch is named explicitly, so the report file's name does not depend on
+# the machine's `init.defaultBranch`.
 new_repo() {
     local repo="$S/repos/$1"
     mkdir -p "$repo"
@@ -222,8 +164,7 @@ commit_trailers() {
 
 # mkopdb <session-id> <model-json>: a minimal opencode session store
 # ($HOME-managed, so it lands in the sandbox) with the named session and
-# its model JSON in the exact session_v2 shape skill-log reads. The
-# reference's fixture, reused read-only.
+# its model JSON in the exact session_v2 shape skill-log reads.
 mkopdb() {
     mkdir -p "$HOME/.local/share/opencode"
     sqlite3 "$HOME/.local/share/opencode/opencode.db" <<SQL
@@ -233,8 +174,7 @@ SQL
 }
 
 # mkolderdb <path>: a pre-1.0 skill-log store — the reference's v1 shape:
-# the two tables, the old columns. The 1.0 rule refuses it by name and
-# never converts it.
+# the two tables, the old columns.
 mkolderdb() {
     sqlite3 "$1" <<'SQL'
 CREATE TABLE invocations (
@@ -272,10 +212,8 @@ H="$(hostname)"
 
 # --- case 1: the migration becomes the refusal parity ---------------------
 #
-# The reference ingested new rows into a v1 log. The 1.0 rule is the
-# deliberate change (SPEC §3, §8): the store is never inherited or
-# converted, so an older file is refused by name and the row it carried
-# stays exactly as it was found.
+# The store is never inherited or converted, so an older file is refused
+# by name and the row it carried stays exactly as it was found.
 say "parity: case 1 — an older store is refused, never converted"
 V1DB="$DBT/c1.db"
 mkolderdb "$V1DB"
@@ -300,9 +238,8 @@ check "case 1: the read names the older store" \
 
 # --- case 2: auto-detect from the local opencode store ---------------------
 #
-# The reference detected the model by default. The 1.0 rule is that
-# adapters are opt-in (SPEC §4), so the case is twice: off by default the
-# fields are blank, on the adapter answers.
+# Adapters are opt-in, so the case is twice: off by default the fields are
+# blank, on the adapter answers.
 say "parity: case 2 — the model comes from the session store, with the adapter on"
 C2="$DBT/c2.db"
 mkopdb ses_fixture '{"id": "m-test", "providerID": "prov-x"}'
@@ -336,8 +273,7 @@ OUT="$(OPENCODE_SESSION_ID=ses_remote T3CODE_HOST=fake-api-host \
     T3CODE_PORT=9999 SKILL_LOG_ADAPTERS=opencode "$BIN" add \
     --skill remote-skill --db "$DBT/c3.db" --json)"
 # Deliberate: the model is a local-store-only fact. A session id this
-# machine's opencode db cannot answer lands blank; --model fills it
-# manually when the caller knows.
+# machine's opencode db cannot answer lands blank.
 check "case 3: a foreign session -> model empty" \
     "$(json_field "$OUT" model)" ""
 check "case 3: the session itself is still recorded" \
@@ -358,9 +294,8 @@ check "case 3: a dry run with --model keeps the same override" \
 
 # --- case 4: read paths on a pre-migration db -----------------------------
 #
-# The reference's reads migrated the writable db on the way. The 1.0 rule
-# refuses it by name instead, and a read never reports "nothing logged"
-# over a file it could not read.
+# The rule refuses it by name instead, and a read never reports
+# "nothing logged" over a file it could not read.
 say "parity: case 4 — reads of an older store name it, and never read it as empty"
 V1R="$DBT/c4.db"
 mkolderdb "$V1R"
@@ -411,10 +346,9 @@ check "case 5: the default table keeps the rate column" \
 
 # --- case 6: the parallel first write -------------------------------------
 #
-# The reference forced a schema race with a Python driver. The 1.0 writer
-# creates the store in one transaction and retries a busy write, so the
-# case is the real pair of processes: two writers against a store that
-# does not exist yet.
+# The writer creates the store in one transaction and retries a busy
+# write, so the case is the real pair of processes: two writers against a
+# store that does not exist yet.
 say "parity: case 6 — parallel first writes on one store both land"
 C6="$DBT/c6.db"
 "$BIN" add --skill race-a --model prov-p/m-a --db "$C6" >/dev/null &
@@ -457,8 +391,7 @@ check_contains "case 8: the show table carries the parent cell" \
 
 # --- case 9: a snapshot that carries the model but not the parent ---------
 #
-# The reference read a read-only snapshot it could not migrate. The 1.0
-# rule refuses an older file by name, whatever its permissions.
+# The rule refuses an older file by name, whatever its permissions.
 say "parity: case 9: an older snapshot is refused, whatever its permissions"
 C9="$DBT/c9.db"
 mkolderdb "$C9"
@@ -472,16 +405,15 @@ chmod 644 "$C9"
 
 # --- case 10: a busy write is retried, not lost ---------------------------
 #
-# The reference injected the lock in Python. The 1.0 rule is that the
-# contention is exercised with a real second process (SPEC §9), so the
-# case holds the write lock for real and lets the bounded retry budget do
-# its work.
+# The contention is exercised with a real second process, so the case
+# holds the write lock for real and lets the bounded retry budget do its
+# work.
 #
 # The lock is held for three seconds — longer than the connection's
-# two-second busy timeout, so the wait inside SQLite cannot cover it.
-# The whole-attempt retry budget is five seconds, so the row lands: the
-# budget is what carries the write past the lock, and a two-second hold
-# would have ridden the busy timeout instead of proving it.
+# two-second busy timeout, so the wait inside SQLite cannot cover it. The
+# whole-attempt retry budget is five seconds, so the row lands: a
+# two-second hold would have ridden the busy timeout instead of proving
+# it.
 say "parity: case 10 — a write survives a real second writer holding the lock"
 C10="$DBT/c10.db"
 "$BIN" add --skill lock-holder --db "$C10" >/dev/null
@@ -502,9 +434,9 @@ check "case 10: the lock holder's row is still there" \
 
 # --- case 11: an exhausted retry fails quietly ----------------------------
 #
-# The reference shrank the budget in Python. The 1.0 rule keeps the retry
-# budget bounded, so the case holds the lock for longer than the budget
-# and asserts the contract's failure shape: one stderr line, no row.
+# The retry budget stays bounded, so the case holds the lock for longer
+# than the budget and asserts the contract's failure shape: one stderr
+# line, no row.
 say "parity: case 11 — an exhausted retry fails quietly, with one line"
 C11="$DBT/c11.db"
 "$BIN" add --skill lock-holder --db "$C11" >/dev/null
@@ -565,8 +497,8 @@ check "case 12: a dry run leaves the row's fix" \
 # --- cases 13 to 17: the multi-machine sync cases --------------------------
 #
 # `sync`, an aggregate store, merged copies and owner authority left
-# scope in 1.0 (SPEC §10, ADR-0002). They are listed with their reasons
-# rather than dropped silently, so the gate says what it did not run.
+# scope in 1.0. They are listed with their reasons rather than dropped
+# silently, so the gate says what it did not run.
 skip "parity: case 13 — sync merges a remote log" \
     "multi-machine sync left scope in 1.0 (SPEC §10): no sync verb, no aggregate store, no owner authority"
 skip "parity: case 14 — the pull reads a live WAL" \
@@ -580,10 +512,9 @@ skip "parity: case 17 — the default remote path needs no flag" \
 
 # --- case 18: a concurrent write's collision retries ----------------------
 #
-# The reference's case was a merge's unique-index collision. The 1.0
-# store has no owner index (SPEC §3), so the case is the write
-# contention itself: several writers against one store, and every row
-# lands exactly once.
+# The store has no owner index, so the case is the write contention
+# itself: several writers against one store, and every row lands exactly
+# once.
 say "parity: case 18 — concurrent writers converge on one store"
 C18="$DBT/c18.db"
 for i in 1 2 3 4 5 6; do
@@ -622,8 +553,7 @@ check "case 19: re-running names the rows it left alone" \
 # row the commit fixed.
 #
 # The commit's time is fixed with a git commit date, so the guard is
-# provable without a sleep and without a clock injection: the row's own
-# stamp (now) is after the commit's time (2020).
+# provable without a sleep and without a clock injection.
 GIT_COMMITTER_DATE="2020-01-01T00:00:00+0000" \
 GIT_AUTHOR_DATE="2020-01-01T00:00:00+0000" \
     git -C "$R19" commit -q --allow-empty \
@@ -671,11 +601,9 @@ check "case 19: a dry run leaves the row unresolved" "$(fix_of "$DB19D" 1)" ""
 # --- case 20: one machine, one identity -----------------------------------
 #
 # The reference resolved a marker whose host was spelled another way
-# (a short name against an FQDN). The 1.0 rule is that a marker names a
-# machine exactly and a marker naming another machine is foreign
-# (SPEC §2): there is no owner lookup and no cross-machine resolution.
-# The local spelling is this host's name; the differently spelled one is
-# another machine.
+# (a short name against an FQDN). A marker names a machine exactly, and a
+# marker naming another machine is foreign: there is no owner lookup and
+# no cross-machine resolution.
 say "parity: case 20 — a marker names its machine exactly"
 R20="$(new_repo c20)"
 C20L="$DBT/c20.db"
@@ -843,8 +771,7 @@ check_contains "case 23: the non-git checkout skips with a named reason" "$OUT" 
 # --- case 24: report writes the repo report artifact ----------------------
 #
 # The reference-era verb was `fix` and the directory was
-# `.skill-log/fixes/`. The 1.0 names are `report` and
-# `.skill-log/reports/`.
+# `.skill-log/fixes/`.
 say "parity: case 24 — report writes the repo report file, validated at authoring time"
 R24="$(new_repo c24)"
 DB24="$DBT/c24.db"
@@ -937,8 +864,8 @@ check "case 25: a full scan resolves the report file's row" \
 
 # --- case 26: the store matrix, per verb's policy -------------------------
 #
-# SPEC §3: the policy, not the verb, decides what an absent, empty,
-# damaged, foreign, older or newer store means.
+# The policy, not the verb, decides what an absent, empty, damaged,
+# foreign, older or newer store means.
 say "parity: case 26 — the store matrix, per verb's policy"
 MATRIX="$S/matrix"
 mkdir -p "$MATRIX"
@@ -1009,8 +936,7 @@ check "case 26: the filled store holds the row" \
 # The strict and write policies: an absent store is a refusal.
 R26="$(new_repo c26)"
 # A second checkout, in trailer mode: `setup` gives the first one a
-# report directory, and an artifact-mode scan reads the report files
-# rather than the trailers.
+# report directory, and an artifact-mode scan reads the report files.
 R26T="$(new_repo c26t)"
 # The repository carries a marker, so the scan has something to look at
 # and the store is genuinely opened.
@@ -1083,9 +1009,7 @@ for kind in damaged foreign older newer; do
         check_one_line "case 26: $verb's $kind refusal is one line" "$ERR"
     done
     # The two verbs that read a checkout run inside one. The
-    # resolve-merged case needs a trailer-mode checkout: `setup` above
-    # gave $R26 a report directory, and an artifact-mode scan reads the
-    # report files rather than the trailers.
+    # resolve-merged case needs a trailer-mode checkout.
     run_in "$R26" report --id 1 --slug m --db "$MATRIX/$kind.db"
     check "case 26: report refuses a $kind store" "$STATUS" "1"
     check_contains "case 26: report names the $kind store" "$ERR" \
@@ -1156,9 +1080,8 @@ check "case 28: an uncommitted edit adds no row" "$(fix_of "$DB28" 2)" ""
 
 # --- case 29: the time guard across differing writer offsets --------------
 #
-# The guard compares the row's instant with the commit's time. A row
-# written with one offset and a commit made with another must still
-# compare as instants, not as offset strings.
+# The guard compares the row's instant with the commit's time, not as
+# offset strings.
 say "parity: case 29 — the time guard compares instants, not offset strings"
 R29="$(new_repo c29)"
 DB29="$DBT/c29.db"
@@ -1243,8 +1166,7 @@ check "case 32: the machine is the hostname" \
 # --- case 33: the sandbox guard refuses the real home ---------------------
 #
 # The suite's own guard: it must refuse a sandbox inside the real home,
-# and it must refuse a home outside the sandbox. A suite that could run
-# against the real store would write the real store.
+# and it must refuse a home outside the sandbox.
 say "parity: case 33 — the sandbox guard refuses the real home"
 if sandbox_ok "$REAL_HOME/inside" "$REAL_HOME/inside/home"; then
     fail "case 33: a sandbox inside the real home is refused"
@@ -1259,8 +1181,7 @@ fi
 check "case 33: the sandbox the suite runs in is accepted" \
     "$(sandbox_ok "$S" "$S/home" && echo accepted || echo refused)" "accepted"
 # The suite writes nothing outside its sandbox: the real store's bytes
-# are the same before and after the run. The store may exist already —
-# the suite never creates it and never writes to it.
+# are the same before and after the run.
 REAL_DB="$REAL_HOME/.local/state/skill-log/skills.db"
 REAL_SUM="$(md5sum <"$REAL_DB" 2>/dev/null || printf 'absent')"
 run add --skill must-not-reach-the-real-store

@@ -7,12 +7,6 @@
 # a temporary HOME and a temporary store, so nothing reaches the real
 # log. The CLI is the only writer; the sqlite3 CLI is used to look at
 # what a write left behind, never to change it.
-#
-# Cases: the absent and the empty store, the empty JSON stream, the
-# table and its indentation, every filter, --run across the three
-# namespaces, the ordering, --last, the home shortening, the refusals,
-# the usage errors, and — the invariant the whole verb rests on — a read
-# that changes nothing.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -22,9 +16,8 @@ BIN="$DIST/skill-log"
 
 SCRATCH_GIVEN="${SCRATCH:-}"
 SCRATCH="${SCRATCH:-$(mktemp -d /tmp/opencode/skill-log-show-XXXXXX)}"
-# The suite owns a scratch directory only when it made one: a
-# caller's SCRATCH is theirs to clean up. A fixed path would let two
-# runs on one machine clobber each other's stores.
+# The suite owns a scratch directory only when it made one: a caller's
+# SCRATCH is theirs to clean up.
 if [ -z "$SCRATCH_GIVEN" ]; then
     trap 'rm -rf "$SCRATCH"' EXIT
 fi
@@ -123,9 +116,8 @@ check "an empty store says so" "$OUT" "no invocations logged yet"
 check "an empty store in json prints nothing" \
     "$(wc -c <"$SCRATCH/empty.json" | tr -d ' ')" "0"
 
-# A file that exists but was never initialised: no tables at all. SQLite
-# treats it as an empty database, and so does the read — it is not a
-# foreign store, because it holds nothing to be foreign.
+# A file that exists but was never initialised: no tables at all. It is
+# not a foreign store, because it holds nothing to be foreign.
 : >"$SCRATCH/untouched.db"
 run show --db "$SCRATCH/untouched.db"
 check "an untouched empty file exits 0" "$STATUS" "0"
@@ -195,8 +187,7 @@ run show --json
 check "json exits 0" "$STATUS" "0"
 check "json is one object per row" "$(printf '%s\n' "$OUT" | grep -c .)" "3"
 # The key set is pinned, not counted: a count proves that many keys are
-# there, not which. The expected string is the one `tests/store.sh` pins
-# for the same object.
+# there, not which.
 check "json carries exactly the row's keys" "$(json_keys "$(printf '%s\n' "$OUT" | head -1)")" \
     "fix harness id machine marker model parent problems project repo resolved_at session skill t3_thread ts worktree"
 check "json carries the problems array" \
@@ -435,8 +426,7 @@ check "a newer store is named with both versions" \
 check_one_line "a newer store is one line" "$ERR"
 
 # A writer that crashed after committing leaves frames in the WAL. A
-# read must see them and must not checkpoint them into the database
-# file: the main file stays byte-identical and the WAL stays in place.
+# read must see them and must not checkpoint them into the database file.
 sqlite3 "$DB" 'pragma wal_checkpoint(TRUNCATE)'
 cp "$DB" "$SCRATCH/wal.db"
 python3 - "$SCRATCH/wal.db" <<'PY'
@@ -516,8 +506,7 @@ check "the help block is the verb's usage" \
     "$(printf '%s\n' "$OUT" | grep -c '^usage:$')" "1"
 
 # The usage error names the flag and lists the valid choices, on one
-# line. A reader who asked for a wrong value learns the right one
-# without a second command.
+# line.
 run show --last abc
 check_contains "the usage error names the flag" "$ERR" "--last"
 check_contains "the usage error lists the valid choices" "$ERR" "1 and 500"
@@ -533,12 +522,10 @@ check "a usage error keeps stdout empty" "$OUT" ""
 # --------------------------------------------------------------- read-only
 
 # The invariant the verb rests on: a read changes nothing. The store is
-# byte-identical afterwards, its mtime is untouched, and no new file
-# appears beside it.
+# byte-identical afterwards, its mtime is untouched.
 STATE_DIR="$HOME_DIR/.local/state/skill-log"
 # A reader may leave SQLite's own -wal/-shm sidecars behind (it needs
-# them to read a WAL store); the store file itself is the invariant, and
-# it is asserted byte-identical above.
+# them to read a WAL store); the store file itself is the invariant.
 files_besides_sidecars() {
     find "$STATE_DIR" -maxdepth 1 -mindepth 1 -printf '%f\n' \
         | grep -vE '^skills[.]db-(wal|shm)$' | sort | tr '\n' ' ' || true
@@ -600,8 +587,7 @@ fi
 # concurrent `add` must not turn a `show` into "database is locked".
 #
 # The lock is held by a real second process, and the case waits for that
-# process to say it holds the lock — a handshake, not a sleep that hopes
-# the other side got there first.
+# process to say it holds the lock — a handshake, not a sleep.
 hold_lock "$DB" "$SCRATCH/lock-ready" 2 &
 HOLDER=$!
 wait_for "$SCRATCH/lock-ready"

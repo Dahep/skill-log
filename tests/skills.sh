@@ -4,23 +4,14 @@
 #
 #   tests/skills.sh
 #
-# It exercises tickets #17 and #18's surface: the two shipped templates,
-# their resolution chain and placeholder validation, `skills template
-# show|seed|reset`, `skills audit` over the five document states, and
-# `skills adopt`'s append/rewrite/refuse/skip actions with their
-# byte-exactness and idempotency. The cases are the promises the spec
-# makes — all five states classify, a `missing` skill with stale unfenced
-# text nearby leaves that text untouched, a moved shipped default is
-# reported with the two adopting commands and never applied, seed/reset
-# refuse without `--force` and honour `--dry-run`, an empty directory is
-# refused, the audit writes nothing, adopt changes no byte outside the
-# fence and a second run changes nothing, and every help block ends with
-# real invocations.
+# It exercises the two shipped templates, their resolution chain and
+# placeholder validation, `skills template show|seed|reset`, `skills audit`
+# over the five document states, and `skills adopt`'s
+# append/rewrite/refuse/skip actions with their byte-exactness and
+# idempotency.
 #
-# Fence fixtures are built through the CLI where a render exists
-# (`skills template show --json` carries the template source, and the
-# audit's own render is what a fresh block matches); hashes are hardcoded
-# only to prove an `edited`/tampered block.
+# Fence fixtures are built through the CLI where a render exists; hashes are
+# hardcoded only to prove an `edited`/tampered block.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -30,9 +21,8 @@ BIN="$DIST/skill-log"
 
 SCRATCH_GIVEN="${SCRATCH:-}"
 SCRATCH="${SCRATCH:-$(mktemp -d /tmp/opencode/skill-log-skills-XXXXXX)}"
-# The suite owns a scratch directory only when it made one: a
-# caller's SCRATCH is theirs to clean up. A fixed path would let two
-# runs on one machine clobber each other's stores.
+# The suite owns a scratch directory only when it made one: a caller's
+# SCRATCH is theirs to clean up.
 if [ -z "$SCRATCH_GIVEN" ]; then
     trap 'rm -rf "$SCRATCH"' EXIT
 fi
@@ -62,8 +52,7 @@ unset OPENCODE_SESSION_ID T3CODE_HOME
 TPL="$XDG_CONFIG_HOME/skill-log/templates"
 SEEDED="$XDG_STATE_HOME/skill-log/seeded-from"
 
-# run <args...>: the binary with the sandbox's environment. Output lands
-# in $OUT and $ERR, the status in $STATUS.
+# run <args...>: the binary with the sandbox's environment.
 run() {
     OUT="$("$BIN" "$@" 2>"$SCRATCH/stderr")"
     STATUS=$?

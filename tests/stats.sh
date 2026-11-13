@@ -5,10 +5,7 @@
 #
 # It exercises the read that answers "which skills need attention": the
 # four distinct counts, the rate, every `--by` key, the `--skill` narrow,
-# the flat JSON line, the empty answer, and the refusals. The fixture is
-# built through `add` and `resolve` (the CLI is the only writer), with one
-# row resolved by the CLI, and one worktree under
-# the sandbox home so the shortening has something to shorten.
+# the flat JSON line, the empty answer, and the refusals.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -18,9 +15,8 @@ BIN="$DIST/skill-log"
 
 SCRATCH_GIVEN="${SCRATCH:-}"
 SCRATCH="${SCRATCH:-$(mktemp -d /tmp/opencode/skill-log-stats-XXXXXX)}"
-# The suite owns a scratch directory only when it made one: a
-# caller's SCRATCH is theirs to clean up. A fixed path would let two
-# runs on one machine clobber each other's stores.
+# The suite owns a scratch directory only when it made one: a caller's
+# SCRATCH is theirs to clean up.
 if [ -z "$SCRATCH_GIVEN" ]; then
     trap 'rm -rf "$SCRATCH"' EXIT
 fi
@@ -50,8 +46,7 @@ unset OPENCODE_SESSION_ID T3CODE_HOME
 
 DB="$HOME_DIR/.local/state/skill-log/skills.db"
 
-# run <args...>: the binary with the sandbox's environment. Output lands
-# in $OUT and $ERR, the status in $STATUS.
+# run <args...>: the binary with the sandbox's environment.
 run() {
     OUT="$("$BIN" "$@" 2>"$SCRATCH/stderr")"
     STATUS=$?

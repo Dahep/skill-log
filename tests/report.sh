@@ -6,9 +6,7 @@
 # It exercises both modes against the built artifact in sandboxed homes
 # and repositories: artifact mode writes `.skill-log/reports/<slug>.md`,
 # one marker per line, atomically and only after validation; trailer mode
-# prints the `Skill-log-Fix:` line and writes nothing. The store is built
-# through `add` and `resolve`; `sqlite3` only inspects what the file
-# holds.
+# prints the `Skill-log-Fix:` line and writes nothing.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -18,9 +16,8 @@ BIN="$DIST/skill-log"
 
 SCRATCH_GIVEN="${SCRATCH:-}"
 SCRATCH="${SCRATCH:-$(mktemp -d /tmp/opencode/skill-log-report-XXXXXX)}"
-# The suite owns a scratch directory only when it made one: a
-# caller's SCRATCH is theirs to clean up. A fixed path would let two
-# runs on one machine clobber each other's stores.
+# The suite owns a scratch directory only when it made one: a caller's
+# SCRATCH is theirs to clean up.
 if [ -z "$SCRATCH_GIVEN" ]; then
     trap 'rm -rf "$SCRATCH"' EXIT
 fi
@@ -47,8 +44,7 @@ unset OPENCODE_SESSION_ID T3CODE_HOME
 
 DB="$HOME/.local/state/skill-log/skills.db"
 
-# run <args...>: the binary with the sandbox's environment. Output lands
-# in $OUT and $ERR, the status in $STATUS.
+# run <args...>: the binary with the sandbox's environment.
 run() {
     OUT="$("$BIN" "$@" 2>"$SCRATCH/stderr")"
     STATUS=$?
@@ -58,8 +54,7 @@ run() {
 # ------------------------------------------------------------------ rows
 #
 # Four rows: two in one dispatched run (`--session` and `--parent`), one
-# clean, and one that a later change already resolved. The problem text
-# is distinctive so the privacy check can look for it.
+# clean, and one that a later change already resolved.
 
 run add --skill alpha --machine boxA --session ses_run \
     --problem "secret problem text"
@@ -127,8 +122,7 @@ else
 fi
 
 # A planted symlink at a predictable temporary name cannot redirect the
-# write: the temporary is created exclusively under an unpredictable name
-# and written through its own descriptor.
+# write: the temporary is created exclusively under an unpredictable name.
 printf 'valuable\n' >"$SCRATCH/victim"
 ln -s "$SCRATCH/victim" "$REPO/.skill-log/reports/atomic.md.tmp"
 run report --id 4 --slug atomic
@@ -347,9 +341,7 @@ check "a missing report file says so" "$OUT" \
 #
 # The check reads two things: the report file and the store. A failure in
 # one is not a failure in the other, and the message has to name the one
-# that actually failed. The store's verdict is a value the store owns, so
-# a report whose *path* carries a word from the refusal vocabulary must
-# not flip the store's verdict either.
+# that actually failed.
 printf 'boxA#4\n' >"$REPO/.skill-log/reports/unreadable.md"
 chmod 000 "$REPO/.skill-log/reports/unreadable.md"
 run report --check --slug unreadable
