@@ -108,6 +108,12 @@ fi
     exit 1
 }
 
+# Docker binds a host path into the container, and a relative path is
+# not a host path: docker resolves a relative source against its own
+# working directory and rejects it. The archive is therefore made
+# absolute before it is ever handed to `docker -v`.
+ARCHIVE="$(cd "$(dirname "$ARCHIVE")" && pwd)/$(basename "$ARCHIVE")"
+
 base="$(basename "$ARCHIVE")"
 version="${base#skill-log-}"
 version="${version%-x86_64-unknown-linux-gnu.tar.gz}"
@@ -257,11 +263,7 @@ out="$("$PKG/skill-log" setup --dry-run --repo "$REPO" \
     --skills-dir "$REPO/skills" --db "$REPO/store.db" \
     2>"$SCRATCH/setup.err")"
 code=$?
-if [ "$code" -eq 2 ] && grep -q 'unknown verb: setup' "$SCRATCH/setup.err"; then
-    # The setup verb has not landed yet: the case says so instead of
-    # pretending it ran.
-    printf 'skip setup is not implemented yet: the dry-run case did not run\n'
-elif [ "$code" -eq 0 ]; then
+if [ "$code" -eq 0 ]; then
     check "setup --dry-run: exits 0" "$code" "0"
     check "setup --dry-run: prints nothing on stderr" \
         "$(wc -c <"$SCRATCH/setup.err" | tr -d ' ')" "0"

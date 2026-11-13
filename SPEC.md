@@ -78,7 +78,9 @@ The product is one loop, and every command is a step in it:
   fence is user-owned and is never read, matched, rewritten or deleted.
 - The post-merge hook never changes a pull's exit status.
 - Exit codes: `0` success or nothing to do, `1` operational failure, `2` usage.
-  Exactly one stderr line per failure, no tracebacks. JSON goes to stdout only.
+  Each failure carries exactly one diagnostic line; a validating verb may add its
+  findings as `skill-log: `-prefixed lines. No tracebacks. JSON goes to stdout
+  only.
 
 `CONTEXT.md` defines the terms these rules use. Read it before adding a
 command, a column or a report field.
@@ -279,10 +281,11 @@ stable JSON lines for pipes. Policy `read`.
 - Filters: `--skill`, `--machine`, `--harness`, `--repo`, `--run`,
   `--unresolved`, `--last`. `--run` matches a row's `session`, `t3_thread` or
   `parent`.
-- A malformed argument exits 2 and lists the valid choices: an unknown
-  `--unresolved` value, a non-numeric `--last`. A well-formed identifier that
-  no row carries (`--skill`, `--machine`, `--harness`, `--repo`, `--run`) is
-  valid and yields no rows, exit 0 — never a usage error.
+- A malformed argument exits 2 and names what is wrong: a non-numeric
+  `--last`, which reports the 1..500 range it accepts. `--unresolved` is a
+  switch and takes no value. A well-formed identifier that no row carries
+  (`--skill`, `--machine`, `--harness`, `--repo`, `--run`) is valid and yields
+  no rows, exit 0 — never a usage error.
 - The table indents sanitized problems under their invocation and shortens the
   worktree under the home directory.
 - An absent or empty store prints the empty message and exits 0; the JSON
@@ -294,6 +297,9 @@ The denominator and the friction rate. Policy `read`.
 
 - Counts are distinct invocations, invocations with problems, problems and
   resolved, plus problems per invocation.
+- `--skill <name>` narrows the whole cut to one skill: the counts, the rate and
+  the grouped rows all describe that skill alone. It is a filter, not a
+  grouping key — `--by` picks what the rows are grouped by.
 - `--by` accepts `skill` (default), `harness`, `model`, `repo`, `worktree`,
   `machine` and `project`. An unknown key exits 2 and lists them.
   `--by-model` remains as an alias for `--by model`.
@@ -312,10 +318,10 @@ Write the committed report listing the rows a change resolves. Policy
   overridable with `--slug`, written atomically.
 - Ids are validated against the store; unknown ids are named. Already-resolved
   rows are skipped and reported.
-- New markers are unioned with the file's current contents. Existing lines are
-  preserved byte-for-byte, including a marker naming another machine: the tool
-  never adds a foreign marker, and never removes one a previous report carried.
-  Problem text and project details never appear.
+- New markers are unioned with the file's current contents. No existing marker
+  is removed — including one naming another machine, which the tool never adds
+  and never drops. The file is rewritten as one marker per line, sorted;
+  problem text and project details never appear.
 - `--check` validates an existing report without writing. `--dry-run` writes
   nothing. `--json` carries the path and the markers.
 - Re-running over an unchanged report prints that it is already reported.

@@ -38,7 +38,10 @@ resolve_version() {
         return
     fi
     local described
-    if described="$(git -C "$ROOT" describe --tags --dirty 2>/dev/null)" &&
+    # `git describe --tags` and nothing else: SPEC §8 names the two
+    # fallbacks (`git describe --tags`, else 0.0.0-dev), and a `-dirty`
+    # suffix is a version the release grammar rejects.
+    if described="$(git -C "$ROOT" describe --tags 2>/dev/null)" &&
         [ -n "$described" ]; then
         printf '%s' "$described"
         return

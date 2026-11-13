@@ -1,3 +1,8 @@
+---
+name: skill-friction-review
+description: Review the local skill invocation log and turn its friction into change — cluster problems into themes, separate instruction defects from environment noise, and decide what to fix.
+---
+
 # Skill friction review
 
 Review the skill invocation log and turn its friction into change. The
