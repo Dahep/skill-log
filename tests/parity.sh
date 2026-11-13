@@ -1023,6 +1023,9 @@ printf '\n'
 if [ "$SKIPPED" -gt 0 ]; then
     printf 'parity.sh: %d reference case(s) skipped as out of scope\n' "$SKIPPED"
 fi
+# The clock injection the contract names: SKILL_LOG_NOW pins the
+# writer's stamp, proved through the CLI rather than by writing
+# the store.
 OUT="$(SKILL_LOG_NOW="2020-01-02T03:04:05+00:00" \
     "$BIN" add --skill clock-probe --dry-run --json 2>"$S/stderr")"
 STATUS=$?

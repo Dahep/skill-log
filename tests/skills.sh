@@ -655,8 +655,9 @@ check "the audit still writes nothing with --dry-run" \
 
 cp -r "$SKILLS" "$SCRATCH/skills.orig"
 
-# strip_block <file>: the file with its fenced usage-log block removed —
-# every byte outside the fence, in order.
+# strip_block <file>: the file with its fenced usage-log block
+# removed — every byte outside the fence, in order. Comparing it
+# with the pre-adopt original is the byte-exactness proof.
 strip_block() {
     python3 - "$1" <<'PY'
 import sys

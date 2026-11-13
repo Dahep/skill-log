@@ -161,6 +161,8 @@ check "dry-run carries no marker" \
 
 # ------------------------------------------------------------ clock
 
+# The one clock injection: SKILL_LOG_NOW fixes the writer's stamp, so a
+# case can pin time without writing the store or sleeping.
 OUT="$(env -u XDG_STATE_HOME -u SKILL_LOG_DB HOME="$HOME_DIR" \
     SKILL_LOG_NOW=2020-01-02T03:04:05+00:00 \
     "$BIN" add --skill pinned --json)"
