@@ -4,15 +4,13 @@
 #   tests/sqlite.sh
 #
 # The release bundles a pinned SQLite — the jammy package
-# `libsqlite3-0_3.37.2-2ubuntu0.8_amd64.deb` — and the default gate
-# builds against the machine's own copy, which is newer. So the gate can
-# be green while the released artifact cannot write a row: the clock
-# query the writer uses has to work on the library that ships.
+# `libsqlite3-0_3.37.2-2ubuntu0.8_amd64.deb` — and the default gate builds
+# against the machine's own copy, which is newer. So the gate can be green
+# while the released artifact cannot write a row.
 #
 # This suite builds the artifact against the pinned library when it is
-# available (scripts/package.sh fetches and verifies it), and runs the
-# store's write path against it. Without the pinned library the case
-# prints a skip rather than pretending it ran.
+# available, and runs the store's write path against it. Without the pinned
+# library the case prints a skip rather than pretending it ran.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -20,9 +18,8 @@ ROOT="$(cd "$HERE/.." && pwd)"
 
 SCRATCH_GIVEN="${SCRATCH:-}"
 SCRATCH="${SCRATCH:-$(mktemp -d /tmp/opencode/skill-log-sqlite-XXXXXX)}"
-# The suite owns a scratch directory only when it made one: a
-# caller's SCRATCH is theirs to clean up. A fixed path would let two
-# runs on one machine clobber each other's stores.
+# The suite owns a scratch directory only when it made one: a caller's
+# SCRATCH is theirs to clean up.
 if [ -z "$SCRATCH_GIVEN" ]; then
     trap 'rm -rf "$SCRATCH"' EXIT
 fi
@@ -49,23 +46,16 @@ fi
 
 printf 'pinned library: %s\n' "$PINNED"
 
-# The tools the case needs: the pinned toolchain, the patcher that
-# points the artifact at its own libraries, and the SQLite CLI that
-# inspects what the artifact wrote. A suite that cannot run must say so
-# and stop, rather than compare the empty output of a missing command
-# against empty.
+# The tools the case needs: the pinned toolchain, the patcher that points
+# the artifact at its own libraries, and the SQLite CLI.
 require_tools mise patchelf sqlite3
 
 rm -rf "$SCRATCH"
 mkdir -p "$SCRATCH/home" "$SCRATCH/build" "$SCRATCH/src"
 
 # The artifact, built against the pinned library: the same sources, the
-# same build script, the library the release ships.
-#
-# The copy creates the directory it lands in, and the version file it
-# brings is replaced by the heredoc below — the build writes its own
-# version there, and a build that read the checkout's placeholder would
-# not be the release-shaped build.
+# same build script, the library the release ships. The version file is
+# replaced by the heredoc below, so the build writes its own version there.
 cp -r "$ROOT/src/skill_log/." "$SCRATCH/src/skill_log/"
 cat >"$SCRATCH/src/skill_log/version.mojo" <<'EOF'
 """The release version, baked in at build time."""
@@ -87,9 +77,7 @@ if ! "$MOJO_BIN" build -I "$ROOT/vendor" -I "$SCRATCH/src" \
 fi
 pass "the artifact builds against the pinned library"
 
-# The bundled libraries, beside the binary: the release's own layout. The
-# Mojo runtime libraries come from the artifact `scripts/build.sh`
-# staged; only the SQLite is the one under test.
+# The bundled libraries, beside the binary: the release's own layout.
 mkdir -p "$SCRATCH/build/lib"
 for lib in "$ROOT"/dist/lib/*.so*; do
     [ -e "$lib" ] || continue
@@ -120,8 +108,7 @@ check "the row carries a local ISO 8601 stamp with an offset" \
         "select ts from invocations" \
         | grep -cE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[+-][0-9]{2}:[0-9]{2}$')" "1"
 
-# The read path, and the resolution that writes a stamp — both go through
-# the same clock.
+# The read path, and the resolution that writes a stamp.
 run show --json
 check "a read against the pinned library exits 0" "$STATUS" "0"
 check "a read against the pinned library reads the row" \

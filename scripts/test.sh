@@ -6,11 +6,7 @@
 #
 # The suites are black-box: they exercise `dist/skill-log` as a process,
 # with a scratch HOME and a scratch store, so they need the artifact from
-# `scripts/build.sh` (this script's `--build` runs it).
-#
-# Each suite is independent and prints its own report; this script prints
-# one line per suite and exits non-zero if any of them failed, so a single
-# command answers "does the tree still work".
+# `scripts/build.sh`.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

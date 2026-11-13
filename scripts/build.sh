@@ -1,27 +1,17 @@
 #!/usr/bin/env bash
 # Build the release-shaped artifact: a binary plus lib/ beside it.
 #
-#   scripts/build.sh
-#
-# The artifact runs on a machine with no Mojo toolchain and no system
-# SQLite:
-#
 #   dist/skill-log          the executable, rpath $ORIGIN/lib
 #   dist/lib/               the three Mojo runtime libraries + libsqlite3.so.0
 #
 # The version is baked in at build time from SKILL_LOG_VERSION, else
-# `git describe --tags`, else 0.0.0-dev. It is written into a generated
-# source file that shadows the checked-in placeholder: the tree's
-# `src/skill_log/version.mojo` returns 0.0.0-dev, and only a build through
-# this script replaces it in the artifact. A bare `mojo build` ships that
-# placeholder, so this script is the one way to produce a versioned artifact.
+# `git describe --tags`, else 0.0.0-dev. It lands in a generated source
+# file that shadows the checked-in placeholder, so this script is the one
+# way to produce a versioned artifact.
 #
 # The bundled SQLite comes from SKILL_LOG_SQLITE when set — the pinned
 # library scripts/package.sh fetched — else from this machine's system
 # copy, which is the local gate's convenience and never the release's.
-#
-# Only src/ and vendor/ are built, and only the binary and its libraries
-# are staged. Nothing else in the tree can reach the release archive.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -35,7 +25,6 @@ SRC="$ROOT/src"
 # The generated source file: the version lives in the build, not in the
 # checkout.
 GENERATED="$BUILD/src/skill_log/version.mojo"
-
 log() { printf '==> %s\n' "$*"; }
 
 die() {
@@ -51,7 +40,7 @@ resolve_version() {
         return
     fi
     # `git describe --tags` only: without a tag there is no release
-    # version to bake in, and the fallback below is the honest answer.
+    # version to bake in.
     local described
     if described="$(git -C "$ROOT" describe --tags --dirty 2>/dev/null)" &&
         [ -n "$described" ]; then
@@ -74,9 +63,8 @@ mkdir -p "$BUILD/src/skill_log" "$DIST/lib"
 # The sources the build compiles: the tree under src/.
 cp -r "$SRC/skill_log/." "$BUILD/src/skill_log/"
 
-# The generated version module: the same shape as the checked-in
-# placeholder, with the build's version baked in. It is written after the
-# copy so it shadows the placeholder rather than being shadowed by it.
+# The generated version module shadows the checked-in placeholder, so it
+# is written after the copy.
 cat > "$GENERATED" <<EOF
 """The release version, baked in at build time.
 
@@ -99,12 +87,8 @@ log "mojo $("$MOJO_BIN" --version)"
 # ------------------------------------------------------- runtime libraries
 
 # The Mojo runtime libraries are discovered from the built binary's
-# DT_NEEDED graph, not from a hardcoded list: the direct dependency is
-# libKGENCompilerRTShared.so, and the other two arrive through it.
-#
-# A library belongs to the bundle when it resolves inside the toolchain's
-# own library directory. The system libraries (libc, libm, libstdc++, ...)
-# are found in the loader's search path instead and are left alone.
+# DT_NEEDED graph, not from a hardcoded list. A library belongs to the
+# bundle when it resolves inside the toolchain's own library directory.
 mojo_lib_dir() {
     local mojo_bin mojo_root
     mojo_bin="$(readlink -f "$MOJO_BIN")"
@@ -137,8 +121,7 @@ bundle_sonames() {
         done
     done
 
-    # Only the libraries the toolchain itself ships: the ones that live
-    # in the Mojo library directory.
+    # Only the libraries the toolchain itself ships.
     for soname in $seen; do
         [ -f "$lib_dir/$soname" ] || continue
         printf '%s\n' "$soname"
@@ -158,10 +141,7 @@ done
 # asks for.
 #
 # A release never uses this machine's copy: scripts/package.sh supplies
-# the fetched, pinned library through SKILL_LOG_SQLITE. The system
-# library below is the local gate's convenience only — fine for
-# scripts/test.sh, never what the release ships. A release build that
-# cannot find its library fails here, loudly.
+# the fetched, pinned library through SKILL_LOG_SQLITE.
 if [ -n "${SKILL_LOG_SQLITE:-}" ]; then
     SQLITE_SOURCE="$SKILL_LOG_SQLITE"
     [ -f "$SQLITE_SOURCE" ] ||

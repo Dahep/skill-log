@@ -2,7 +2,6 @@
 # Build the release archive: the versioned artifact mise installs.
 #
 #   scripts/package.sh --version vX.Y.Z
-#   scripts/package.sh --version vX.Y.Z --sqlite /path/to/libsqlite3.so.0
 #
 # Produces, in dist/ (or --out):
 #
@@ -17,33 +16,20 @@
 # glibc 2.35 floor — verified against the sha256 Ubuntu's signed archive
 # index records for it, then verified again as the extracted file.
 # `--sqlite <path>` substitutes a locally built copy, checked the same
-# way: an ELF shared object with the libsqlite3.so.0 soname and the same
-# glibc floor. Nothing falls back to a development machine's library;
-# the release job fails if the library is missing or too new.
-#
-# The version is baked in from --version, else SKILL_LOG_VERSION, else
-# `git describe --tags`; a release always passes the tag (vX.Y.Z), which
-# is also the archive name's version and what `--version` prints.
-#
-# The download is cached in .package-cache/ and re-verified on every run,
-# so a re-run needs no network once the cache is warm.
+# way.
 #
 # This rebuilds dist/ from scratch (scripts/build.sh clears it), so the
-# gate order is: build.sh, test.sh (or just test.sh --build), then
-# package.sh, then tests/packaging.sh — the packaging test runs against
-# the archive package.sh just produced.
+# gate order is: build.sh, test.sh, package.sh, then tests/packaging.sh.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 
 # The pinned Ubuntu 22.04 (jammy) libsqlite3-0, the newest
-# jammy-updates/jammy-security build. The deb's sha256 is the one in
-# Ubuntu's signed archive index
-# (dists/jammy-updates/main/binary-amd64/Packages.gz, "SHA256:"); the
-# Launchpad librarian URL keeps superseded files available forever, so
-# the pin cannot rot when the pool moves on. The extracted file's
-# sha256 is pinned as well: that is the file the release ships.
+# jammy-updates/jammy-security build. The Launchpad librarian URL keeps
+# superseded files available forever, so the pin cannot rot when the pool
+# moves on. The extracted file's sha256 is pinned as well: that is the
+# file the release ships.
 SQLITE_DEB=libsqlite3-0_3.37.2-2ubuntu0.8_amd64.deb
 SQLITE_DEB_URL="https://launchpad.net/ubuntu/+archive/primary/+files/$SQLITE_DEB"
 SQLITE_DEB_SHA256=6e22b1e8d375fed6a1d52cad5887e762b6cdeaba137595e726c95486968dfab5
@@ -51,8 +37,8 @@ SQLITE_DEB_SO=usr/lib/x86_64-linux-gnu/libsqlite3.so.0.8.6
 SQLITE_SO_SHA256=f5a7fc236f80f3185608d14e9f4dea3e3fd647582e123e8a00f253629fe16830
 
 # The glibc floor the bundled SQLite may require at most: the jammy
-# package's own floor. A library needing more than this would silently
-# raise the release's floor, so it is refused.
+# package's own floor. A library needing more would silently raise the
+# release's floor, so it is refused.
 GLIBC_FLOOR="${SKILL_LOG_SQLITE_FLOOR:-2.35}"
 
 # The archive shape of SPEC.md §8.
@@ -156,8 +142,7 @@ check_sqlite() {
 }
 
 # The pinned fetch: download once into the cache, verify both hashes on
-# every run, and use the extracted file. Its stdout is only the path —
-# the caller captures it — so every message goes to stderr.
+# every run. Its stdout is only the path — every message goes to stderr.
 fetch_sqlite() {
     local deb="$CACHE/$SQLITE_DEB" so
 
@@ -222,8 +207,7 @@ NAME="skill-log-$VERSION-$TARGET.tar.gz"
 [ -x "$STAGE/skill-log" ] || die "$STAGE/skill-log is missing after the build"
 
 # The staged libraries, by name and not by `ls`: a glob cannot pick up
-# a stray file the way a directory listing can, and the names are what
-# the archive must carry.
+# a stray file the way a directory listing can.
 staged="$(printf '%s\n' "$STAGE"/lib/* | sed "s|^$STAGE/lib/||" | sort)"
 expected="$(printf '%s\n' \
     libAsyncRTRuntimeGlobals.so \

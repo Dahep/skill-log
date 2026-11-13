@@ -14,9 +14,7 @@
 # distro copy, and the failure path would never run.
 #
 # bwrap is used rather than a container: no daemon, no cgroup namespace,
-# no privileges, and the desktop's live session cgroups are never touched.
-# When bwrap is missing the sandbox checks are skipped, and the plain
-# checks still run, so a developer without bwrap still gets signal.
+# no privileges. When bwrap is missing the sandbox checks are skipped.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -25,9 +23,8 @@ DIST="$ROOT/dist"
 
 SCRATCH_GIVEN="${SCRATCH:-}"
 SCRATCH="${SCRATCH:-$(mktemp -d /tmp/opencode/skill-log-smoke-XXXXXX)}"
-# The suite owns a scratch directory only when it made one: a
-# caller's SCRATCH is theirs to clean up. A fixed path would let two
-# runs on one machine clobber each other's stores.
+# The suite owns a scratch directory only when it made one: a caller's
+# SCRATCH is theirs to clean up.
 if [ -z "$SCRATCH_GIVEN" ]; then
     trap 'rm -rf "$SCRATCH"' EXIT
 fi
@@ -46,9 +43,9 @@ require_artifact() {
             "$DIST" >&2
         exit 1
     fi
-    # The archive stages only the binary and its libraries. A directory
-    # from the tree the build read in dist/ means the build picked up
-    # something it must not.
+    # The archive stages only the binary and its libraries: a directory
+    # from the tree the build read in means the build picked up something
+    # it must not.
     if [ -e "$DIST/src" ] || [ -e "$DIST/tests" ] || [ -e "$DIST/docs" ]; then
         printf 'smoke.sh: %s must stage the binary and lib/ only\n' "$DIST" >&2
         exit 1
@@ -67,9 +64,6 @@ rm -rf "$SCRATCH"
 mkdir -p "$SCRATCH"
 
 # ------------------------------------------------------------ plain run
-#
-# The artifact as staged, run directly. These checks hold whether or not
-# the machine has a system SQLite.
 
 run_plain() {
     # run_plain <args...>: the artifact as staged, output in $SCRATCH/plain.*
@@ -143,7 +137,6 @@ check "plain: the loader resolves libsqlite3.so.0 from dist/lib" \
 #
 # A root with no system SQLite at all: the packaged copy is the only
 # possible source, and removing it must produce one named line.
-
 sandbox_available=1
 command -v bwrap >/dev/null 2>&1 || sandbox_available=0
 
@@ -243,7 +236,7 @@ else
         "$(grep -c 'calling init: /pkg/lib/libsqlite3.so.0' "$SCRATCH/boxld.err")" "1"
 
     # Negative: the bundled copy removed, and there is no system SQLite to
-    # fall back on. One named line, exit 1, no traceback.
+    # fall back on.
     rm -f "$ROOTFS/pkg/lib/libsqlite3.so.0"
     run_sandbox "$ROOTFS" /pkg/skill-log --version \
         >"$SCRATCH/neg.out" 2>"$SCRATCH/neg.err"

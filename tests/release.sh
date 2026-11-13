@@ -3,18 +3,14 @@
 #
 #   tests/release.sh
 #
-# The workflow is the one place where a version read from a git tag
-# reaches a shell. A tag is a name a machine's owner chose, and a name
-# that reaches `run:` as shell source is executed: a tag named
-# `v$(id)` runs a command. So the version must reach the shell through
-# the environment, never through the interpolated text of a `run:`
-# block, and its grammar must be checked before anything uses it.
+# The workflow is the one place where a version read from a git tag reaches
+# a shell. A tag is a name a machine's owner chose, and a name that reaches
+# `run:` as shell source is executed: a tag named `v$(id)` runs a command.
+# So the version must reach the shell through the environment, never
+# through the interpolated text of a `run:` block.
 #
-# The third-party actions are pinned to commit SHAs for the same
-# reason: a tag is a name somebody else can move.
-#
-# This is a test of the workflow file, which is the artifact here: the
-# release pipeline has no other seam.
+# The third-party actions are pinned to commit SHAs for the same reason: a
+# tag is a name somebody else can move.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -23,9 +19,8 @@ WORKFLOW="$ROOT/.github/workflows/release.yml"
 
 SCRATCH_GIVEN="${SCRATCH:-}"
 SCRATCH="${SCRATCH:-$(mktemp -d /tmp/opencode/skill-log-release-XXXXXX)}"
-# The suite owns a scratch directory only when it made one: a
-# caller's SCRATCH is theirs to clean up. A fixed path would let two
-# runs on one machine clobber each other's stores.
+# The suite owns a scratch directory only when it made one: a caller's
+# SCRATCH is theirs to clean up.
 if [ -z "$SCRATCH_GIVEN" ]; then
     trap 'rm -rf "$SCRATCH"' EXIT
 fi
@@ -44,21 +39,14 @@ fi
 # The lines of the workflow that are the body of a `run:` block: the
 # shell source a GitHub expression would be interpolated into.
 #
-# The block form is not one spelling. A step's `run:` may be a plain
-# key (`run: |`) or a list item (`- run: |`), and the block indicator
-# may carry a comment (`run: | # why`). The scanner has to enter block
-# mode on all of them: a workflow whose blocks use one of the other
-# spellings was invisible to the scan, so an expression in a block body
-# passed.
+# The block form is not one spelling: a step's `run:` may be a plain key
+# (`run: |`) or a list item (`- run: |`), and the block indicator may carry
+# a comment (`run: | # why`). The scanner has to enter block mode on all of
+# them.
 #
-# The body of a block is the lines indented *more* than the key that
-# opened it, so the scanner tracks the indentation of the `run:` it
-# entered on rather than looking for the next key: a body may hold a
-# line that looks like a key, and the keys of the step that owns the
-# run are indented deeper than the step.
-#
-# The scanner takes the workflow to read as its argument, so the
-# mutation case below can point it at a workflow of its own.
+# The body of a block is the lines indented *more* than the key that opened
+# it, so the scanner tracks the indentation of the `run:` it entered on: a
+# body may hold a line that looks like a key.
 run_lines() {
     awk '
         function indent_of(line,   i) {
@@ -70,8 +58,7 @@ run_lines() {
         }
 
         # The value of the `run:` key of a step, in either spelling: a
-        # plain key or a list item. The value after the key is what says
-        # which form it is; an empty answer means the line is not a run.
+        # plain key or a list item.
         function run_value(line,   stripped, rest) {
             stripped = line
             sub(/^[[:space:]]*/, "", stripped)
@@ -88,8 +75,7 @@ run_lines() {
 
         inrun {
             # The body ends at the first line that is not indented more
-            # than the key that opened it. A line in the body that looks
-            # like a key is still a line in the body.
+            # than the key that opened it.
             bodyindent = indent_of($0)
             if ($0 ~ /^[[:space:]]*$/ || bodyindent > runindent) {
                 print
@@ -104,8 +90,7 @@ run_lines() {
                 next
             }
             # A block form: `run: |`, `run: >`, with an optional
-            # chomping indicator and an optional comment after it. The
-            # body is the lines indented more than the key.
+            # chomping indicator and an optional comment after it.
             if (value ~ /^[|>][-+0-9]*[[:space:]]*([#].*)?$/) {
                 inrun = 1
                 runindent = indent_of($0)
@@ -123,9 +108,8 @@ run_lines() {
     ' "${1:-$WORKFLOW}"
 }
 
-# The shell source that carries a GitHub expression. An expression
-# there is text the shell parses, so a value the workflow did not
-# write becomes shell source.
+# The shell source that carries a GitHub expression: an expression there
+# is text the shell parses.
 # The pattern is a literal: a GitHub expression, written as text.
 # shellcheck disable=SC2016  # the expression is the text being looked for
 interpolated="$(run_lines | grep -nF '${{' || true)"
@@ -164,25 +148,19 @@ check_contains "the checkout action is pinned" \
 
 # ------------------------------------------------- the scanner sees the bodies
 #
-# The scan above is only as good as the scanner behind it: a scanner
-# that sees no block body at all finds no expression in one, and the
-# suite passes on a workflow that interpolates everywhere. So the
-# scanner is proved on a workflow of its own: the same block shape, with
-# an expression in the body, must be found.
-#
-# The mutation is the test: re-inject the expression into a real block
-# body, and the scan must fail. A scanner that cannot see the body
-# cannot fail, and the suite would pass on the mutation.
+# The scan above is only as good as the scanner behind it: a scanner that
+# sees no block body at all finds no expression in one. So the scanner is
+# proved on a workflow of its own: the same block shape, with an expression
+# in the body, must be found.
 MUTANT="$SCRATCH/mutant.yml"
-# The mutation: the version's own assignment inside a `run: |` block
-# body becomes an expression, the way a careless edit would write it.
+# The mutation: the version's own assignment inside a `run: |` block body
+# becomes an expression, the way a careless edit would write it.
 sed 's|version="\$TAG_NAME"|version="${{ github.ref_name }}"|' \
     "$WORKFLOW" > "$MUTANT"
 if [ ! -s "$MUTANT" ]; then
     fail "the mutation could not be written"
 else
     # The mutation really did put an expression into a block body.
-    # The pattern is a literal: a GitHub expression, written as text.
     # shellcheck disable=SC2016  # the expression is the text being looked for
     check_contains "the mutation put an expression into a block body" \
         "$(cat "$MUTANT")" 'version="${{ github.ref_name }}"'
@@ -197,17 +175,9 @@ fi
 
 # ------------------------------------- the scanner sees every block form
 #
-# The block form is not one spelling. A step's `run:` may be written as
-# a plain key or as a list item (`- run: |`), and the block indicator
-# may carry a comment (`run: | # why`). A scanner that recognises only
-# one spelling sees no body in the others, and a workflow that uses them
-# passes the scan with an expression in its shell source.
-#
-# Each form is mutation-tested on a workflow of its own: an expression
-# inside a body the scanner must see, and the scanner must find it.
-#
-# The scanner takes the workflow to read as its argument, so each case
-# points it at its own file.
+# Each block form is mutation-tested on a workflow of its own: an
+# expression inside a body the scanner must see, and the scanner must find
+# it.
 for form in list comment; do
     case "$form" in
     list)

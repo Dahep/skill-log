@@ -3,10 +3,7 @@
 #
 #   . "$HERE/lib.sh"
 #
-# One assertion vocabulary for every suite. The three suites had drifted
-# into three copies of `check`, one of them documenting a signature its
-# body did not have, and no suite had a JSON reader that could survive a
-# value the writer escapes. Both live here now.
+# One assertion vocabulary for every suite.
 #
 # shellcheck shell=bash
 
@@ -50,8 +47,8 @@ check_absent() {
 
 # check_one_line <name> <text>
 #
-# A diagnostic is exactly one line. Counting non-empty lines is the
-# assertion: a message that grew a newline reports two.
+# A diagnostic is exactly one line: a message that grew a newline
+# reports two.
 check_one_line() {
     if [ "$(printf '%s\n' "$2" | grep -c .)" = "1" ]; then
         pass "$1"
@@ -76,9 +73,9 @@ require_tools() {
 
 # json_field <json> <key>: one top-level string field.
 #
-# Read with a real JSON parser, not `sed`. A `sed` expression cannot
-# survive the writer's own escaping: a skill named `a"b` comes back
-# mangled from one, so the test would be weaker than the code it checks.
+# Read with a real JSON parser, not `sed`: a `sed` expression cannot
+# survive the writer's own escaping, so the test would be weaker than the
+# code it checks.
 json_field() {
     printf '%s' "$1" | python3 -c '
 import json, sys
@@ -104,9 +101,6 @@ print(problems[0] if problems else "")
 }
 
 # json_array <json> <key>: one top-level array of strings, comma-joined.
-#
-# Read through a real parser, so an item carrying a quote or a comma is
-# still the item the writer emitted.
 json_array() {
     printf '%s' "$1" | python3 -c '
 import json, sys
@@ -121,8 +115,7 @@ print(",".join(str(item) for item in value))
 
 # json_number <json> <key>: one top-level numeric field, as %g.
 #
-# Numbers are read through a real parser too, and printed in the same
-# compact form every case expects: 1.5, 0, 1.33.
+# Printed in the same compact form every case expects: 1.5, 0, 1.33.
 json_number() {
     printf '%s' "$1" | python3 -c '
 import json, sys
@@ -144,12 +137,9 @@ print(" ".join(sorted(json.loads(sys.stdin.read()).keys())))
 }
 
 # hold_lock <db> <ready-file> <seconds>: a second process that holds the
-# store's write lock for a while, so a case can prove that a write
-# behind a real lock is retried (and that an exhausted budget fails
-# quietly). The transaction is never committed while the lock is held.
-#
-# The lock is held for real: a reader that arrives behind it has to
-# wait, which is what the case asserts.
+# store's write lock for a while, so a case can prove that a write behind
+# a real lock is retried. The transaction is never committed while the
+# lock is held.
 hold_lock() {
     python3 - "$1" "$2" "$3" <<'PY'
 import sqlite3
