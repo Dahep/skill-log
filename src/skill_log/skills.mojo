@@ -67,6 +67,7 @@ from skill_log.errors import EXIT_FAILURE, EXIT_USAGE, Outcome
 from skill_log.files import resolve_path, write_text
 from skill_log.flags import take_value
 from skill_log.hash import fnv1a64_hex
+from skill_log.help import render_verb
 from skill_log.json import JsonObject
 from skill_log.templates import (
     REVIEW_NAME,
@@ -74,6 +75,7 @@ from skill_log.templates import (
     shipped_template,
     template_names,
 )
+from skill_log.verb import Verb, find_verb
 
 # The state directory that records the seeded-from hash of each user
 # copy. It is under XDG state — never under the user config dir — so a
@@ -732,40 +734,25 @@ def skills_notes() -> String:
            "`skill-log skills adopt --help` for the write."
 
 
-def render_verb_text() -> String:
-    """The `skills` verb's own help block, for `skills --help`.
+# The sub-verbs of `skills`, and the sub-verbs of `template`, as one
+# table. The help renderer reads them like any other verb, so a
+# subcommand's block is the common block and there is no second
+# renderer to keep in step.
+def skills_subverbs() -> List[Verb]:
+    """The verb table for `skills` and the levels below it."""
+    var verbs = List[Verb]()
 
-    It is the same block `render_verb` produces for the verb table: the
-    summary, the usage line, the notes, and the real invocations. The
-    subcommand help blocks (`subcommand_help`) are the nesting levels
-    below it.
-    """
-    var text = (
-        "skills — audit and adopt a skills directory, and manage the"
-        " usage-log templates\n"
-    )
-    text += "\nusage:\n  " + skills_usage() + "\n"
-    text += "\n" + skills_notes() + "\n"
-    text += "\nexamples:\n"
-    var examples = skills_examples()
-    for i in range(len(examples)):
-        text += "  " + examples[i] + "\n"
-    return text
-
-
-def subcommand_help(sub: String) -> String:
-    """The usage block for one `skills` subcommand.
-
-    Each nesting level's help ends with two to four real invocations, as
-    the common rules require. The block is the subcommand's own: what it
-    does, how to call it, and copy-pasteable examples.
-    """
-    if sub == "audit":
-        return (
-            "skills audit — classify every skill's usage-log block\n"
-            "\nusage:\n"
-            "  skill-log skills audit --dir <dir> [--json] [--dry-run]\n"
-            "\n"
+    var audit_examples = List[String]()
+    audit_examples.append("skill-log skills audit --dir .agents/skills")
+    audit_examples.append("skill-log skills audit --dir .agents/skills --json")
+    audit_examples.append("skill-log skills audit --dir .agents/skills --dry-run")
+    verbs.append(
+        Verb(
+            "audit",
+            "classify every skill's usage-log block",
+            "skill-log skills audit --dir <dir> [--json] [--dry-run]",
+            audit_examples,
+            skills_value_flags(),
             "One line per skill, and exit 1 on any state but ok or\n"
             "vendored. Read-only: it writes nothing, not even a state\n"
             "directory. An empty directory is refused.\n"
@@ -773,19 +760,26 @@ def subcommand_help(sub: String) -> String:
             "ok means the block is the current render: the same template,\n"
             "for that skill's name and the resolved binary path. A moved\n"
             "binary or a renamed skill makes the block an older render,\n"
-            "and the skill is stale.\n"
-            "\nexamples:\n"
-            "  skill-log skills audit --dir .agents/skills\n"
-            "  skill-log skills audit --dir .agents/skills --json\n"
-            "  skill-log skills audit --dir .agents/skills --dry-run\n"
+            "and the skill is stale.",
+            False,
+            "skills audit",
         )
-    if sub == "adopt":
-        return (
-            "skills adopt — make a repo's skills conform\n"
-            "\nusage:\n"
-            "  skill-log skills adopt --dir <dir> [--force] [--dry-run]"
-            " [--json]\n"
-            "\n"
+    )
+
+    var adopt_examples = List[String]()
+    adopt_examples.append("skill-log skills adopt --dir .agents/skills")
+    adopt_examples.append("skill-log skills adopt --dir .agents/skills --force")
+    adopt_examples.append(
+        "skill-log skills adopt --dir .agents/skills --dry-run --json"
+    )
+    verbs.append(
+        Verb(
+            "adopt",
+            "make a repo's skills conform",
+            "skill-log skills adopt --dir <dir> [--force] [--dry-run]"
+            " [--json]",
+            adopt_examples,
+            skills_value_flags(),
             "Appends a fenced block where there is none, rewrites a block\n"
             "whose content is an older render, and rewrites a hand-edited\n"
             "block only with --force. A vendored skill is skipped entirely.\n"
@@ -800,75 +794,41 @@ def subcommand_help(sub: String) -> String:
             "\n"
             "Exits 0 when the directory ends conformant, 1 when any skill\n"
             "is refused — an edited block left untouched without --force.\n"
-            "A directory that holds no skills is refused.\n"
-            "\nexamples:\n"
-            "  skill-log skills adopt --dir .agents/skills\n"
-            "  skill-log skills adopt --dir .agents/skills --force\n"
-            "  skill-log skills adopt --dir .agents/skills --dry-run --json\n"
+            "A directory that holds no skills is refused.",
+            False,
+            "skills adopt",
         )
-    if sub == "template show":
-        return (
-            "skills template show — the effective templates and their "
-            "provenance\n"
-            "\nusage:\n"
-            "  skill-log skills template show [--json] [--template-dir <dir>]\n"
-            "\n"
-            "Prints both effective templates, their source, their hashes,\n"
-            "and whether the shipped default has moved since the user copy\n"
-            "was seeded. The usage-log template is also the pasteable\n"
-            "snippet. A moved default is reported with the two commands\n"
-            "that adopt it and never applied.\n"
-            "\nexamples:\n"
-            "  skill-log skills template show\n"
-            "  skill-log skills template show --json\n"
-            "  skill-log skills template show --template-dir ./my-templates\n"
-        )
-    if sub == "template seed":
-        return (
-            "skills template seed — copy the shipped defaults into the "
-            "user directory\n"
-            "\nusage:\n"
+    )
+
+    var show_examples = List[String]()
+    show_examples.append("skill-log skills template show")
+    show_examples.append("skill-log skills template show --json")
+    show_examples.append(
+        "skill-log skills template show --template-dir ./my-templates"
+    )
+    var seed_examples = List[String]()
+    seed_examples.append("skill-log skills template seed")
+    seed_examples.append("skill-log skills template seed --force")
+    seed_examples.append("skill-log skills template seed --force --dry-run")
+    var reset_examples = List[String]()
+    reset_examples.append("skill-log skills template reset --force")
+    reset_examples.append("skill-log skills template reset --force --dry-run")
+    reset_examples.append("skill-log skills template reset")
+
+    var template_examples = List[String]()
+    template_examples.append("skill-log skills template show")
+    template_examples.append("skill-log skills template seed --force")
+    template_examples.append("skill-log skills template reset --force")
+
+    verbs.append(
+        Verb(
+            "template",
+            "the two shipped usage-log templates",
+            "skill-log skills template show [--json] [--template-dir <dir>]\n"
             "  skill-log skills template seed [--force] [--dry-run] [--json]\n"
-            "\n"
-            "Copies the two shipped defaults into\n"
-            "${XDG_CONFIG_HOME:-~/.config}/skill-log/templates/. Without\n"
-            "--force it refuses to overwrite an existing copy.\n"
-            "\n"
-            "--json emits one object per template: the path and the\n"
-            "action, which is one of seeded, would_seed (a dry run) or\n"
-            "refused (a copy is already there).\n"
-            "\nexamples:\n"
-            "  skill-log skills template seed\n"
-            "  skill-log skills template seed --force\n"
-            "  skill-log skills template seed --force --dry-run\n"
-        )
-    if sub == "template reset":
-        return (
-            "skills template reset — delete the user copies, back to the "
-            "shipped defaults\n"
-            "\nusage:\n"
-            "  skill-log skills template reset [--force] [--dry-run] [--json]\n"
-            "\n"
-            "Deletes the user copies and returns to the shipped defaults,\n"
-            "which the next adopt re-renders. It refuses while copies\n"
-            "exist unless --force is given.\n"
-            "\n"
-            "--json emits one object per template: the path and the\n"
-            "action, which is one of deleted, would_delete (a dry run),\n"
-            "absent (there was no copy) or refused (copies are there).\n"
-            "\nexamples:\n"
-            "  skill-log skills template reset --force\n"
-            "  skill-log skills template reset --force --dry-run\n"
-            "  skill-log skills template reset\n"
-        )
-    if sub == "template":
-        return (
-            "skills template — the two shipped usage-log templates\n"
-            "\nusage:\n"
-            "  skill-log skills template show [--json] [--template-dir <dir>]\n"
-            "  skill-log skills template seed [--force] [--dry-run] [--json]\n"
-            "  skill-log skills template reset [--force] [--dry-run] [--json]\n"
-            "\n"
+            "  skill-log skills template reset [--force] [--dry-run] [--json]",
+            template_examples,
+            skills_value_flags(),
             "Subcommands, not mode flags: show reports, seed copies the\n"
             "shipped defaults into the user directory, reset deletes them\n"
             "back to the shipped defaults. The templates resolve by\n"
@@ -878,13 +838,85 @@ def subcommand_help(sub: String) -> String:
             "\n"
             "seed and reset emit one JSON object per template -- the path\n"
             "and the action -- so a caller reads a value and never\n"
-            "matches prose.\n"
-            "\nexamples:\n"
-            "  skill-log skills template show\n"
-            "  skill-log skills template seed --force\n"
-            "  skill-log skills template reset --force\n"
+            "matches prose.",
+            False,
+            "skills template",
         )
-    return ""
+    )
+
+    verbs.append(
+        Verb(
+            "show",
+            "the effective templates and their provenance",
+            "skill-log skills template show [--json] [--template-dir <dir>]",
+            show_examples,
+            skills_value_flags(),
+            "Prints both effective templates, their source, their hashes,\n"
+            "and whether the shipped default has moved since the user copy\n"
+            "was seeded. The usage-log template is also the pasteable\n"
+            "snippet. A moved default is reported with the two commands\n"
+            "that adopt it and never applied.",
+            False,
+            "skills template show",
+        )
+    )
+    verbs.append(
+        Verb(
+            "seed",
+            "copy the shipped defaults into the user directory",
+            "skill-log skills template seed [--force] [--dry-run] [--json]",
+            seed_examples,
+            skills_value_flags(),
+            "Copies the two shipped defaults into\n"
+            "${XDG_CONFIG_HOME:-~/.config}/skill-log/templates/. Without\n"
+            "--force it refuses to overwrite an existing copy.\n"
+            "\n"
+            "--json emits one object per template: the path and the\n"
+            "action, which is one of seeded, would_seed (a dry run) or\n"
+            "refused (a copy is already there).",
+            False,
+            "skills template seed",
+        )
+    )
+    verbs.append(
+        Verb(
+            "reset",
+            "delete the user copies, back to the shipped defaults",
+            "skill-log skills template reset [--force] [--dry-run] [--json]",
+            reset_examples,
+            skills_value_flags(),
+            "Deletes the user copies and returns to the shipped defaults,\n"
+            "which the next adopt re-renders. It refuses while copies\n"
+            "exist unless --force is given.\n"
+            "\n"
+            "--json emits one object per template: the path and the\n"
+            "action, which is one of deleted, would_delete (a dry run),\n"
+            "absent (there was no copy) or refused (copies are there).",
+            False,
+            "skills template reset",
+        )
+    )
+
+    return verbs^
+
+
+def skills_verb() -> Verb:
+    """The `skills` verb itself, with its sub-verbs in the table.
+
+    The verb's own text lives here, with its handler, so the usage a
+    usage error prints and the usage `--help` prints are the same text
+    — one source, two readers.
+    """
+    return Verb(
+        "skills",
+        "audit and adopt a skills directory and manage the usage-log templates",
+        skills_usage(),
+        skills_examples(),
+        skills_value_flags(),
+        skills_notes(),
+        True,
+        "skills",
+    )
 
 
 def handle_skills(args: List[String]) raises -> Outcome:
@@ -919,16 +951,17 @@ def handle_skills(args: List[String]) raises -> Outcome:
 
     if wants_help:
         if len(positionals) == 0:
-            return Outcome.ok(render_verb_text())
-        var sub = positionals[0]
-        if sub == "template":
-            if len(positionals) < 2:
-                return Outcome.ok(subcommand_help("template"))
-            sub = "template " + positionals[1]
-        var block = subcommand_help(sub)
-        if block == "":
-            return Outcome.fail("unknown subcommand: " + sub, EXIT_USAGE())
-        return Outcome.ok(block)
+            return Outcome.ok(render_verb(skills_verb()))
+        var path = "skills " + positionals[0]
+        if positionals[0] == "template" and len(positionals) > 1:
+            path = path + " " + positionals[1]
+        var subverbs = skills_subverbs()
+        var index = find_verb(subverbs, path)
+        if index == -1:
+            return Outcome.fail(
+                "unknown subcommand: " + path[byte=7:], EXIT_USAGE()
+            )
+        return Outcome.ok(render_verb(subverbs[index]))
 
     var options: SkillsOptions
     try:

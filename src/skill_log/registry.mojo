@@ -29,10 +29,7 @@ from skill_log.show import (
 )
 from skill_log.skills import (
     handle_skills,
-    skills_examples,
-    skills_notes,
-    skills_usage,
-    skills_value_flags,
+    skills_verb,
 )
 from skill_log.report import (
     handle_report,
@@ -231,17 +228,7 @@ def build_verbs() raises -> List[Verb]:
     )
 
     # The skills surface: audit, template show/seed/reset, adopt.
-    verbs.append(
-        Verb(
-            "skills",
-            "audit and adopt a skills directory and manage the usage-log templates",
-            skills_usage(),
-            skills_examples(),
-            skills_value_flags(),
-            skills_notes(),
-            True,
-        )
-    )
+    verbs.append(skills_verb())
 
     var version_examples = List[String]()
     version_examples.append("skill-log --version")

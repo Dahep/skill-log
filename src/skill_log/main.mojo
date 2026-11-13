@@ -29,15 +29,7 @@ from skill_log.help import render_verb, top_level_help
 from skill_log.registry import build_handlers, build_verbs
 from skill_log.sqlite_preflight import preflight
 from skill_log.text import sanitize
-
-
-def find_verb(name: String) raises -> Optional[Int]:
-    """The index of the verb called `name`, or `None`."""
-    var verbs = build_verbs()
-    for i in range(len(verbs)):
-        if verbs[i].name == name:
-            return i
-    return None
+from skill_log.verb import find_verb
 
 
 def command_line_args() -> List[String]:
@@ -73,15 +65,17 @@ def run(args: List[String]) raises -> Outcome:
         # `-h` is the short form of `--help`.
         return Outcome.ok(top_level_help(build_verbs()))
 
-    var index = find_verb(name)
-    if index is None:
+    var verbs = build_verbs()
+
+    # The verb's index in the table is the handler's index: the two
+    # lists are built in step.
+    var index = find_verb(verbs, name)
+    if index == -1:
         # An unknown verb is one named line. The usage block would be
         # noise on top of it.
         return Outcome.fail("unknown verb: " + name, EXIT_USAGE())
-
     var handlers = build_handlers()
     var rest = tail(args)
-    var verbs = build_verbs()
 
     # `skill-log <verb> --help` prints that verb's own usage and its real
     # invocations, and exits 0. A token that is a *value* of a
@@ -93,18 +87,18 @@ def run(args: List[String]) raises -> Outcome:
     # answered here. The bare `skill-log skills --help` (no subcommand)
     # is still the verb's own block: the handler returns it when the
     # subcommand is absent.
-    var nested = verbs[index.value()].nested_help
+    var nested = verbs[index].nested_help
     var i = 0
     while i < len(rest):
         if rest[i] == "--help" or rest[i] == "-h":
             if nested:
-                return handlers[index.value()](rest)
-            return Outcome.ok(render_verb(verbs[index.value()]))
-        if verbs[index.value()].takes_value(rest[i]):
+                return handlers[index](rest)
+            return Outcome.ok(render_verb(verbs[index]))
+        if verbs[index].takes_value(rest[i]):
             i += 1
         i += 1
 
-    return handlers[index.value()](rest)
+    return handlers[index](rest)
 
 
 def main():
