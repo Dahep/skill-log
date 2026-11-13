@@ -241,7 +241,7 @@ func loadTemplate(name, templateDir string) (skillTemplate, error) {
 	// filesystem root.
 	if templateDir != "" {
 		candidate := joinPath(templateDir, name)
-		if isFile(candidate) {
+		if format.IsRegularFile(candidate) {
 			content, err := format.ReadText(candidate)
 			if err != nil {
 				return out, errors.New("cannot read template " + candidate + ": " + err.Error())
@@ -345,7 +345,7 @@ func seededPath(name string) string {
 // never seeded here) — reported as unknown, not moved.
 func readSeeded(name string) string {
 	path := seededPath(name)
-	if !isFile(path) {
+	if !format.IsRegularFile(path) {
 		return ""
 	}
 	text, err := format.ReadText(path)
@@ -367,7 +367,7 @@ func writeSeeded(name, hashValue string) error {
 // clearSeeded removes the seeded-from record for template name (as `reset`).
 func clearSeeded(name string) {
 	path := seededPath(name)
-	if isFile(path) {
+	if format.IsRegularFile(path) {
 		_ = os.Remove(path)
 	}
 }
@@ -393,7 +393,7 @@ func findInPath(program string) string {
 		entry := path[start:cut]
 		if entry != "" {
 			candidate := entry + "/" + program
-			if isFile(candidate) {
+			if format.IsRegularFile(candidate) {
 				return candidate
 			}
 		}
@@ -450,7 +450,7 @@ func skillDirs(dir string) []string {
 			continue
 		}
 		sub := joinPath(dir, name)
-		if isDir(sub) && isFile(joinPath(sub, "SKILL.md")) {
+		if format.IsDir(sub) && format.IsRegularFile(joinPath(sub, "SKILL.md")) {
 			names = append(names, name)
 		}
 	}
@@ -1026,7 +1026,7 @@ func handleTemplateSeed(options skillsOptions) Outcome {
 
 	for _, name := range names {
 		target := joinPath(dir, name)
-		if isFile(target) && !options.force {
+		if format.IsRegularFile(target) && !options.force {
 			refused = true
 			actions = append(actions, templateAction{
 				path:   target,
@@ -1092,7 +1092,7 @@ func handleTemplateReset(options skillsOptions) Outcome {
 
 	for _, name := range names {
 		target := joinPath(dir, name)
-		if !isFile(target) {
+		if !format.IsRegularFile(target) {
 			actions = append(actions, templateAction{
 				path:   target,
 				action: templateActionAbsent,
@@ -1150,19 +1150,3 @@ func handleTemplateReset(options skillsOptions) Outcome {
 }
 
 // isFile reports whether path is a regular file.
-func isFile(path string) bool {
-	info, err := os.Stat(path)
-	if err != nil {
-		return false
-	}
-	return info.Mode().IsRegular()
-}
-
-// isDir reports whether path is a directory.
-func isDir(path string) bool {
-	info, err := os.Stat(path)
-	if err != nil {
-		return false
-	}
-	return info.IsDir()
-}

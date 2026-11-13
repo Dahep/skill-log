@@ -14,25 +14,51 @@ type WriteResult struct {
 	Refusal *Refusal
 }
 
-// WriteInvocation writes one invocation and its problems, atomically.
+// retry is the write path's retry budget.
 //
-// One transaction covers the invocation row and every problem row: a failed
-// write leaves nothing behind. A BUSY/LOCKED failure is retried as a whole
-// attempt inside the write budget, because a concurrent skill run holding the
-// lock costs milliseconds, not the command.
-func WriteInvocation(path string, row *Invocation, problems []string) (WriteResult, error) {
+// A concurrent skill run holding the store's lock costs milliseconds, not
+// the command: the write waits for the lock within the budget and then
+// gives up. The budget is one thing, shared by every write attempt, so a
+// lock that outlives it fails the same way everywhere.
+const (
+	writeBudgetSeconds = 5.0
+	writeRetrySleep    = 100 * time.Millisecond
+)
+
+// withRetry runs attempt until it succeeds, until the budget is spent, or
+// until it fails for a reason a retry cannot fix.
+//
+// A BUSY/LOCKED failure is retried: it is another writer, and it lasts
+// milliseconds. Every other failure is returned at once — retrying a
+// damaged file would only make the failure slower.
+//
+// The refusal is the fourth answer, and it is retried like a busy error: a
+// store whose version stamp could not run because another writer held the
+// lock is the same situation as a busy statement, and it must not skip the
+// budget.
+func withRetry[T any](attempt func() (T, *Refusal, error)) (T, *Refusal, error) {
 	deadline := time.Now().Add(time.Duration(writeBudgetSeconds * float64(time.Second)))
 	for {
-		result, err := writeAttempt(path, row, problems)
-		if err == nil {
-			return result, nil
-		}
-		if !isBusy(err) {
-			return WriteResult{}, err
+		result, refusal, err := attempt()
+		switch {
+		case refusal != nil:
+			// A lock is a busy store: wait for it within the budget, the
+			// same way a busy statement is waited for. Every other refusal
+			// is final.
+			if refusal.Kind != Locked {
+				return result, refusal, nil
+			}
+		case err == nil:
+			return result, nil, nil
+		case !isBusy(err):
+			return result, nil, err
 		}
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
-			return WriteResult{}, err
+			if refusal != nil {
+				return result, refusal, nil
+			}
+			return result, nil, err
 		}
 		if remaining > writeRetrySleep {
 			remaining = writeRetrySleep
@@ -41,19 +67,32 @@ func WriteInvocation(path string, row *Invocation, problems []string) (WriteResu
 	}
 }
 
-func writeAttempt(path string, row *Invocation, problems []string) (WriteResult, error) {
-	opened, refusal, err := OpenWrite(path)
+// WriteInvocation writes one invocation and its problems, atomically.
+//
+// One transaction covers the invocation row and every problem row: a failed
+// write leaves nothing behind. A BUSY/LOCKED failure is retried as a whole
+// attempt inside the write budget, because a concurrent skill run holding the
+// lock costs milliseconds, not the command.
+func WriteInvocation(path string, row *Invocation, problems []string) (WriteResult, error) {
+	result, _, err := withRetry(func() (WriteResult, *Refusal, error) {
+		return writeAttempt(path, row, problems)
+	})
+	return result, err
+}
+
+func writeAttempt(path string, row *Invocation, problems []string) (WriteResult, *Refusal, error) {
+	opened, refusal, err := Create(path)
 	if err != nil {
-		return WriteResult{}, err
+		return WriteResult{}, nil, err
 	}
 	if refusal != nil {
-		return WriteResult{Refusal: refusal}, nil
+		return WriteResult{Refusal: refusal}, refusal, nil
 	}
 	defer opened.Close()
 
 	tx, err := opened.db.Begin()
 	if err != nil {
-		return WriteResult{}, err
+		return WriteResult{}, nil, err
 	}
 	committed := false
 	defer func() {
@@ -73,25 +112,25 @@ func writeAttempt(path string, row *Invocation, problems []string) (WriteResult,
 		row.Fix, row.ResolvedAt,
 	)
 	if err != nil {
-		return WriteResult{}, err
+		return WriteResult{}, nil, err
 	}
 	id, err := result.LastInsertId()
 	if err != nil {
-		return WriteResult{}, err
+		return WriteResult{}, nil, err
 	}
 	for i, problem := range problems {
 		if _, err := tx.Exec(
 			"INSERT INTO problems (invocation_id, ordinal, problem) VALUES (?, ?, ?)",
 			id, i+1, problem,
 		); err != nil {
-			return WriteResult{}, err
+			return WriteResult{}, nil, err
 		}
 	}
 	if err := tx.Commit(); err != nil {
-		return WriteResult{}, err
+		return WriteResult{}, nil, err
 	}
 	committed = true
-	return WriteResult{ID: id}, nil
+	return WriteResult{ID: id}, nil, nil
 }
 
 // Resolved is one row's resolution after resolve touched it (or looked at
@@ -114,7 +153,7 @@ type Resolved struct {
 // store for writing. Only a genuine change opens the write path.
 func ResolveRow(path string, id int64, fix string, dryRun bool) (Resolved, *Refusal, error) {
 	var result Resolved
-	opened, refusal, err := OpenRead(path)
+	opened, refusal, err := Read(path)
 	if err != nil || refusal != nil {
 		return result, refusal, err
 	}
@@ -122,15 +161,6 @@ func ResolveRow(path string, id int64, fix string, dryRun bool) (Resolved, *Refu
 		return result, nil, nil
 	}
 	defer opened.Close()
-	ours, err := opened.IsOurs()
-	if err != nil {
-		return result, nil, err
-	}
-	// An existing file with no store tables yet is an empty log, not an
-	// error: the id it is asked for cannot exist.
-	if !ours {
-		return result, nil, nil
-	}
 	row, err := opened.ReadInvocation(id)
 	if err != nil {
 		return result, nil, err
@@ -153,31 +183,23 @@ func ResolveRow(path string, id int64, fix string, dryRun bool) (Resolved, *Refu
 		return result, nil, nil
 	}
 
-	deadline := time.Now().Add(time.Duration(writeBudgetSeconds * float64(time.Second)))
-	for {
-		stamped, refusal, err := stampAttempt(path, id, fix)
-		if err == nil {
-			return stamped, refusal, nil
-		}
-		if !isBusy(err) {
-			return result, nil, err
-		}
-		remaining := time.Until(deadline)
-		if remaining <= 0 {
-			return result, nil, err
-		}
-		if remaining > writeRetrySleep {
-			remaining = writeRetrySleep
-		}
-		time.Sleep(remaining)
+	stamped, refusal, err := withRetry(func() (Resolved, *Refusal, error) {
+		return stampAttempt(path, id, fix)
+	})
+	if err != nil || refusal != nil {
+		return result, refusal, err
 	}
+	return stamped, nil, nil
 }
 
 func stampAttempt(path string, id int64, fix string) (Resolved, *Refusal, error) {
 	var result Resolved
-	opened, refusal, err := OpenWrite(path)
-	if err != nil || refusal != nil {
-		return result, refusal, err
+	opened, refusal, err := Create(path)
+	if err != nil {
+		return result, nil, err
+	}
+	if refusal != nil {
+		return result, refusal, nil
 	}
 	defer opened.Close()
 

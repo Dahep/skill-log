@@ -294,32 +294,20 @@ func handleShow(args []string) Outcome {
 		Limit:      options.last,
 	}
 
-	opened, refusal, err := store.OpenRead(path)
-	if err != nil {
-		failure := readFailure(path, err)
-		return Fail(failure.Message, failure.Code)
-	}
-	if refusal != nil {
-		failure := refusalFailure(refusal)
+	opened, _, failure := openStore(path, store.PolicyRead, "")
+	if failure != nil {
 		return Fail(failure.Message, failure.Code)
 	}
 
 	var rows []store.Invocation
 	if opened != nil {
 		defer opened.Close()
-		ours, err := opened.IsOurs()
+		// A store with no tables yet is an empty log: the read answers
+		// with no rows rather than an error.
+		rows, err = opened.Rows(filters)
 		if err != nil {
 			failure := readFailure(path, err)
 			return Fail(failure.Message, failure.Code)
-		}
-		// An existing file with no store tables yet is an empty log, not a
-		// foreign one.
-		if ours {
-			rows, err = opened.Rows(filters)
-			if err != nil {
-				failure := readFailure(path, err)
-				return Fail(failure.Message, failure.Code)
-			}
 		}
 	}
 
