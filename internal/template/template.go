@@ -126,7 +126,10 @@ func findInPath(program string) string {
 			continue
 		}
 		candidate := entry + "/" + program
-		if format.IsExecutable(candidate) {
+		// A directory named like the program can appear earlier on PATH;
+		// the shell skips it, and so does this lookup. The command must be
+		// a regular file that can actually run.
+		if format.IsRegularFile(candidate) && format.IsExecutable(candidate) {
 			return candidate
 		}
 	}

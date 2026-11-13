@@ -388,9 +388,10 @@ check "--since only reads what came after it" \
 check "the marker before --since is left alone" \
     "$(sqlite3 "$DB3" 'select fix from invocations where id = 1')" ""
 
-# Repeated --since options use the last value in argument order. The
-# second bound starts at the second commit, so only that commit's marker
-# is in range.
+# Repeated --since options use the last value in argument order. HEAD
+# bounds the scan to nothing, so neither a resolution nor an unchanged
+# answer comes back; the earlier bound would instead find the second
+# commit's already-stamped marker and report it as unchanged.
 (
     cd "$REPO3" || exit 1
     "$BIN" resolve-merged --since "$BASE" --since=HEAD --db "$DB3" --json \
@@ -398,6 +399,8 @@ check "the marker before --since is left alone" \
 )
 check "the last --since bounds the scan" \
     "$(json_array "$(cat "$SCRATCH/since-last.json")" resolved)" ""
+check "the earlier --since did not bound the scan" \
+    "$(json_array "$(cat "$SCRATCH/since-last.json")" unchanged)" ""
 
 # A range git cannot resolve is a quiet full scan, not a failed pull.
 (

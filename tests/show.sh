@@ -167,11 +167,21 @@ check "the first problem is indented" \
     "$(printf '%s\n' "$OUT" | grep -c '^    problem 1: first issue$')" "1"
 check "the second problem is indented" \
     "$(printf '%s\n' "$OUT" | grep -c '^    problem 2: second issue$')" "1"
-check "two problems follow their invocation in order" \
-    "$(printf '%s\n' "$OUT" | awk '/^3 /{seen=1; next} seen && /^    problem 1: first issue$/{one=1; next} seen && one && /^    problem 2: second issue$/{two=1} END{print (one && two) ? "yes" : "no"}')" \
+# The problems belong to the first row written (id 1), which is the last
+# invocation line because the table is newest first. They must follow it
+# immediately, and no problem line may appear before it.
+check "the problems follow their own invocation immediately" \
+    "$(printf '%s\n' "$OUT" | awk '
+        /^1 /{row=NR; next}
+        /^    problem 1: first issue$/{one=NR; next}
+        /^    problem 2: second issue$/{two=NR}
+        END{print (row && one && two && one == row+1 && two == one+1) ? "yes" : "no"}' )" \
     "yes"
-check "one invocation's two problems are contiguous" \
-    "$(printf '%s\n' "$OUT" | awk '/^3 /{seen=1; next} seen && /^    problem 1: first issue$/{one=NR} seen && one && /^    problem 2: second issue$/{two=NR} END{print (one && two && two == one+1) ? "yes" : "no"}')" \
+check "no problem line appears before its invocation" \
+    "$(printf '%s\n' "$OUT" | awk '
+        /^1 /{row=NR}
+        /^    problem /{if (!row) early=1}
+        END{print early ? "no" : "yes"}')" \
     "yes"
 
 # The worktree under the home is shortened; one outside it is not.
