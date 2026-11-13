@@ -1,16 +1,6 @@
 #!/usr/bin/env bash
-# Run every test suite against the built artifact.
-#
-#   scripts/test.sh            # run the suites
-#   scripts/test.sh --build    # build first, then run them
-#
-# The suites are black-box: they exercise `dist/skill-log` as a process,
-# with a scratch HOME and a scratch store, so they need the artifact from
-# `scripts/build.sh` (this script's `--build` runs it).
-#
-# Each suite is independent and prints its own report; this script prints
-# one line per suite and exits non-zero if any of them failed, so a single
-# command answers "does the tree still work".
+# Runs every acceptance suite against dist/skill-log.
+# Run: scripts/test.sh [--build]
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -28,7 +18,7 @@ fi
 
 FAILED=0
 
-for suite in smoke store context show stats report resolve merged skills setup release sqlite parity; do
+for suite in smoke store context show stats report resolve merged skills setup release sqlite contract; do
 
     printf '\n== %s\n' "$suite"
     if bash "$ROOT/tests/$suite.sh"; then

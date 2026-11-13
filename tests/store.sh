@@ -1,20 +1,6 @@
 #!/usr/bin/env bash
-# The store test: `add` against the built artifact, in a sandboxed home.
-#
-#   tests/store.sh
-#
-# It exercises the seam the contract is written against — the installed
-# binary as a process — with a temporary HOME, a temporary XDG state
-# directory, and no real store anywhere near it. The store file itself is
-# inspected with the sqlite3 CLI where a case needs to see what was
-# written; the CLI is the only writer.
-#
-# Cases: first-write creation, the row and its problems, blank problems,
-# control characters, the deliberate non-idempotency, the marker shape,
-# --dry-run writing nothing, --json, the four refusals, a refused store
-# that a path tries to impersonate, a problems table of the wrong shape, a
-# failed write leaving nothing behind, path precedence, usage errors, a
-# flag value spelled like help, and a stdin pipe that fills the buffer.
+# Store suite: verifies add behavior and store refusals against the built artifact.
+# Run: tests/store.sh
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -62,10 +48,6 @@ check "the store is WAL" "$(sqlite3 "$DB" 'pragma journal_mode')" "wal"
 check "the schema version is stamped" "$(sqlite3 "$DB" 'pragma user_version')" "1"
 check "one invocation row" "$(sqlite3 "$DB" 'select count(*) from invocations')" "1"
 
-# Every text column of the invocations table carries a default, so a row
-# that leaves one out gets the empty string rather than NULL (SPEC §3).
-# The assertion reads the schema itself, not a row: a default is a
-# property of the column.
 DEFAULTS="$(sqlite3 "$DB" \
     "select group_concat(name || ':' || ifnull(dflt_value, 'NULL'), '|')
         from pragma_table_info('invocations')
@@ -76,10 +58,6 @@ check "the row carries a local ISO 8601 stamp with an offset" \
     "$(sqlite3 "$DB" 'select ts from invocations order by id limit 1' \
         | grep -cE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[+-][0-9]{2}:[0-9]{2}$')" "1"
 
-# Six writers against a store that does not exist yet. Both tables are
-# created inside one transaction, so no writer can see a half-built store
-# and refuse it as foreign; the busy retry covers the writers that queue
-# behind that transaction.
 PARALLEL_DB="$SCRATCH/parallel.db"
 PARALLEL_ERR="$SCRATCH/parallel.err"
 : >"$PARALLEL_ERR"
@@ -130,7 +108,6 @@ run add --skill duplicate
 AFTER="$(sqlite3 "$DB" 'select count(*) from invocations')"
 check "two identical calls produce two rows" "$AFTER" "$((BEFORE + 2))"
 
-# A flag's value is taken as written, even when it is spelled like help.
 run add --skill helpval --problem -h
 check "a problem spelled -h is recorded" "$STATUS" "0"
 check "the problem value -h reaches the store" \
@@ -152,14 +129,6 @@ check "a full-buffer stdin pipe stores nothing beyond the pipe" \
     "$(sqlite3 "$DB" "select count(*) from problems where invocation_id = $STDIN_ID
         and problem glob '*[^a]*'")" "0"
 
-# A line written in two chunks is still one line, and both parts must
-# survive.
-#
-# What this proves: the reader returns the whole line, whatever the pipe
-# delivered. It does not claim to exercise the short-read path — a pipe
-# may hand both chunks over in one read, and nothing black-box can say
-# which happened. The reader repeats its read until it sees the newline
-# (src/skill_log/stdin.mojo), so both outcomes end at the same place.
 ( printf 'first part'; printf ' second part\n' ) | \
     env -u XDG_STATE_HOME -u SKILL_LOG_DB HOME="$HOME_DIR" \
     "$BIN" add --skill stdin --problem - >/dev/null 2>"$SCRATCH/stderr"
@@ -196,7 +165,7 @@ check "dry-run carries no marker" \
 
 # ------------------------------------------------------------ clock
 
-# The one clock injection (SPEC §9): SKILL_LOG_NOW fixes the writer's
+# The clock injection: SKILL_LOG_NOW fixes the writer's
 # stamp, so a case can pin time without writing the store or sleeping.
 OUT="$(env -u XDG_STATE_HOME -u SKILL_LOG_DB HOME="$HOME_DIR" \
     SKILL_LOG_NOW=2020-01-02T03:04:05+00:00 \
@@ -292,9 +261,7 @@ check "a store without the column defaults still opens" "$STATUS" "0"
 check "the row landed in the store without the column defaults" \
     "$(sqlite3 "$SCRATCH/no-defaults.db" 'select count(*) from invocations')" "1"
 
-# The Python-era store: the two tables exist, the columns are the old ones.
-# It is a skill-log store and it is not this schema, so it is named as
-# older and left exactly as found (ADR-0002).
+# An older store is named as older and left exactly as found.
 sqlite3 "$SCRATCH/older.db" <<'SQL'
 CREATE TABLE invocations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -332,10 +299,6 @@ check "an older store is not converted" "$(md5sum <"$SCRATCH/older.db")" "$BEFOR
 check "the older row is still there untouched" \
     "$(sqlite3 "$SCRATCH/older.db" 'select count(*) from invocations')" "1"
 
-# A path may contain any word the refusal vocabulary uses. The refusal is
-# a value, so the path cannot decide which one the tool reports: a
-# directory that cannot be created is an operational failure naming the
-# directory, not an "older" or "newer 5" store.
 printf 'not a directory' >"$SCRATCH/not-a-dir"
 for pair in "older:older store" "newer5:newer store" \
     "foreign:foreign store" "damaged:damaged store"; do
@@ -405,17 +368,12 @@ run add --skill x --nope
 check "an unknown flag is a usage error" "$STATUS" "2"
 
 # ---------------------------------------------------------- a locked store
-#
-# A write that cannot get the store's lock within the budget is a named
-# refusal, not a SQLite message: the store classifies the failure and
-# the CLI renders it (SPEC §3 — no handler inspects a SQLite error).
 LOCKDIR="$SCRATCH/locked"
 mkdir -p "$LOCKDIR"
 LOCK_DB="$LOCKDIR/skills.db"
 run add --skill lock-holder --db "$LOCK_DB"
 check "the locked fixture is written" "$STATUS" "0"
 
-# A second process holds the write lock for longer than the budget.
 hold_lock "$LOCK_DB" "$SCRATCH/lock-ready" 12 &
 HOLDER=$!
 wait_for "$SCRATCH/lock-ready"
@@ -427,16 +385,6 @@ check_one_line "the locked store's refusal is one line" "$ERR"
 kill "$HOLDER" 2>/dev/null
 wait "$HOLDER" 2>/dev/null
 
-# A lock that is released inside the budget is waited for, not refused.
-# The write path retries a locked store the way it retries a busy
-# statement: the lock costs milliseconds, and the command must not fail
-# over it.
-#
-# The hold is released by the case, not by a clock: the write starts
-# while the lock is held, and the lock goes only once the write is
-# waiting for it. The lock has to outlive SQLite's own two-second busy
-# timeout — otherwise the driver waits it out and the store's own retry
-# is never reached.
 SHORT_LOCK="$SCRATCH/short-lock"
 mkdir -p "$SHORT_LOCK"
 SHORT_DB="$SHORT_LOCK/skills.db"
@@ -445,8 +393,6 @@ check "the short-lock fixture is written" "$STATUS" "0"
 hold_lock_until "$SHORT_DB" "$SCRATCH/short-lock-ready" "$SCRATCH/short-lock-go" &
 SHORT_HOLDER=$!
 wait_for "$SCRATCH/short-lock-ready"
-# The write runs in the background: the lock goes only once the write is
-# waiting for it, so the case's window is exact.
 env -u XDG_STATE_HOME -u SKILL_LOG_DB HOME="$HOME_DIR" \
     "$BIN" add --skill behind-a-short-lock --db "$SHORT_DB" \
     >"$SCRATCH/short-lock.out" 2>"$SCRATCH/short-lock.err" &
@@ -461,14 +407,6 @@ check "the row behind a short lock landed" \
     "$(sqlite3 "$SHORT_DB" "select count(*) from invocations where skill = 'behind-a-short-lock'")" "1"
 
 # ------------------------------------------------------ reserved characters
-#
-# A store's path is a path, not a URI. A `?`, a `#` or a `%` in the name
-# must not end the file name or start a query: the file the caller named
-# is the file that is written and the file that is read back.
-#
-# The proof is the round trip: `add` writes, `show` reads the same row
-# back, and the sibling a truncated path would have produced is not
-# created.
 RESERVED="$SCRATCH/reserved"
 mkdir -p "$RESERVED"
 for name in 'skills?db' 'skills#db' 'skills%db'; do
@@ -500,21 +438,7 @@ fi
 
 # ------------------------------------------------------- reads create nothing
 #
-# SPEC §2: reads never create the state directory, an empty database, or a
-# missing store. The read path opens the store read-only — SQLite's own
-# `SQLITE_OPEN_READONLY`, through the seam in `opendb.mojo` — so a store
-# that is not there is a failure of the open, never a new file. The
-# check-then-open window a read-write open leaves open is gone with it.
-#
-# The proof is the open itself. A read of a store whose file carries no
-# write permission succeeds — a read-write open would have had to fall
-# back to a read-only one to get there — and the read moves neither the
-# file's bytes nor its mtime, and leaves no sidecar behind.
-#
-# The creation case is the one a read-write open gets wrong: it opens
-# with `SQLITE_OPEN_CREATE`, so a file that vanished between the
-# existence check and the open would be recreated. A read-only open
-# refuses that file instead.
+# Reads never create the state directory, an empty database, or a missing store.
 RODIR="$SCRATCH/readonly"
 chmod -R 0755 "$RODIR" 2>/dev/null
 rm -rf "$RODIR"

@@ -1,26 +1,6 @@
 #!/usr/bin/env bash
-# The skills test: templates, audit, adopt, and the document states, against
-# the built artifact.
-#
-#   tests/skills.sh
-#
-# It exercises tickets #17 and #18's surface: the two shipped templates,
-# their resolution chain and placeholder validation, `skills template
-# show|seed|reset`, `skills audit` over the five document states, and
-# `skills adopt`'s append/rewrite/refuse/skip actions with their
-# byte-exactness and idempotency. The cases are the promises the spec
-# makes — all five states classify, a `missing` skill with stale unfenced
-# text nearby leaves that text untouched, a moved shipped default is
-# reported with the two adopting commands and never applied, seed/reset
-# refuse without `--force` and honour `--dry-run`, an empty directory is
-# refused, the audit writes nothing, adopt changes no byte outside the
-# fence and a second run changes nothing, and every help block ends with
-# real invocations.
-#
-# Fence fixtures are built through the CLI where a render exists
-# (`skills template show --json` carries the template source, and the
-# audit's own render is what a fresh block matches); hashes are hardcoded
-# only to prove an `edited`/tampered block.
+# Skills suite: verifies templates, document states, audit, adopt, and seed or reset against the built artifact.
+# Run: tests/skills.sh
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -159,7 +139,7 @@ check "seed --dry-run writes nothing" \
 run skills template seed --force
 check "seed --force restores the copy" "$STATUS" "0"
 
-# The JSON shape of seed and reset (SPEC §5.10): one object per
+# The JSON shape of seed and reset: one object per
 # template, with `path` and `action`. The action vocabulary is fixed
 # here, so a caller reads a value and never matches prose.
 run skills template reset --force
@@ -247,10 +227,6 @@ run skills template show --json
 check "a moved default is reported in JSON" \
     "$(printf '%s' "$OUT" | python3 -c 'import json,sys; t=json.loads(sys.stdin.read())["templates"][0]; print(t["moved"])')" "True"
 
-# SPEC §7: `audit` names a moved shipped default too, with the two
-# commands that adopt it. The name is the failure's one stderr line
-# (SPEC §2: exactly one stderr line per failure), and the exit code
-# says the directory is not conformant.
 AUDITDIR="$SCRATCH/audit-moved"
 rm -rf "$AUDITDIR"
 mkdir -p "$AUDITDIR/alpha"
@@ -266,8 +242,6 @@ check_contains "audit names seed --force" "$ERR" "skills template seed --force"
 check_contains "audit names adopt" "$ERR" "skills adopt"
 check_one_line "the moved-default note is one line" "$ERR"
 
-# The same answer in JSON: the per-skill objects are unchanged, and the
-# name is still on stderr.
 run skills audit --dir "$AUDITDIR" --json
 check "audit --json exits 1 on a moved default" "$STATUS" "1"
 check_contains "audit --json names the moved default" "$ERR" \
@@ -358,12 +332,6 @@ EXPECTED_CMD="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))'
 
 # ------------------------------------------------------- the fixtures
 
-# Build the five state fixtures. The current render is what `ok` matches:
-# the shipped usage-log template rendered for that skill's own name and
-# the resolved binary path. The stale block is an older render of the
-# same template (older wording). The edited block is a current render
-# with its content changed after the fence hash was written. The
-# vendored skill carries the vendor stamp.
 SKILLS="$SCRATCH/skills"
 rm -rf "$SKILLS"
 for s in ok missing stale edited vendored; do
@@ -371,19 +339,9 @@ for s in ok missing stale edited vendored; do
     printf 'name: %s\n' "$s" > "$SKILLS/$s/SKILL.md"
 done
 
-# The current render, through the CLI's own template. The audit renders
-# with name "skill" and command "skill-log"; a block built the same way is
-# `ok`. The suite reads the template source from `skills template show
-# --json` and replicates the render (same substitution, same FNV-1a hash)
-# to build a fixture without hardcoding a hash.
 TEMPLATE_JSON="$("$BIN" skills template show --json)"
 USAGE_TEMPLATE="$(printf '%s' "$TEMPLATE_JSON" | python3 -c 'import json,sys; print(json.loads(sys.stdin.read())["templates"][0]["content"])')"
 
-# Render a block the way the audit does: substitute <name> and
-# <command>, then compute the fence the CLI writes. The suite
-# replicates the render to build a fixture without hardcoding a hash —
-# the hash comes from the same bytes the CLI hashes.
-# The template is passed as argv[3] because the heredoc owns stdin.
 render_block() {
     python3 - "$1" "$2" "$3" <<'PY'
 import sys
@@ -509,17 +467,8 @@ check "the audit still writes nothing with --dry-run" \
 
 # ------------------------------------------------------------- adopt
 
-# adopt writes: it appends a block where there is none, rewrites a stale
-# one, rewrites an edited one only with --force, skips vendored skills
-# and leaves an ok one alone. The five fixtures from the audit section
-# are still pristine (the audit is read-only); their originals are kept
-# so byte-exactness can be proved by removing the fence block again.
 cp -r "$SKILLS" "$SCRATCH/skills.orig"
 
-# strip_block <file>: the file with its fenced usage-log block removed —
-# every byte outside the fence, in order. Comparing it with the
-# pre-adopt original is the byte-exactness proof: nothing outside the
-# fence changed.
 strip_block() {
     python3 - "$1" <<'PY'
 import sys
@@ -665,11 +614,6 @@ check "a second adopt reports only unchanged and skipped" \
     "skipped unchanged"
 
 # ------------------------------------------------ a moved binary is stale
-#
-# The block names the resolved binary path. When the binary moves, the
-# current render names a different path, so the block is an older
-# render: `stale`, and `adopt` rewrites it (SPEC §7: `ok` requires the
-# content to match the current render).
 MOVEDBIN="$SCRATCH/moved-bin"
 rm -rf "$MOVEDBIN"
 mkdir -p "$MOVEDBIN"

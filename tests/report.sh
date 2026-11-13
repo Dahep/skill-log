@@ -1,14 +1,6 @@
 #!/usr/bin/env bash
-# The report test: naming the rows a change fixes.
-#
-#   tests/report.sh
-#
-# It exercises both modes against the built artifact in sandboxed homes
-# and repositories: artifact mode writes `.skill-log/reports/<slug>.md`,
-# one marker per line, atomically and only after validation; trailer mode
-# prints the `Skill-log-Fix:` line and writes nothing. The store is built
-# through `add` and `resolve`; `sqlite3` only inspects what the file
-# holds.
+# Report suite: verifies report artifacts and scanning against the built artifact.
+# Run: tests/report.sh
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -49,10 +41,6 @@ run() {
 }
 
 # ------------------------------------------------------------------ rows
-#
-# Four rows: two in one dispatched run (`--session` and `--parent`), one
-# clean, and one that a later change already resolved. The problem text
-# is distinctive so the privacy check can look for it.
 
 run add --skill alpha --machine boxA --session ses_run \
     --problem "secret problem text"
@@ -225,7 +213,6 @@ check "an empty --skill exits 2" "$STATUS" "2"
 run report --slug ""
 check "an empty --slug exits 2" "$STATUS" "2"
 
-# A flag's value is taken as written: `--id -h` is the value `-h`.
 run report --id -h
 check "a --id value spelled -h is a value" "$STATUS" "2"
 check_contains "a --id value spelled -h is a malformed id" "$ERR" \
@@ -417,8 +404,6 @@ check "a foreign store exits 1" "$STATUS" "1"
 check "a foreign store is named" \
     "$(printf '%s\n' "$ERR" | grep -c 'foreign store')" "1"
 
-# An existing but table-less store is an empty log: a named id is a
-# missing id, not a silent "nothing to report".
 : >"$SCRATCH/tableless.db"
 run report --id 99 --db "$SCRATCH/tableless.db" --slug tableless
 check "a table-less store names the missing id" "$STATUS" "1"
@@ -464,11 +449,6 @@ check "a missing store says to add first" "$ERR" \
     "skill-log: no store at $SCRATCH/none.db (run add first)"
 
 # ----------------------------------------------------- reserved characters
-#
-# A store's path is a path, not a URI: a `?` or a `#` in the name must
-# not end the file name or start a query. The report reads the store the
-# caller named, so a store under such a path holds the same rows a
-# report would name.
 RESERVED="$SCRATCH/reserved"
 mkdir -p "$RESERVED"
 # The slug is a file name, so it cannot carry the reserved characters the

@@ -1,27 +1,6 @@
 #!/usr/bin/env bash
-# The SQLite test: the store's SQLite travels inside the binary.
-#
-#   tests/sqlite.sh
-#
-# The release ships one statically linked executable. The SQLite it uses
-# is a pure-Go implementation compiled into that executable, so the store
-# needs no library on the machine it runs on — and the machine it runs on
-# need not have a SQLite at all.
-#
-# This suite proves that, at the seam the contract names: the artifact as
-# a process, with no system SQLite anywhere in reach. A write, a read and
-# a resolve all go through the store, so all three succeeding is the
-# round-trip that says the store works where no SQLite is installed.
-#
-# The environment without a system SQLite is a bubblewrap root that holds
-# the executable and nothing else: no /usr/lib, no loader, no SQLite, no
-# toolchain. bwrap is used rather than a container: no daemon, no cgroup
-# namespace, no privileges, and the desktop's live session cgroups are
-# never touched. Where bwrap is missing, the suite falls back to an empty
-# environment (env -i), which proves the binary needs no environment of
-# the developer's machine at all but cannot rule out a library found
-# through the loader's default path; that case says so rather than
-# pretending.
+# SQLite suite: verifies store round trips without a system SQLite.
+# Run: tests/sqlite.sh
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -40,9 +19,6 @@ if [ ! -x "$DIST/skill-log" ]; then
     exit 1
 fi
 
-# The artifact is static: there is no shared object for the loader to
-# find, so the SQLite that reaches the store is the one inside the
-# executable.
 if command -v ldd >/dev/null 2>&1; then
     ldd_report="$(ldd "$DIST/skill-log" 2>&1 || true)"
     if printf '%s\n' "$ldd_report" | grep -qi 'not a dynamic executable'; then
@@ -72,16 +48,8 @@ mkdir -p "$SANDBOX_HOME"
 SANDBOX_ROOT=""
 ENVIRONMENT=""
 
-# The sandbox is used only when bwrap actually works: a bwrap on the PATH
-# that cannot create a namespace is not a sandbox, and a case that ran
-# in it would prove nothing.
 if command -v bwrap >/dev/null 2>&1 &&
     bwrap --ro-bind / / --dev /dev --unshare-all true >/dev/null 2>&1; then
-    # A root with no system libraries at all: no /usr/lib, no loader
-    # cache, no SQLite, no toolchain. The static artifact needs none of
-    # them, and a root that carried a copy of /usr/lib would put a
-    # system SQLite back within its reach — which is exactly what this
-    # case exists to rule out.
     SANDBOX_ROOT="$SCRATCH/root"
     sandbox_root "$SANDBOX_ROOT" "$DIST/skill-log"
     ENVIRONMENT="bubblewrap"
@@ -94,10 +62,6 @@ fi
 
 printf 'environment: %s\n' "$ENVIRONMENT"
 
-# run <args...>: the artifact in the environment, with a scratch store.
-#
-# Every run's stderr is kept: the point of the suite is that no run
-# anywhere reported a missing or unusable SQLite.
 run() {
     local out err
     out="$SCRATCH/out"
@@ -115,8 +79,6 @@ run() {
     printf '%s\n' "$ERR" >>"$SCRATCH/all-err"
 }
 
-# The round-trip: a write, a read and a resolve, all through the store,
-# in an environment with no system SQLite.
 run add --skill alpha
 check "a write exits 0" "$STATUS" "0"
 check "a write prints the marker" "$OUT" "$(hostname)#1"
@@ -147,14 +109,9 @@ row = json.loads(sys.stdin.read())
 print("yes" if re.match(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[+-][0-9]{2}:[0-9]{2}$", row.get("resolved_at", "")) else "no")
 ')" "yes"
 
-# The point of the suite: nothing anywhere said the SQLite was missing.
-# The store's SQLite travels inside the binary, so no run can report a
-# missing or unusable library.
 check "no run reported a SQLite problem" \
     "$(grep -ci 'sqlite unavailable\|cannot load\|shared object' "$SCRATCH/all-err")" "0"
 
-# The store is a real SQLite file: the schema the tool wrote is there,
-# read through an ordinary SQLite reader.
 DB="$SANDBOX_HOME/.local/state/skill-log/skills.db"
 if command -v sqlite3 >/dev/null 2>&1; then
     check "the store is a SQLite database" \
@@ -165,8 +122,6 @@ else
     printf 'skip sqlite3 is not installed: the store file was not read directly\n'
 fi
 
-# The environment itself: the case is only worth anything if there really
-# is no system SQLite inside it.
 if [ "$ENVIRONMENT" = "bubblewrap" ]; then
     check "the sandbox root carries no SQLite library" \
         "$(find "$SANDBOX_ROOT" -name 'libsqlite3*' 2>/dev/null | wc -l | tr -d ' ')" "0"

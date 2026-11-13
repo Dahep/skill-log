@@ -1,14 +1,6 @@
 #!/usr/bin/env bash
-# The stats test: counts and the friction rate against the built artifact.
-#
-#   tests/stats.sh
-#
-# It exercises the read that answers "which skills need attention": the
-# four distinct counts, the rate, every `--by` key, the `--skill` narrow,
-# the flat JSON line, the empty answer, and the refusals. The fixture is
-# built through `add` and `resolve` (the CLI is the only writer), with one
-# row resolved by the CLI, and one worktree under
-# the sandbox home so the shortening has something to shorten.
+# Stats suite: verifies counts, grouping, narrowing, and empty results against the built artifact.
+# Run: tests/stats.sh
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -33,7 +25,6 @@ mkdir -p "$SCRATCH/home"
 
 HOME_DIR="$SCRATCH/home"
 
-# The sandbox's HOME, so nothing reaches the real store.
 export HOME="$HOME_DIR"
 unset XDG_STATE_HOME SKILL_LOG_DB
 unset SKILL_LOG_ADAPTERS SKILL_LOG_HARNESS SKILL_LOG_SESSION
@@ -76,18 +67,7 @@ else
 fi
 
 # ------------------------------------------------------------------- rows
-#
-# Three skills over two harnesses, two models, two repos, two machines and
-# three projects, with the problem counts chosen so every total is
-# distinguishable from every other one:
-#
-#   alpha  two runs: two problems then one; the second run is resolved
-#   beta   one clean run
-#   gamma  one run with one problem, under the home directory
 
-# The rows are written from outside the repository: a row added inside a
-# checkout would carry its worktree, and the empty-key case below needs
-# runs that have none.
 cd "$SCRATCH" || exit 1
 
 run add --skill alpha --machine boxA --harness opencode --model m1 \
@@ -105,8 +85,6 @@ run add --skill gamma --machine boxA --harness claude --model m2 \
     --repo r2 --worktree "$HOME_DIR/wt" --problem "four"
 check "the fourth row is written" "$STATUS" "0"
 
-# The row a change resolved: the CLI resolves it, the way a real change
-# does.
 ALPHA_TWO_ID="$(sqlite3 "$DB" \
     "select id from invocations where skill = 'alpha' and repo = 'r2'")"
 run resolve --id "$ALPHA_TWO_ID" --fix abc1234 --db "$DB"
@@ -155,8 +133,6 @@ check "json carries no trailing blank line" \
 
 # ------------------------------------------------------------------- cuts
 
-# Every valid key is accepted, appears as the grouping column, and keeps
-# the counts it groups.
 run stats --by harness --json
 check "the harness cut names its column" \
     "$(json_field "$(printf '%s\n' "$OUT" | head -n1)" harness)" "claude"
@@ -194,27 +170,21 @@ check "the project cut keeps its problems" "$(json_field "$PA" problems)" "2"
 check "the empty project groups the run without one" \
     "$(printf '%s\n' "$OUT" | grep -c '"project":""')" "1"
 
-# The worktree cut prints a shortened path in the table, while the JSON
-# keeps the path whole; the empty key keeps its column empty rather than
-# shifting the row left.
 run stats --by worktree --json
 check "the worktree cut keeps the path whole in json" \
     "$(printf '%s\n' "$OUT" | grep -c "\"worktree\":\"$HOME_DIR/wt\"")" "1"
 run stats --by worktree
-# The tilde is the literal output, not a path to expand.
 # shellcheck disable=SC2088
 check "the worktree table shortens the path" \
     "$(printf '%s\n' "$OUT" | grep -c '~/wt')" "1"
 check "an empty grouping key keeps its column empty" \
     "$(printf '%s\n' "$OUT" | grep -cE '^ +3 +2 +3 +1 +1[.]00$')" "1"
 
-# --by-model is kept as the rotation alias.
 run stats --by model --json
 BY_MODEL="$OUT"
 run stats --by-model --json
 check "--by-model is the model cut" "$OUT" "$BY_MODEL"
 
-# Repeated group options are resolved in argument order: the last form wins.
 run stats --by skill --by-model --json
 check "the last group option wins" \
     "$(json_keys "$(printf '%s\n' "$OUT" | head -n1)")" \
@@ -244,9 +214,6 @@ check "a skill with no rows has an empty JSON stream" "$OUT" ""
 
 # ------------------------------------------------------------ empty store
 
-# A file that exists but was never initialised: no tables at all. It is
-# an empty log, not a foreign store, and the read answers with the empty
-# message.
 : >"$SCRATCH/untouched.db"
 run stats --db "$SCRATCH/untouched.db"
 check "an untouched empty file exits 0" "$STATUS" "0"
@@ -303,9 +270,6 @@ check "stats names a newer store with both versions" \
 # ------------------------------------------------------- reads never write
 
 STATE_DIR="$HOME_DIR/.local/state/skill-log"
-# A reader may leave SQLite's own -wal/-shm sidecars behind (it needs
-# them to read a WAL store); the store file itself is the invariant, and
-# it is asserted byte-identical above.
 files_besides_sidecars() {
     find "$STATE_DIR" -maxdepth 1 -mindepth 1 -printf '%f\n' \
         | grep -vE '^skills[.]db-(wal|shm)$' | sort | tr '\n' ' ' || true
@@ -357,8 +321,6 @@ run stats --nope
 check "an unknown flag exits 2" "$STATUS" "2"
 check_one_line "an unknown flag is one line" "$ERR"
 
-# A flag's value is taken as written: `--by -h` is the column `-h`, and a
-# help flag elsewhere is still a help request.
 run stats --by -h
 check "a --by value spelled -h is a value" "$STATUS" "2"
 check_contains "a --by value spelled -h is not a help request" "$ERR" \
