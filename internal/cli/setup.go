@@ -317,20 +317,24 @@ func verdictJSON(v verdict) string {
 
 // storeVerdict is the store's verdict: `create`, or `verify` under `--check`.
 //
-// The verdict comes from the store's own path — `Verify` for the read and
-// `OpenWrite` for the creation — and never from inspecting SQLite here. A
-// refused store is drift with the refusal's own named message: setup creates
-// a store and never migrates one.
+// The verdict comes from the store's own path — the verify policy for the
+// read and the create policy for the creation — and never from inspecting
+// SQLite here. A refused store is drift with the refusal's own named
+// message: setup creates a store and never migrates one.
 func storeVerdict(path string, check, dryRun bool) verdict {
-	absent, refusal, err := store.Verify(path)
-	if err != nil {
-		return verdict{artifactStore, statusDrift, err.Error()}
+	// The verify policy first: it is the read that says whether the store
+	// is there at all, and whether it is one this tool may use. Nothing is
+	// created by it.
+	opened, absent, failure := openStore(path, store.PolicyVerify, "")
+	if failure != nil {
+		return verdict{artifactStore, statusDrift, failure.Message}
 	}
-	if !absent && refusal == nil {
+	if opened != nil {
+		opened.Close()
+	}
+	if absent != store.AbsentDrift {
+		// The store is there and is ours: setup changes nothing about it.
 		return verdict{artifactStore, statusUnchanged, path}
-	}
-	if refusal != nil {
-		return verdict{artifactStore, statusDrift, refusalFailure(refusal).Message}
 	}
 	if check {
 		return verdict{artifactStore, statusDrift, "no store at " + path}
@@ -338,17 +342,13 @@ func storeVerdict(path string, check, dryRun bool) verdict {
 	if dryRun {
 		return verdict{artifactStore, statusCreated, path}
 	}
-	opened, refusal, err := store.OpenWrite(path)
-	if err != nil {
-		return verdict{artifactStore, statusDrift, err.Error()}
+	// The create policy: the store comes into being here, and only here.
+	opened, _, failure = openStore(path, store.PolicyCreate, "")
+	if failure != nil {
+		return verdict{artifactStore, statusDrift, failure.Message}
 	}
 	if opened != nil {
 		opened.Close()
-	}
-	if refusal != nil {
-		// The file appeared between the verdict and the creation, and it is
-		// not a store we may use.
-		return verdict{artifactStore, statusDrift, refusalFailure(refusal).Message}
 	}
 	return verdict{artifactStore, statusCreated, path}
 }
@@ -371,7 +371,7 @@ func hookVerdict(common string, options setupOptions) verdict {
 
 	path := hookPath(common)
 	wanted := hookScript()
-	if isFile(path) {
+	if format.IsRegularFile(path) {
 		text, err := format.ReadText(path)
 		if err != nil {
 			return verdict{artifactHook, statusDrift, err.Error()}
@@ -461,7 +461,7 @@ func hookPath(common string) string {
 // A file without the marker is not ours to remove, so it is left exactly as
 // found and named as skipped. Nothing else is touched.
 func removeHookVerdict(path string, dryRun bool) verdict {
-	if !isFile(path) {
+	if !format.IsRegularFile(path) {
 		return verdict{artifactHook, statusUnchanged, "no post-merge hook at " + path}
 	}
 	text, err := format.ReadText(path)
@@ -506,9 +506,9 @@ func reportDirVerdict(repo string, options setupOptions) verdict {
 	readme := dir + "/" + reportReadmeName
 	keep := dir + "/" + reportKeepName
 
-	dirThere := isDir(dir)
-	readmeThere := isFile(readme)
-	keepThere := isFile(keep)
+	dirThere := format.IsDir(dir)
+	readmeThere := format.IsRegularFile(readme)
+	keepThere := format.IsRegularFile(keep)
 
 	if dirThere && readmeThere && keepThere {
 		return verdict{artifactReportDir, statusUnchanged, dir}
@@ -561,7 +561,7 @@ func skillsVerdict(skillsDir string, options setupOptions) verdict {
 		return verdict{artifactSkills, statusSkipped, "no --skills-dir given"}
 	}
 	dir := settings.ExpandHome(strings.TrimSpace(skillsDir))
-	if isFile(dir) {
+	if format.IsRegularFile(dir) {
 		return verdict{artifactSkills, statusSkipped, dir + " is not a directory"}
 	}
 
@@ -704,14 +704,14 @@ func (s skillInstall) text() string {
 // the same answer and writes nothing.
 func installedSkillAction(dir, name, wanted string, options setupOptions) skillInstall {
 	path := dir + "/" + name + "/SKILL.md"
-	if !isFile(path) {
+	if !format.IsRegularFile(path) {
 		if options.check {
 			return skillInstall{name, statusDrift, "missing at " + path}
 		}
 		if options.dryRun {
 			return skillInstall{name, statusCreated, "would write " + path}
 		}
-		if !isDir(dir + "/" + name) {
+		if !format.IsDir(dir + "/" + name) {
 			if err := os.MkdirAll(dir+"/"+name, 0o755); err != nil {
 				return skillInstall{name, statusDrift, err.Error()}
 			}

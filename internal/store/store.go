@@ -15,10 +15,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
-	"time"
+
+	"github.com/Dahep/skill-log/internal/format"
 
 	_ "modernc.org/sqlite"
 )
@@ -29,8 +28,8 @@ const SchemaVersion = 1
 
 const invocationDDL = `CREATE TABLE IF NOT EXISTS invocations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    ts TEXT NOT NULL,
-    skill TEXT NOT NULL,
+    ts TEXT NOT NULL DEFAULT '',
+    skill TEXT NOT NULL DEFAULT '',
     harness TEXT NOT NULL DEFAULT '',
     session TEXT NOT NULL DEFAULT '',
     parent TEXT NOT NULL DEFAULT '',
@@ -65,10 +64,8 @@ const invocationSelect = "SELECT id, ts, skill, harness, session, parent," +
 	" FROM invocations"
 
 const (
-	writeBudgetSeconds = 5.0
-	writeRetrySleep    = 100 * time.Millisecond
-	writeBusyTimeout   = 2000
-	readBusyTimeout    = 5000
+	writeBusyTimeout = 2000
+	readBusyTimeout  = 5000
 )
 
 // DefaultLimit is the number of rows a read returns when the caller does not
@@ -154,13 +151,6 @@ func isCorruption(err error) bool {
 		strings.Contains(text, "file is encrypted")
 }
 
-// IsBusyError reports whether err means the store was busy or locked.
-func IsBusyError(err error) bool { return isBusy(err) }
-
-// IsCorruptionError reports whether err means the file is not a usable
-// database.
-func IsCorruptionError(err error) bool { return isCorruption(err) }
-
 // ClassifyError turns a SQLite failure into the refusal kind it means, or nil
 // when it is a generic operational failure. The caller renders the answer;
 // nothing else inspects a SQLite message.
@@ -175,21 +165,20 @@ func ClassifyError(err error) *Refusal {
 }
 
 func isFile(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
+	return format.IsRegularFile(path)
 }
 
-// OpenRead opens an existing store for reading.
+// openRead opens an existing store for reading.
 //
 // A nil store with no refusal means the file does not exist: a read never
 // creates the state directory, the file, or an empty database. A file that
 // exists but is not a usable store is refused by name; nothing is written to
 // it, not even its journal mode.
-func OpenRead(path string) (*Store, *Refusal, error) {
+func openRead(path string) (*Store, *Refusal, error) {
 	if !isFile(path) {
 		return nil, nil, nil
 	}
-	db, err := sql.Open("sqlite", "file:"+path+"?mode=ro")
+	db, err := openURI(path, "?mode=ro")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -231,20 +220,18 @@ func OpenRead(path string) (*Store, *Refusal, error) {
 	return store, nil, nil
 }
 
-// OpenWrite opens the store for writing, creating it when it does not exist.
+// openWrite opens the store for writing, creating it when it does not exist.
 //
 // The state directory and the file are created here, and only here: a write
 // is the one thing that may bring a store into being. What this file is —
 // ours, older, foreign, damaged, newer — is decided before anything is
 // written to it.
-func OpenWrite(path string) (*Store, *Refusal, error) {
+func openWrite(path string) (*Store, *Refusal, error) {
 	existed := isFile(path)
-	if dir := filepath.Dir(path); dir != "" && dir != "." {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return nil, nil, fmt.Errorf("cannot create the store's directory: %w", err)
-		}
+	if err := createStoreDirectory(path); err != nil {
+		return nil, nil, err
 	}
-	db, err := sql.Open("sqlite", path)
+	db, err := openURI(path, "")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -317,10 +304,10 @@ func OpenWrite(path string) (*Store, *Refusal, error) {
 	return store, nil, nil
 }
 
-// Verify is the store's verdict under the `verify` policy: absent, a named
+// verify is the store's verdict under the `verify` policy: absent, a named
 // refusal, or ok. Nothing is created and nothing is written.
-func Verify(path string) (absent bool, refusal *Refusal, err error) {
-	opened, refusal, err := OpenRead(path)
+func verify(path string) (absent bool, refusal *Refusal, err error) {
+	opened, refusal, err := Read(path)
 	if err != nil || refusal != nil {
 		return false, refusal, err
 	}
@@ -330,9 +317,6 @@ func Verify(path string) (absent bool, refusal *Refusal, err error) {
 	opened.Close()
 	return false, nil, nil
 }
-
-// IsOurs reports whether the store carries the 1.0 skill-log schema.
-func (s *Store) IsOurs() (bool, error) { return s.isOurs() }
 
 func (s *Store) isOurs() (bool, error) {
 	has, err := s.hasTables()

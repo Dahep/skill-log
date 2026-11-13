@@ -2,7 +2,6 @@ package cli
 
 import (
 	"errors"
-	"os"
 	"strings"
 
 	"github.com/Dahep/skill-log/internal/format"
@@ -135,16 +134,17 @@ func handleResolve(args []string) Outcome {
 
 	path := settings.ResolveDB(options.db)
 	// resolve never makes a store: an absent one is a named failure.
-	if info, err := os.Stat(path); err != nil || info.IsDir() {
-		return Fail("no store at "+path+" (add a row first)", ExitFailure)
+	opened, _, failure := openStore(path, store.PolicyWrite,
+		"no store at "+path+" (add a row first)")
+	if failure != nil {
+		return Fail(failure.Message, failure.Code)
+	}
+	if opened != nil {
+		opened.Close()
 	}
 
 	row, refusal, err := store.ResolveRow(path, options.id, options.fix, options.dryRun)
-	if err != nil {
-		return Fail("cannot resolve the store: "+path+": "+err.Error(), ExitFailure)
-	}
-	if refusal != nil {
-		failure := refusalFailure(refusal)
+	if failure := writeOutcome(path, refusal, err); failure != nil {
 		return Fail(failure.Message, failure.Code)
 	}
 	if !row.Found {

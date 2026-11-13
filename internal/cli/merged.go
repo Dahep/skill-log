@@ -399,7 +399,7 @@ func newestFirst(files []reportFile) []reportFile {
 // exists — that is the mode switch `report` uses too.
 func reportFiles(root, since string) []reportFile {
 	directory := filepath.Join(root, filepath.FromSlash(reportDir))
-	if !isDirectory(directory) {
+	if !format.IsDir(directory) {
 		return nil
 	}
 
@@ -415,7 +415,7 @@ func reportFiles(root, since string) []reportFile {
 				continue
 			}
 			relative := reportDir + "/" + name
-			if !isRegularFile(filepath.Join(root, filepath.FromSlash(relative))) {
+			if !format.IsRegularFile(filepath.Join(root, filepath.FromSlash(relative))) {
 				continue
 			}
 			file := latestReportCommit(root, relative, "HEAD")
@@ -658,7 +658,7 @@ func handleResolveMerged(args []string) Outcome {
 		}
 	}
 
-	artifact := isDirectory(filepath.Join(root, filepath.FromSlash(reportDir)))
+	artifact := format.IsDir(filepath.Join(root, filepath.FromSlash(reportDir)))
 	trailerScan := scanTrailers(root, since)
 	var outcome mergedOutcome
 	outcome.hidden = trailerScan.hidden
@@ -679,18 +679,18 @@ func handleResolveMerged(args []string) Outcome {
 	var result store.MergedResult
 	if len(outcome.scan.located) > 0 {
 		path := settings.ResolveDB(options.db)
-		if store.FileExists(path) {
+		// The optional policy: an absent store is nothing to do, exit 0.
+		opened, _, failure := openStore(path, store.PolicyOptional, "")
+		if failure != nil {
+			notes := mergedNotes(outcome, result, options.quiet)
+			return FailNotes(failure.Message, failure.Code, notes)
+		}
+		if opened != nil {
+			opened.Close()
 			resolved, refusal, err := store.ResolveMergedRows(
 				path, outcome.scan.located, localHostname(), options.dryRun,
 			)
-			if err != nil {
-				notes := mergedNotes(outcome, result, options.quiet)
-				return FailNotes(
-					"cannot resolve the log: "+err.Error(), ExitFailure, notes,
-				)
-			}
-			if refusal != nil {
-				failure := refusalFailure(refusal)
+			if failure := writeOutcome(path, refusal, err); failure != nil {
 				notes := mergedNotes(outcome, result, options.quiet)
 				return FailNotes(failure.Message, failure.Code, notes)
 			}

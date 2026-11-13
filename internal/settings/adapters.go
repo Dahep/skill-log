@@ -2,8 +2,9 @@ package settings
 
 import (
 	"database/sql"
-	"os"
 	"strings"
+
+	"github.com/Dahep/skill-log/internal/format"
 
 	_ "modernc.org/sqlite"
 )
@@ -22,6 +23,10 @@ const openCodeModelSQL = "SELECT model FROM session_v2 WHERE id = ?"
 // AdapterContext is what an enabled adapter filled. Every field is a string;
 // an empty one means the adapter did not fill it, or that it failed. An
 // adapter never overwrites anything the caller said.
+//
+// The session and the model travel together: the model is the one of the
+// session that was resolved, so a caller that names a session gets that
+// session's model.
 type AdapterContext struct {
 	Harness string
 	Session string
@@ -48,6 +53,19 @@ func EnabledAdapters(flags []string) []string {
 	}
 	names = append(names, splitCommas(EnvOrEmpty(AdaptersEnv))...)
 	return names
+}
+
+// HasAdapter reports whether one of the enabled adapters is the named one.
+//
+// An adapter's value is only consulted when that adapter runs: an adapter
+// that is not enabled fills nothing, not even its session.
+func HasAdapter(names []string, want string) bool {
+	for _, name := range names {
+		if strings.TrimSpace(name) == want {
+			return true
+		}
+	}
+	return false
 }
 
 func openCodeDBPath() string {
@@ -206,19 +224,31 @@ func renderModel(raw string) string {
 	return provider + "/" + modelID
 }
 
+// fileURI is the path as a `file:` URI.
+//
+// The encoding lives in the format package, so this read of another tool's
+// database names the same file the store names for the same path.
+func fileURI(path string) string {
+	return format.FileURI(path)
+}
+
 // openCodeModel is the model of an opencode session, or "".
 //
 // The session store is read read-only; a missing file, a changed schema, an
 // absent row — every one of them is an empty string.
+//
+// The path is opened as a `file:` URI: a path carrying a reserved character
+// would otherwise be truncated or reinterpreted by the driver, and the
+// session's model would be read from another file — or from none.
 func openCodeModel(sessionID string) string {
 	if sessionID == "" {
 		return ""
 	}
 	path := openCodeDBPath()
-	if info, err := os.Stat(path); err != nil || info.IsDir() {
+	if !format.IsRegularFile(path) {
 		return ""
 	}
-	db, err := sql.Open("sqlite", "file:"+path+"?mode=ro")
+	db, err := sql.Open("sqlite", fileURI(path)+"?mode=ro")
 	if err != nil {
 		return ""
 	}
@@ -232,16 +262,25 @@ func openCodeModel(sessionID string) string {
 
 // ApplyAdapters runs the enabled adapters and collects what they filled.
 //
-// worktree is the worktree the run happened in. An unknown adapter name is
-// ignored: enabling an adapter this binary does not know must not fail the
-// write.
-func ApplyAdapters(names []string, worktree string) AdapterContext {
+// worktree is the worktree the run happened in; session is the session the
+// row will carry, already resolved by the caller's chain — the explicit
+// flag, then the field's variable, then the adapter's own value. The model
+// is the one of *that* session (SPEC §4: `model` resolves after `session`),
+// so a caller that names a session gets that session's model and not the
+// one of whatever session the environment happened to name.
+//
+// An unknown adapter name is ignored: enabling an adapter this binary does
+// not know must not fail the write.
+func ApplyAdapters(names []string, worktree string, session string) AdapterContext {
 	var context AdapterContext
 	for _, name := range names {
 		switch strings.TrimSpace(name) {
 		case "opencode":
 			context.Harness = "opencode"
-			context.Session = EnvOrEmpty(OpenCodeSessionEnv)
+			if session == "" {
+				session = EnvOrEmpty(OpenCodeSessionEnv)
+			}
+			context.Session = session
 			context.Model = openCodeModel(context.Session)
 		case "t3":
 			context.Project = T3Project(worktree)

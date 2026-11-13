@@ -88,7 +88,13 @@ func filterClause(filters Filters) (string, []any) {
 }
 
 // ReadInvocation reads one invocation row and its problems.
+//
+// A store with no tables yet is an empty log: the id it is asked for cannot
+// exist, so the answer is no row and no error.
 func (s *Store) ReadInvocation(id int64) (*Invocation, error) {
+	if empty, err := s.isEmptyLog(); err != nil || empty {
+		return nil, err
+	}
 	row := s.db.QueryRow(invocationSelect+" WHERE id = ?", id)
 	invocation, err := scanInvocation(row)
 	if err != nil {
@@ -105,13 +111,31 @@ func (s *Store) ReadInvocation(id int64) (*Invocation, error) {
 	return invocation, nil
 }
 
+// isEmptyLog reports whether the store carries no tables at all.
+//
+// A file that is a SQLite database but not a skill-log store is an empty
+// log, not a foreign one: the rows the caller asked for cannot exist in
+// it, and the empty answer is the honest one.
+func (s *Store) isEmptyLog() (bool, error) {
+	has, err := s.hasTables()
+	if err != nil {
+		return false, err
+	}
+	return !has, nil
+}
+
 // Rows reads the invocation rows the filters select, newest first.
 //
 // The ordering is `datetime(ts) DESC, id DESC`: datetime() normalizes each
 // row's ISO stamp (rows carry their writer's own UTC offset) so the rows sort
 // by when the run happened, not by when it was written. A limit of zero means
 // every matching row.
+//
+// A store with no tables yet is an empty log: no rows and no error.
 func (s *Store) Rows(filters Filters) ([]Invocation, error) {
+	if empty, err := s.isEmptyLog(); err != nil || empty {
+		return nil, err
+	}
 	clause, marks := filterClause(filters)
 	query := invocationSelect + clause + " ORDER BY datetime(ts) DESC, id DESC"
 	if filters.Limit > 0 {
@@ -219,9 +243,14 @@ func IsGroupColumn(name string) bool {
 // JOIN produces one line per problem, so COUNT(*) would count problems. The
 // join rather than a sub-query keeps a run with no problems visible, with
 // zeroes.
+//
+// A store with no tables yet is an empty log: no groups and no error.
 func (s *Store) GroupCounts(column, skill string) ([]GroupCount, error) {
 	if !IsGroupColumn(column) {
 		return nil, errNotGroupable(column)
+	}
+	if empty, err := s.isEmptyLog(); err != nil || empty {
+		return nil, err
 	}
 	query := "SELECT i." + column + " AS group_key," +
 		" COUNT(DISTINCT i.id)," +
@@ -259,35 +288,3 @@ type notGroupable string
 
 func (e notGroupable) Error() string      { return "not a groupable column: " + string(e) }
 func errNotGroupable(column string) error { return notGroupable(column) }
-
-// ResolutionRow is the columns a merged scan needs from one invocation row.
-// Logged is the row's timestamp in epoch seconds, read by SQLite so the
-// comparison against a commit time needs no second ISO parser.
-type ResolutionRow struct {
-	ID      int64
-	Machine string
-	Fix     string
-	Logged  int64
-}
-
-// ResolutionRows reads every row's id, machine, fix and logged-at instant.
-func (s *Store) ResolutionRows() ([]ResolutionRow, error) {
-	rows, err := s.db.Query(
-		"SELECT id, machine, fix," +
-			" COALESCE(CAST(strftime('%s', ts) AS INTEGER), 0)" +
-			" FROM invocations",
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []ResolutionRow
-	for rows.Next() {
-		var item ResolutionRow
-		if err := rows.Scan(&item.ID, &item.Machine, &item.Fix, &item.Logged); err != nil {
-			return nil, err
-		}
-		out = append(out, item)
-	}
-	return out, rows.Err()
-}

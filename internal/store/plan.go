@@ -2,8 +2,6 @@ package store
 
 import (
 	"database/sql"
-	"os"
-	"time"
 
 	"github.com/Dahep/skill-log/internal/marker"
 	"github.com/Dahep/skill-log/internal/settings"
@@ -51,6 +49,16 @@ type MergedResult struct {
 	Stamped   []Stamped
 	Unchanged []string
 	Skipped   []MergedSkip
+}
+
+// ResolutionRow is the columns a merged scan needs from one invocation row.
+// Logged is the row's timestamp in epoch seconds, read by SQLite so the
+// comparison against a commit time needs no second ISO parser.
+type ResolutionRow struct {
+	ID      int64
+	Machine string
+	Fix     string
+	Logged  int64
 }
 
 func mergedRowIndex(rows []ResolutionRow, machine string, id int64, localHost string) int {
@@ -144,7 +152,7 @@ func ResolveMergedRows(path string, located []Located, localHost string, dryRun 
 		// not create one.
 		return empty, nil, nil
 	}
-	opened, refusal, err := OpenRead(path)
+	opened, refusal, err := Read(path)
 	if err != nil || refusal != nil {
 		return empty, refusal, err
 	}
@@ -152,12 +160,14 @@ func ResolveMergedRows(path string, located []Located, localHost string, dryRun 
 		return empty, nil, nil
 	}
 	defer opened.Close()
-	ours, err := opened.IsOurs()
+	// A store with no tables yet is an empty log: no row carries the
+	// markers, and every one of them is an unknown id.
+	emptyLog, err := opened.isEmptyLog()
 	if err != nil {
 		return empty, nil, err
 	}
 	var rows []ResolutionRow
-	if ours {
+	if !emptyLog {
 		rows, err = readResolutionRows(opened.db)
 		if err != nil {
 			return empty, nil, err
@@ -168,24 +178,13 @@ func ResolveMergedRows(path string, located []Located, localHost string, dryRun 
 		return preview, nil, nil
 	}
 
-	deadline := time.Now().Add(time.Duration(writeBudgetSeconds * float64(time.Second)))
-	for {
-		result, refusal, err := mergedWriteAttempt(path, located, localHost)
-		if err == nil {
-			return result, refusal, nil
-		}
-		if !isBusy(err) {
-			return empty, nil, err
-		}
-		remaining := time.Until(deadline)
-		if remaining <= 0 {
-			return empty, nil, err
-		}
-		if remaining > writeRetrySleep {
-			remaining = writeRetrySleep
-		}
-		time.Sleep(remaining)
+	result, refusal, err := withRetry(func() (MergedResult, *Refusal, error) {
+		return mergedWriteAttempt(path, located, localHost)
+	})
+	if err != nil || refusal != nil {
+		return empty, refusal, err
 	}
+	return result, nil, nil
 }
 
 func mergedWriteAttempt(path string, located []Located, localHost string) (MergedResult, *Refusal, error) {
@@ -193,7 +192,7 @@ func mergedWriteAttempt(path string, located []Located, localHost string) (Merge
 	if !isFile(path) {
 		return empty, nil, nil
 	}
-	opened, refusal, err := OpenWrite(path)
+	opened, refusal, err := Create(path)
 	if err != nil || refusal != nil {
 		return empty, refusal, err
 	}
@@ -237,10 +236,4 @@ func mergedWriteAttempt(path string, located []Located, localHost string) (Merge
 	}
 	committed = true
 	return resolved, nil, nil
-}
-
-// FileExists is the small existence check the merged entry point needs.
-func FileExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
 }

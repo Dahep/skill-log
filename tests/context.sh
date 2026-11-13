@@ -215,6 +215,8 @@ sqlite3 "$OC_HOME/.local/share/opencode/opencode.db" <<'SQL'
 CREATE TABLE session_v2 (id TEXT PRIMARY KEY, model TEXT);
 INSERT INTO session_v2 (id, model) VALUES
     ('ses_test', '{"id":"kimi-k3","providerID":"opencode"}'),
+    ('ses_flag', '{"id":"flag-model","providerID":"flag-provider"}'),
+    ('ses_other', '{"id":"other-model","providerID":"other-provider"}'),
     ('ses_nested', '{"meta":{"id":"NESTED","providerID":"nested"},"id":"real","providerID":"p"}'),
     ('ses_bare', 'kimi-k3'),
     ('ses_escaped', '{"id":"\u0061","providerID":"p"}');
@@ -234,6 +236,33 @@ check "the opencode adapter fills the harness" "$(json_field "$OUT" harness)" "o
 check "the opencode adapter fills the session" "$(json_field "$OUT" session)" "ses_test"
 check "the opencode adapter renders the model as provider/id" \
     "$(json_field "$OUT" model)" "opencode/kimi-k3"
+
+# The model resolves after the session (SPEC §4). A session named by the
+# flag is the session the row carries, so the model is that session's
+# model — and not the model of whatever session the environment names.
+OUT="$(HOME="$OC_HOME" OPENCODE_SESSION_ID=ses_other SKILL_LOG_ADAPTERS=opencode \
+    "$BIN" add --skill adapters --dry-run --json --session ses_flag)"
+check "a named session is the session the row carries" \
+    "$(json_field "$OUT" session)" "ses_flag"
+check "the model is the named session's model" \
+    "$(json_field "$OUT" model)" "flag-provider/flag-model"
+
+# The variable names the session too, and the model follows it.
+OUT="$(HOME="$OC_HOME" OPENCODE_SESSION_ID=ses_other SKILL_LOG_SESSION=ses_flag \
+    SKILL_LOG_ADAPTERS=opencode \
+    "$BIN" add --skill adapters --dry-run --json)"
+check "the variable names the session" "$(json_field "$OUT" session)" "ses_flag"
+check "the model is the variable's session's model" \
+    "$(json_field "$OUT" model)" "flag-provider/flag-model"
+
+# A session the environment names and the flag does not is the session
+# the row carries, and its model is the one that comes with it.
+OUT="$(HOME="$OC_HOME" OPENCODE_SESSION_ID=ses_other SKILL_LOG_ADAPTERS=opencode \
+    "$BIN" add --skill adapters --dry-run --json)"
+check "the environment names the session when nothing else does" \
+    "$(json_field "$OUT" session)" "ses_other"
+check "the model is the environment's session's model" \
+    "$(json_field "$OUT" model)" "other-provider/other-model"
 
 # The stored model is a JSON object. The id is the top-level one: a
 # nested object carrying the same key must not answer for it.

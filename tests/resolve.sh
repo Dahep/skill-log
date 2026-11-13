@@ -244,6 +244,69 @@ check "concurrent resolves agree on one timestamp" \
         | python3 -c 'import json,sys; print(len({json.loads(l)["resolved_at"] for l in sys.stdin if l.strip()}))')" \
     "1"
 
+# ---------------------------------------------------------- a locked store
+#
+# A lock is a lock on the write path too. The store classifies the
+# failure and the CLI renders it, so the answer is the store's own named
+# refusal and never a SQLite message (SPEC §3).
+LOCKDIR="$SCRATCH/locked"
+mkdir -p "$LOCKDIR"
+LOCK_DB="$LOCKDIR/skills.db"
+run add --skill lock-holder --db "$LOCK_DB"
+check "the locked fixture is written" "$STATUS" "0"
+
+# A second process holds the write lock for longer than the budget.
+hold_lock "$LOCK_DB" "$SCRATCH/lock-ready" 12 &
+HOLDER=$!
+wait_for "$SCRATCH/lock-ready"
+run resolve --id 1 --fix a1b2c3d --db "$LOCK_DB"
+check "a resolve behind a lock exits 1" "$STATUS" "1"
+check_contains "a resolve behind a lock is named as a locked store" \
+    "$ERR" "locked store"
+check_absent "a resolve behind a lock names no SQLite message" \
+    "$ERR" "database is locked"
+check_one_line "the locked store's refusal is one line" "$ERR"
+kill "$HOLDER" 2>/dev/null
+wait "$HOLDER" 2>/dev/null
+
+# A lock that is released inside the budget is waited for, not refused.
+# The write path retries a locked store the way it retries a busy
+# statement: the lock costs milliseconds, and the command must not fail
+# over it.
+#
+# The hold is released by the case, not by a clock: the write starts
+# while the lock is held, and the lock goes only once the write is
+# waiting for it. The lock has to outlive SQLite's own two-second busy
+# timeout — otherwise the driver waits it out and the store's own retry
+# is never reached.
+SHORT_LOCK="$SCRATCH/short-lock"
+mkdir -p "$SHORT_LOCK"
+SHORT_DB="$SHORT_LOCK/skills.db"
+run add --skill short-lock --db "$SHORT_DB"
+check "the short-lock fixture is written" "$STATUS" "0"
+hold_lock_until "$SHORT_DB" "$SCRATCH/short-lock-ready" "$SCRATCH/short-lock-go" &
+SHORT_HOLDER=$!
+wait_for "$SCRATCH/short-lock-ready"
+# The write runs in the background: the lock goes only once the write is
+# waiting for it, so the case's window is exact.
+"$BIN" resolve --id 1 --fix a1b2c3d --db "$SHORT_DB" \
+    >"$SCRATCH/short-lock.out" 2>"$SCRATCH/short-lock.err" &
+SHORT_WRITE=$!
+sleep 3
+: >"$SCRATCH/short-lock-go"
+wait "$SHORT_WRITE"
+SHORT_STATUS=$?
+SHORT_OUT="$(cat "$SCRATCH/short-lock.out")"
+SHORT_ERR="$(cat "$SCRATCH/short-lock.err")"
+wait "$SHORT_HOLDER" 2>/dev/null
+check "a resolve behind a short lock exits 0" "$SHORT_STATUS" "0"
+check_contains "a resolve behind a short lock reports the stamp" \
+    "$SHORT_OUT" "resolved: a1b2c3d"
+check_absent "a resolve behind a short lock reports no failure" \
+    "$SHORT_ERR" "locked store"
+check "the short lock's row is stamped" \
+    "$(sqlite3 "$SHORT_DB" "select fix from invocations where id = 1")" "a1b2c3d"
+
 # ------------------------------------------------------------------ help
 
 run resolve --help

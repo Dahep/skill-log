@@ -204,12 +204,32 @@ func handleAdd(args []string) Outcome {
 		detectedWorktree,
 	)
 
-	adapter := settings.ApplyAdapters(settings.EnabledAdapters(options.adapters), worktree)
+	// The session resolves before the adapter runs: the model is the model
+	// of the session the row carries, so the adapter must be asked about
+	// that session and not about the one the environment happens to name
+	// (SPEC §4).
+	//
+	// The adapter's own session value is the harness's, and it is only
+	// consulted when the adapter runs: an adapter that is not enabled fills
+	// nothing.
+	adapters := settings.EnabledAdapters(options.adapters)
+	adapterSession := ""
+	if settings.HasAdapter(adapters, "opencode") {
+		adapterSession = settings.EnvOrEmpty(settings.OpenCodeSessionEnv)
+	}
+	session := resolveField(
+		options.session,
+		settings.EnvOrEmpty("SKILL_LOG_SESSION"),
+		adapterSession,
+		"",
+	)
+
+	adapter := settings.ApplyAdapters(adapters, worktree, session)
 
 	var row store.Invocation
 	row.Skill = strings.TrimSpace(options.skill)
 	row.Harness = resolveField(options.harness, settings.EnvOrEmpty("SKILL_LOG_HARNESS"), adapter.Harness, "")
-	row.Session = resolveField(options.session, settings.EnvOrEmpty("SKILL_LOG_SESSION"), adapter.Session, "")
+	row.Session = session
 	// An adapter may not set the parent: it names a run this tool did not
 	// spawn, and no adapter can know it.
 	row.Parent = resolveField(options.parent, settings.EnvOrEmpty("SKILL_LOG_PARENT"), "", "")
@@ -255,11 +275,7 @@ func handleAdd(args []string) Outcome {
 	}
 
 	result, err := store.WriteInvocation(path, &row, clean)
-	if err != nil {
-		return Fail("cannot use the store: "+path+": "+err.Error(), ExitFailure)
-	}
-	if result.Refusal != nil {
-		failure := refusalFailure(result.Refusal)
+	if failure := writeOutcome(path, result.Refusal, err); failure != nil {
 		return Fail(failure.Message, failure.Code)
 	}
 

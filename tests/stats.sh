@@ -234,6 +234,21 @@ check "a skill with no rows has an empty JSON stream" "$OUT" ""
 
 # ------------------------------------------------------------ empty store
 
+# A file that exists but was never initialised: no tables at all. It is
+# an empty log, not a foreign store, and the read answers with the empty
+# message.
+: >"$SCRATCH/untouched.db"
+run stats --db "$SCRATCH/untouched.db"
+check "an untouched empty file exits 0" "$STATUS" "0"
+check "an untouched empty file says the log is empty" "$OUT" \
+    "no invocations logged yet"
+check "an untouched empty file stays empty" \
+    "$(wc -c <"$SCRATCH/untouched.db" | tr -d ' ')" "0"
+"$BIN" stats --db "$SCRATCH/untouched.db" --json \
+    >"$SCRATCH/untouched.json" 2>/dev/null
+check "an untouched empty file has an empty JSON stream" \
+    "$(wc -c <"$SCRATCH/untouched.json" | tr -d ' ')" "0"
+
 # A store of this schema with no rows is the same answer as an absent one.
 run add --skill gone --db "$SCRATCH/blank.db"
 sqlite3 "$SCRATCH/blank.db" 'delete from problems; delete from invocations'

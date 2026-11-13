@@ -438,6 +438,30 @@ check "a missing store exits 1" "$STATUS" "1"
 check "a missing store says to add first" "$ERR" \
     "skill-log: no store at $SCRATCH/none.db (run add first)"
 
+# ----------------------------------------------------- reserved characters
+#
+# A store's path is a path, not a URI: a `?` or a `#` in the name must
+# not end the file name or start a query. The report reads the store the
+# caller named, so a store under such a path holds the same rows a
+# report would name.
+RESERVED="$SCRATCH/reserved"
+mkdir -p "$RESERVED"
+# The slug is a file name, so it cannot carry the reserved characters the
+# store's path carries; the two cases get one slug each.
+for pair in 'skills?db:query' 'skills#db:hash'; do
+    name="${pair%%:*}"
+    slug="${pair##*:}"
+    RESERVED_DB="$RESERVED/$name"
+    run add --skill reserved --machine boxA --db "$RESERVED_DB"
+    check "a store named $name is written" "$STATUS" "0"
+    run report --id 1 --db "$RESERVED_DB" --slug "reserved-$slug"
+    check "a report over the store named $name exits 0" "$STATUS" "0"
+    check "a report over the store named $name names the marker" \
+        "$OUT" "reported 1 marker in .skill-log/reports/reserved-$slug.md"
+    check "the report over the store named $name holds the marker" \
+        "$(cat "$REPO/.skill-log/reports/reserved-$slug.md")" "boxA#1"
+done
+
 # ------------------------------------------------------- reads never write
 
 BEFORE_SUM="$(md5sum <"$REPORT")"

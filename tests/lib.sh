@@ -221,17 +221,60 @@ db.close()
 PY
 }
 
-# wait_for <file>: wait for a readiness file, up to ten seconds.
+# hold_lock_until <db> <ready-file> <release-file>: a second process that
+# holds the store's write lock until the release file appears.
+#
+# A timer is a race: the holder's own start-up time eats into the window
+# the case means, and a slow machine can hold the lock for less time than
+# the case needs. A release file makes the window exact — the lock is
+# there until the case says it may go.
+hold_lock_until() {
+    python3 - "$1" "$2" "$3" <<'PY'
+import os
+import sqlite3
+import sys
+import time
+
+db = sqlite3.connect(sys.argv[1], timeout=30)
+db.execute("BEGIN IMMEDIATE")
+db.execute(
+    "INSERT INTO invocations (ts, skill, machine) VALUES (?, ?, ?)",
+    ("2026-01-01T00:00:00+00:00", "lock-holder", "boxA"),
+)
+with open(sys.argv[2], "w", encoding="utf-8") as handle:
+    handle.write("ready")
+# The hold ends when the release file appears, and after a minute anyway,
+# so a case that never releases it does not leave the holder running.
+deadline = time.time() + 60
+while not os.path.exists(sys.argv[3]) and time.time() < deadline:
+    time.sleep(0.05)
+db.rollback()
+db.close()
+PY
+}
+
+# wait_for <file>: wait for a readiness file, up to thirty seconds.
 #
 # The handshake a case needs when it depends on another process being
 # ready: the writer says it is, and the case waits for that, instead of
 # sleeping and hoping.
+#
+# The wait fails the case when the handshake never arrives. A case that
+# proceeded without its lock would prove nothing — and would fail later,
+# somewhere else, for a reason that has nothing to do with the lock. The
+# thirty seconds are the holder's own timeout, so a slow machine waits
+# for the holder rather than for the clock.
 wait_for() {
     local n=0
-    while [ ! -f "$1" ] && [ "$n" -lt 100 ]; do
+    while [ ! -f "$1" ] && [ "$n" -lt 300 ]; do
         sleep 0.1
         n=$((n + 1))
     done
+    if [ ! -f "$1" ]; then
+        fail "$1 never arrived: the case cannot proceed"
+        return 1
+    fi
+    return 0
 }
 
 # tally: the report line and the suite's exit status.

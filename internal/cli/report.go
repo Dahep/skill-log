@@ -2,7 +2,6 @@ package cli
 
 import (
 	"errors"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -502,7 +501,7 @@ func checkOutcome(path, relative, storePath string, artifact, asJSON bool) Outco
 			trailerKey + " trailer")
 	}
 
-	if !isRegularFile(path) {
+	if !format.IsRegularFile(path) {
 		if asJSON {
 			return OK(`{"path":` + format.JSONString(relative) +
 				`,"markers":[],"problems":[],"warnings":[]}`)
@@ -513,7 +512,7 @@ func checkOutcome(path, relative, storePath string, artifact, asJSON bool) Outco
 	var opened *store.Store
 	haveStore := false
 	var storeWarning []string
-	store, refusal, err := store.OpenRead(storePath)
+	store, refusal, err := store.Read(storePath)
 	if err != nil {
 		storeWarning = append(storeWarning, "store unavailable: "+err.Error())
 	} else if refusal != nil {
@@ -522,14 +521,10 @@ func checkOutcome(path, relative, storePath string, artifact, asJSON bool) Outco
 	} else if store != nil {
 		opened = store
 		defer opened.Close()
-		// A table-less (or unreadable) store still lets the syntax be
-		// checked: the marker lookup is what it cannot answer.
-		ours, err := opened.IsOurs()
-		if err != nil {
-			storeWarning = append(storeWarning, "store unavailable: "+err.Error())
-		} else {
-			haveStore = ours
-		}
+		// A store with no tables yet is an empty log: the marker lookup
+		// answers "no such row", which is the same answer a table-less store
+		// has always given here — the syntax is still checked.
+		haveStore = true
 	}
 
 	text, err := format.ReadText(path)
@@ -580,18 +575,6 @@ func checkOutcome(path, relative, storePath string, artifact, asJSON bool) Outco
 	return OKNotes(relative+" is valid ("+markerCount(len(result.markers))+")", notes)
 }
 
-// isRegularFile reports whether path is a file.
-func isRegularFile(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
-}
-
-// isDirectory reports whether path is a directory.
-func isDirectory(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && info.IsDir()
-}
-
 func handleReport(args []string) Outcome {
 	options, err := parseReportOptions(args)
 	if err != nil {
@@ -633,22 +616,16 @@ func handleReport(args []string) Outcome {
 
 	relative := reportDir + "/" + slug + ".md"
 	path := filepath.Join(root, filepath.FromSlash(relative))
-	artifact := isDirectory(filepath.Join(root, filepath.FromSlash(reportDir)))
+	artifact := format.IsDir(filepath.Join(root, filepath.FromSlash(reportDir)))
 	storePath := settings.ResolveDB(options.db)
 
 	if options.check {
 		return checkOutcome(path, relative, storePath, artifact, options.json)
 	}
 
-	opened, refusal, err := store.OpenRead(storePath)
-	if err != nil {
-		return Fail(
-			"cannot read the store: "+storePath+": "+err.Error(),
-			ExitFailure,
-		)
-	}
-	if refusal != nil {
-		failure := refusalFailure(refusal)
+	opened, _, failure := openStore(storePath, store.PolicyStrict,
+		"no store at "+storePath+" (run add first)")
+	if failure != nil {
 		return Fail(failure.Message, failure.Code)
 	}
 	if opened == nil {
@@ -659,32 +636,12 @@ func handleReport(args []string) Outcome {
 	defer opened.Close()
 
 	var selection reportSelection
-	tableless := false
-	ours, err := opened.IsOurs()
+	// A store with no tables yet is an empty log: nothing matches, and
+	// every named id is a missing id.
+	selection, err = selectReportMarkers(opened, options)
 	if err != nil {
 		failure := readFailure(storePath, err)
 		return Fail(failure.Message, failure.Code)
-	}
-	if ours {
-		// A store with no tables yet is an empty log: nothing matches,
-		// and every named id is a missing id.
-		selection, err = selectReportMarkers(opened, options)
-		if err != nil {
-			failure := readFailure(storePath, err)
-			return Fail(failure.Message, failure.Code)
-		}
-	} else {
-		tableless = true
-	}
-
-	if tableless && len(options.ids) > 0 {
-		var wanted []int64
-		for _, id := range options.ids {
-			if !containsInt(wanted, id) {
-				wanted = append(wanted, id)
-			}
-		}
-		selection.missing = wanted
 	}
 
 	if len(selection.missing) > 0 {
@@ -718,7 +675,7 @@ func handleReport(args []string) Outcome {
 	}
 
 	var existing existingReport
-	if isRegularFile(path) {
+	if format.IsRegularFile(path) {
 		text, err := format.ReadText(path)
 		if err != nil {
 			return Fail(

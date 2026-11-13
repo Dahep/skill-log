@@ -61,6 +61,17 @@ fi
 check "the store is WAL" "$(sqlite3 "$DB" 'pragma journal_mode')" "wal"
 check "the schema version is stamped" "$(sqlite3 "$DB" 'pragma user_version')" "1"
 check "one invocation row" "$(sqlite3 "$DB" 'select count(*) from invocations')" "1"
+
+# Every text column of the invocations table carries a default, so a row
+# that leaves one out gets the empty string rather than NULL (SPEC §3).
+# The assertion reads the schema itself, not a row: a default is a
+# property of the column.
+DEFAULTS="$(sqlite3 "$DB" \
+    "select group_concat(name || ':' || ifnull(dflt_value, 'NULL'), '|')
+        from pragma_table_info('invocations')
+        where type = 'TEXT'")"
+check "every text column of invocations has a default" "$DEFAULTS" \
+    "ts:''|skill:''|harness:''|session:''|parent:''|model:''|repo:''|worktree:''|project:''|t3_thread:''|machine:''|fix:''|resolved_at:''"
 check "the row carries a local ISO 8601 stamp with an offset" \
     "$(sqlite3 "$DB" 'select ts from invocations order by id limit 1' \
         | grep -cE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[+-][0-9]{2}:[0-9]{2}$')" "1"
@@ -248,6 +259,39 @@ check "a store with the wrong problems table is foreign" \
 check "a store with the wrong problems table is not written" \
     "$(md5sum <"$SCRATCH/wrong-problems.db")" "$BEFORE_SUM"
 
+# A store written before the text columns carried a default still opens:
+# the schema check is column-based, so a store whose columns are the
+# right ones is this schema even when its defaults are not.
+sqlite3 "$SCRATCH/no-defaults.db" <<'SQL'
+CREATE TABLE invocations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts TEXT NOT NULL,
+    skill TEXT NOT NULL,
+    harness TEXT NOT NULL DEFAULT '',
+    session TEXT NOT NULL DEFAULT '',
+    parent TEXT NOT NULL DEFAULT '',
+    model TEXT NOT NULL DEFAULT '',
+    repo TEXT NOT NULL DEFAULT '',
+    worktree TEXT NOT NULL DEFAULT '',
+    project TEXT NOT NULL DEFAULT '',
+    t3_thread TEXT NOT NULL DEFAULT '',
+    machine TEXT NOT NULL DEFAULT '',
+    fix TEXT NOT NULL DEFAULT '',
+    resolved_at TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE problems (
+    invocation_id INTEGER NOT NULL REFERENCES invocations(id) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL,
+    problem TEXT NOT NULL,
+    PRIMARY KEY (invocation_id, ordinal)
+);
+PRAGMA user_version=1;
+SQL
+run add --skill x --db "$SCRATCH/no-defaults.db"
+check "a store without the column defaults still opens" "$STATUS" "0"
+check "the row landed in the store without the column defaults" \
+    "$(sqlite3 "$SCRATCH/no-defaults.db" 'select count(*) from invocations')" "1"
+
 # The Python-era store: the two tables exist, the columns are the old ones.
 # It is a skill-log store and it is not this schema, so it is named as
 # older and left exactly as found (ADR-0002).
@@ -382,6 +426,77 @@ check_contains "a write behind a lock is named as a locked store" \
 check_one_line "the locked store's refusal is one line" "$ERR"
 kill "$HOLDER" 2>/dev/null
 wait "$HOLDER" 2>/dev/null
+
+# A lock that is released inside the budget is waited for, not refused.
+# The write path retries a locked store the way it retries a busy
+# statement: the lock costs milliseconds, and the command must not fail
+# over it.
+#
+# The hold is released by the case, not by a clock: the write starts
+# while the lock is held, and the lock goes only once the write is
+# waiting for it. The lock has to outlive SQLite's own two-second busy
+# timeout — otherwise the driver waits it out and the store's own retry
+# is never reached.
+SHORT_LOCK="$SCRATCH/short-lock"
+mkdir -p "$SHORT_LOCK"
+SHORT_DB="$SHORT_LOCK/skills.db"
+run add --skill short-lock --db "$SHORT_DB"
+check "the short-lock fixture is written" "$STATUS" "0"
+hold_lock_until "$SHORT_DB" "$SCRATCH/short-lock-ready" "$SCRATCH/short-lock-go" &
+SHORT_HOLDER=$!
+wait_for "$SCRATCH/short-lock-ready"
+# The write runs in the background: the lock goes only once the write is
+# waiting for it, so the case's window is exact.
+env -u XDG_STATE_HOME -u SKILL_LOG_DB HOME="$HOME_DIR" \
+    "$BIN" add --skill behind-a-short-lock --db "$SHORT_DB" \
+    >"$SCRATCH/short-lock.out" 2>"$SCRATCH/short-lock.err" &
+SHORT_WRITE=$!
+sleep 3
+: >"$SCRATCH/short-lock-go"
+wait "$SHORT_WRITE"
+SHORT_STATUS=$?
+wait "$SHORT_HOLDER" 2>/dev/null
+check "a write behind a short lock exits 0" "$SHORT_STATUS" "0"
+check "the row behind a short lock landed" \
+    "$(sqlite3 "$SHORT_DB" "select count(*) from invocations where skill = 'behind-a-short-lock'")" "1"
+
+# ------------------------------------------------------ reserved characters
+#
+# A store's path is a path, not a URI. A `?`, a `#` or a `%` in the name
+# must not end the file name or start a query: the file the caller named
+# is the file that is written and the file that is read back.
+#
+# The proof is the round trip: `add` writes, `show` reads the same row
+# back, and the sibling a truncated path would have produced is not
+# created.
+RESERVED="$SCRATCH/reserved"
+mkdir -p "$RESERVED"
+for name in 'skills?db' 'skills#db' 'skills%db'; do
+    RESERVED_DB="$RESERVED/$name"
+    run add --skill reserved --db "$RESERVED_DB"
+    check "a store named $name is written" "$STATUS" "0"
+    if [ -f "$RESERVED_DB" ]; then
+        pass "the store named $name is the file that exists"
+    else
+        fail "the store named $name was not created at that path"
+    fi
+    check "the store named $name carries the row" \
+        "$(sqlite3 "$RESERVED_DB" 'select count(*) from invocations')" "1"
+    run show --db "$RESERVED_DB" --json
+    check "a read of the store named $name exits 0" "$STATUS" "0"
+    check "a read of the store named $name reads the row back" \
+        "$(json_field "$OUT" skill)" "reserved"
+done
+
+# A read must not create the sibling a truncated path would have
+# produced: the `?` in `skills?db` would otherwise have ended the file
+# name at `skills`, and the read would have made a store named `skills`.
+RESERVED_TRUNC="$RESERVED/skills"
+if [ -e "$RESERVED_TRUNC" ]; then
+    fail "a read created the truncated sibling $RESERVED_TRUNC"
+else
+    pass "no read created the truncated sibling of a reserved-character path"
+fi
 
 # ------------------------------------------------------- reads create nothing
 #

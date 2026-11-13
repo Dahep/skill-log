@@ -220,30 +220,20 @@ func handleStats(args []string) Outcome {
 	}
 	path := settings.ResolveDB(options.db)
 
-	opened, refusal, err := store.OpenRead(path)
-	if err != nil {
-		failure := readFailure(path, err)
-		return Fail(failure.Message, failure.Code)
-	}
-	if refusal != nil {
-		failure := refusalFailure(refusal)
+	opened, _, failure := openStore(path, store.PolicyRead, "")
+	if failure != nil {
 		return Fail(failure.Message, failure.Code)
 	}
 
 	var groups []store.GroupCount
 	if opened != nil {
 		defer opened.Close()
-		ours, err := opened.IsOurs()
+		// A store with no tables yet is an empty log: the read answers with
+		// no groups rather than an error.
+		groups, err = opened.GroupCounts(options.by, options.skill)
 		if err != nil {
 			failure := readFailure(path, err)
 			return Fail(failure.Message, failure.Code)
-		}
-		if ours {
-			groups, err = opened.GroupCounts(options.by, options.skill)
-			if err != nil {
-				failure := readFailure(path, err)
-				return Fail(failure.Message, failure.Code)
-			}
 		}
 	}
 
