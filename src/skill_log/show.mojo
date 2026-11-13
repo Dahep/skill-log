@@ -65,8 +65,8 @@ from skill_log.store import (
     open_read,
     read_failure,
     read_invocations,
-    resolve_db,
 )
+from skill_log.settings import resolve_db
 from skill_log.table import join_lines, pad, shorten_home
 from skill_log.text import sanitize
 

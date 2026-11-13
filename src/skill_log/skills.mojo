@@ -46,9 +46,8 @@ copy of someone else's skill and is skipped entirely (SPEC §7); see
 `document.is_vendored`.
 """
 
-from std.os import getenv, listdir, makedirs, remove, rmdir
+from std.os import listdir, makedirs, remove, rmdir
 from std.pathlib import Path
-from std.sys import argv
 
 from skill_log.document import (
     STATE_EDITED,
@@ -64,11 +63,17 @@ from skill_log.document import (
     validate_template,
 )
 from skill_log.errors import EXIT_FAILURE, EXIT_USAGE, Outcome
-from skill_log.files import resolve_path, write_text
+from skill_log.files import write_text
 from skill_log.flags import take_declared_value, takes_value
 from skill_log.hash import fnv1a64_hex
 from skill_log.help import render_verb
 from skill_log.json import JsonObject
+from skill_log.settings import (
+    default_template_dir,
+    resolve_template_dir,
+    resolved_command,
+    xdg_state_dir,
+)
 from skill_log.templates import (
     REVIEW_NAME,
     USAGE_LOG_NAME,
@@ -76,11 +81,6 @@ from skill_log.templates import (
     template_names,
 )
 from skill_log.verb import Verb, find_verb
-
-# The state directory that records the seeded-from hash of each user
-# copy. It is under XDG state — never under the user config dir — so a
-# tool that reads the config dir never trips over it.
-comptime STATE_DIR_NAME = "skill-log"
 
 # The relative path of the seeded-from record inside the state dir. One
 # file per template name, so each copy's provenance is its own.
@@ -116,99 +116,6 @@ comptime TEMPLATE_ACTION_ABSENT = "absent"
 
 
 # --------------------------------------------------------------- paths
-
-
-def xdg_state_dir() -> String:
-    """The skill-log state directory, per the XDG rules.
-
-    `XDG_STATE_HOME` first, else `$HOME/.local/state`. The store lives
-    beside this in `skills.db`; the seeded-from record lives in
-    `seeded-from.txt` here.
-    """
-    var xdg = getenv("XDG_STATE_HOME", "")
-    if xdg != "":
-        return xdg + "/" + STATE_DIR_NAME
-    return getenv("HOME", "") + "/.local/state/" + STATE_DIR_NAME
-
-
-def xdg_config_dir() -> String:
-    """The user template directory, per the XDG rules.
-
-    `XDG_CONFIG_HOME` first, else `$HOME/.config`. The templates are the
-    `skill-log/templates/` directory inside it.
-    """
-    var xdg = getenv("XDG_CONFIG_HOME", "")
-    if xdg == "":
-        xdg = getenv("HOME", "") + "/.config"
-    return xdg + "/" + STATE_DIR_NAME + "/templates"
-
-
-def default_template_dir() -> String:
-    """The user template directory (source 3 in the resolution chain)."""
-    return xdg_config_dir()
-
-
-def resolve_template_dir(flag: String) -> String:
-    """The effective template directory, by the spec's chain.
-
-    `--template-dir` first, then `SKILL_LOG_TEMPLATE_DIR`, then the user
-    config directory. The shipped defaults are a separate fallback: a
-    directory that does not contain a given template name falls through
-    to the shipped default for that name.
-    """
-    if String(flag.strip()) != "":
-        return String(flag.strip())
-    var env = getenv("SKILL_LOG_TEMPLATE_DIR", "")
-    if String(env.strip()) != "":
-        return String(env.strip())
-    return default_template_dir()
-
-
-def find_in_path(program: String) -> String:
-    """`program` as the first executable name on `PATH`, or unchanged.
-
-    The shell's own first-match rule, for when the tool is invoked by
-    bare name: `PATH` is walked left to right and the first entry that
-    holds the file wins. A name `PATH` does not carry comes back as it
-    went in — the caller still resolves it, and still falls back to the
-    given name.
-    """
-    var path = getenv("PATH", "")
-    var start = 0
-    var n = path.byte_length()
-    while start <= n:
-        var cut = path.find(":", start)
-        if cut < 0:
-            cut = n
-        var entry = String(path[byte=start:cut])
-        if entry != "":
-            var candidate = entry + "/" + program
-            if Path(candidate).is_file():
-                return candidate
-        start = cut + 1
-    return program
-
-
-def resolved_command() -> String:
-    """The path of this binary, resolved: `<command>`'s value.
-
-    "The resolved binary path" is one answer no matter how the tool was
-    invoked: a bare name is looked up on `PATH`, and whatever is found —
-    or given — is resolved to one absolute, symlink-free path by
-    `resolve_path`. A name the filesystem cannot resolve (a deleted
-    binary, say) is used as it was given rather than dropped.
-    """
-    var all = argv()
-    var program = String(all[0])
-    if program.find("/") < 0:
-        program = find_in_path(program)
-    var real = resolve_path(program)
-    if real != "":
-        return real
-    return program
-
-
-# ------------------------------------------------------- the seeded-from
 
 
 def seeded_path(name: String) -> String:

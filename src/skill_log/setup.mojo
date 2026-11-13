@@ -81,18 +81,20 @@ from skill_log.report import (
     REPORT_DIR,
     report_dir_readme,
 )
+from skill_log.settings import (
+    expand_home,
+    resolve_db,
+    resolve_template_dir,
+    resolved_command,
+)
 from skill_log.skills import (
     Template,
     load_template,
     moved_default_note,
-    resolve_template_dir,
-    resolved_command,
     validate_effective,
 )
 from skill_log.store import (
-    expand_home,
     open_write,
-    resolve_db,
     verify,
     write_failure,
 )

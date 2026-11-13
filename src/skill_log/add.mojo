@@ -39,8 +39,9 @@ from skill_log.detect import detect_repo, detect_worktree, env_or_empty
 from skill_log.errors import EXIT_FAILURE, EXIT_USAGE, Outcome
 from skill_log.flags import take_declared_value
 from skill_log.render import render_row_json
+from skill_log.settings import resolve_db
 from skill_log.stdin import read_stdin_line, stdin_is_tty
-from skill_log.store import Invocation, WriteResult, resolve_db, write_invocation
+from skill_log.store import Invocation, WriteResult, write_invocation
 from skill_log.text import sanitize
 
 

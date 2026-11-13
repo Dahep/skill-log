@@ -74,8 +74,8 @@ from skill_log.store import (
     read_failure,
     read_invocation,
     read_invocations,
-    resolve_db,
 )
+from skill_log.settings import resolve_db
 from skill_log.text import prefixed, sanitize
 
 # The report directory, relative to the checkout's root. Its presence is

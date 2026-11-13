@@ -32,7 +32,8 @@ from skill_log.errors import EXIT_FAILURE, EXIT_USAGE, Outcome
 from skill_log.flags import parse_positive, take_declared_value
 from skill_log.json import JsonObject
 from skill_log.markers import marker_text
-from skill_log.store import ResolvedRow, resolve_db, resolve_row
+from skill_log.settings import resolve_db
+from skill_log.store import ResolvedRow, resolve_row
 from skill_log.text import sanitize
 
 

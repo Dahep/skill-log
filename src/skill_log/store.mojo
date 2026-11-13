@@ -47,7 +47,7 @@ the lock outlives it, and then the failure is named as the lock it was.
 """
 
 from std.ffi import OwnedDLHandle, RTLD
-from std.os import getenv, makedirs
+from std.os import makedirs
 from std.pathlib import Path
 from std.time import monotonic, sleep
 
@@ -57,6 +57,7 @@ from skill_log.errors import Failure, operational_failure
 from skill_log.ffi import dl_sym
 from skill_log.markers import marker_text
 from skill_log.opendb import read_only_database
+from skill_log.settings import expand_home, resolve_db
 from skill_log.text import sanitize
 
 # The schema version this binary writes and understands. A store stamped
@@ -218,50 +219,6 @@ comptime READ_BUSY_TIMEOUT = 5000
 comptime WRITE_BUSY_TIMEOUT = WRITE_CONNECT_TIMEOUT * 1000
 
 # --------------------------------------------------------------- paths
-
-
-def expand_home(path: String) -> String:
-    """Expand a leading `~` to the user's home.
-
-    `~` alone is the home directory; `~/x` is `x` inside it. A path that
-    does not start with `~` is returned unchanged.
-    """
-    if not path.startswith("~"):
-        return path
-    var home = getenv("HOME", "")
-    if home == "":
-        return path
-    if path == "~":
-        return home
-    if path.startswith("~/"):
-        return home + String(path[byte=1:])
-    return path
-
-
-def default_db() -> String:
-    """The store path when nothing overrides it.
-
-    `XDG_STATE_HOME` wins; `HOME/.local/state` is the fallback. The
-    directory is never created here: a read must not change the machine.
-    """
-    var xdg = getenv("XDG_STATE_HOME", "")
-    var state = xdg
-    if state == "":
-        state = getenv("HOME", "") + "/.local/state"
-    return state + "/skill-log/skills.db"
-
-def resolve_db(flag: String) -> String:
-    """The store path: `--db` first, then `SKILL_LOG_DB`, then the default.
-
-    An empty `--db` means the flag was not given, so the environment
-    variable gets its turn.
-    """
-    if flag != "":
-        return expand_home(flag)
-    var env = getenv("SKILL_LOG_DB", "")
-    if env != "":
-        return expand_home(env)
-    return default_db()
 
 
 def parent_dir(path: String) -> String:

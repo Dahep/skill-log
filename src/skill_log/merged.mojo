@@ -54,12 +54,12 @@ from skill_log.json import JsonObject
 from skill_log.markers import parse_marker
 from skill_log.report import REPORT_DIR, TRAILER_KEY
 from skill_log.store import (
-    resolve_db,
     resolve_merged_rows,
     MergedResult,
     MergedSkip,
     Located,
 )
+from skill_log.settings import resolve_db
 from skill_log.text import prefixed, sanitize
 
 # A field separator for the git log records, and the record separator
