@@ -303,20 +303,42 @@ def strip_path(message: String, path: String) -> String:
     the taxonomy uses. The classification is made on what the binding
     appended *after* the path, never on the path itself.
 
-    The path is removed wherever it appears, and the remainder keeps its
-    order, so the classification sees only the engine's own wording.
+    Only a *recognized filename field* is removed: the path inside the
+    binding's own quoting — `sqlite3_open('<path>')` — and the path
+    SQLite names after a colon — `unable to open database: <path>`. A
+    path that happens to be a word of the vocabulary is left alone,
+    because removing it would take the engine's own wording with it: a
+    store named `locked` would turn "database is locked" into "database
+    is ", and the write path would stop recognising a lock it has to
+    retry.
+
+    Everything else keeps its order, so the classification sees the
+    engine's own wording.
     """
     if path == "":
         return message
-    var at = message.find(path)
+    var out = strip_field(message, "'" + path + "'")
+    return strip_field(out, ": " + path)
+
+
+def strip_field(message: String, field: String) -> String:
+    """`message` with every occurrence of `field` removed.
+
+    The field is a delimited one — the binding's own quoting of a
+    filename, or the separator in front of one — so what is removed is a
+    filename, not a word.
+    """
+    if field == "":
+        return message
+    var at = message.find(field)
     if at < 0:
         return message
     var out = String("")
     var start = 0
     while at >= 0:
         out += String(message[byte=start:at])
-        start = at + path.byte_length()
-        at = message.find(path, start)
+        start = at + field.byte_length()
+        at = message.find(field, start)
     out += String(message[byte=start:])
     return out
 

@@ -503,6 +503,84 @@ check_one_line "the locked store's refusal is one line" "$ERR"
 kill "$HOLDER" 2>/dev/null
 wait "$HOLDER" 2>/dev/null
 
+# ------------------------------------------- a path that names the vocabulary
+#
+# The classification is made on what the engine said, never on the path
+# the caller named. So a path that *is* a word of the vocabulary must not
+# change the answer — and the path must not be able to erase the engine's
+# wording either, which is what the strip is for.
+#
+# Two facts are at stake: a path named `locked` must still retry a held
+# lock (the engine's "database is locked" must survive the strip), and a
+# path named `malformed` must still be damaged when the file really is
+# corrupt (the engine's "database disk image is malformed" must survive
+# the strip too).
+VOCAB_DIR="$SCRATCH/vocabulary"
+rm -rf "$VOCAB_DIR"
+mkdir -p "$VOCAB_DIR"
+
+# A relative path named `locked`: the engine's wording carries the word
+# "locked" in "database is locked", and the strip must not take it.
+(
+    cd "$VOCAB_DIR" || exit 1
+    "$BIN" add --skill lock-holder --db locked >/dev/null 2>&1
+)
+# A second process holds the write lock for longer than the connection's
+# busy timeout but inside the write budget, so the bounded retry has to
+# carry the write past it.
+hold_lock "$VOCAB_DIR/locked" "$SCRATCH/vocab-lock-ready" 3 &
+HOLDER=$!
+wait_for "$SCRATCH/vocab-lock-ready"
+(
+    cd "$VOCAB_DIR" || exit 1
+    "$BIN" add --skill after-the-lock --db locked >/dev/null 2>&1
+)
+VOCAB_STATUS=$?
+wait "$HOLDER" 2>/dev/null
+check "a store path named 'locked' retries the lock" "$VOCAB_STATUS" "0"
+check "the write behind the lock landed" \
+    "$(sqlite3 "$VOCAB_DIR/locked" "SELECT COUNT(*) FROM invocations WHERE skill = 'after-the-lock'")" "1"
+
+# A path named `malformed` that really holds a corrupt file: the
+# corruption must be reported as damage, not as the generic failure.
+# The path is relative, so the store's own strip sees the word
+# "malformed" inside the engine's "database disk image is malformed".
+python3 - "$VOCAB_DIR/malformed" <<'PY'
+import sqlite3
+import sys
+
+db = sqlite3.connect(sys.argv[1])
+db.execute("CREATE TABLE t (x)")
+db.commit()
+db.close()
+with open(sys.argv[1], "r+b") as handle:
+    handle.seek(100)
+    handle.write(b"\xff" * 800)
+PY
+(
+    cd "$VOCAB_DIR" || exit 1
+    "$BIN" add --skill never-written --db malformed >/dev/null 2>"$SCRATCH/stderr"
+)
+STATUS=$?
+ERR="$(cat "$SCRATCH/stderr")"
+check "a corrupt store path named 'malformed' exits 1" "$STATUS" "1"
+check_contains "a corrupt store path named 'malformed' is damaged" "$ERR" \
+    "damaged store"
+check_absent "a corrupt store path named 'malformed' is not generic" \
+    "$ERR" "cannot write the store"
+
+# And a healthy store under the same name is not damage: the path must
+# not choose the answer.
+(
+    cd "$VOCAB_DIR" || exit 1
+    "$BIN" add --skill healthy --db malformed-healthy >/dev/null 2>"$SCRATCH/stderr"
+)
+STATUS=$?
+ERR="$(cat "$SCRATCH/stderr")"
+check "a healthy store path named 'malformed' is written" "$STATUS" "0"
+check_absent "a healthy store path named 'malformed' is not damage" \
+    "$ERR" "damaged store"
+
 # ------------------------------------------------------- reads create nothing
 #
 # SPEC §2: reads never create the state directory, an empty database, or a

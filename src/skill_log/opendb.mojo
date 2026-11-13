@@ -113,7 +113,12 @@ def read_only_database(path: String) raises -> Database:
     )
     _ = path_buf^
     if Int(rc) != SQLITE_OK:
-        raise Error("cannot open " + path + " read-only")
+        # The path is quoted, the way every other message that names a
+        # file names it. A path is a filename here, not a word inside a
+        # sentence — and the store's classification reads the message
+        # with the filename fields taken out, so a path that happens to
+        # be a word of the vocabulary cannot be mistaken for one.
+        raise Error("cannot open '" + path + "' read-only")
 
     # The vendored struct, with the handle swapped for the read-only
     # one. The handle its constructor opened is closed here, so the

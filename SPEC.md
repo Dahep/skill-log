@@ -169,7 +169,11 @@ and anything else is the generic operational failure.
 
 The classification never reads the caller's path: the path is stripped from
 the message first, because a path can carry any word in the vocabulary and
-must not choose the answer.
+must not choose the answer. Only a recognized filename field is stripped — the
+path in the engine's own quoting, and the path the engine names after a colon.
+A path that merely reads like a word of the vocabulary stays in the message, so
+a store named `locked` does not turn "database is locked" into something the
+write path cannot recognise as a lock.
 
 A lock is not a refusal — a refusal is final, and a lock is retryable. The
 write path retries a busy failure as a whole attempt inside its budget, and
