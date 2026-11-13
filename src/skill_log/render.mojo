@@ -6,17 +6,21 @@ that reads one of them cannot read the other, and the two verbs drift
 apart the moment one of them gains a field.
 
 So the shape lives here, once, and both verbs call it. The key order is
-ADR-0002's column order — `id`, `ts`, `skill`, then the context columns,
-then the resolution columns — followed by the two derived fields every
-consumer needs and neither table stores: the row's `marker` and its
-`problems`.
+the schema's own column order — the one `store.mojo`'s column list
+declares — followed by the two derived fields every consumer needs and
+neither table stores: the row's `marker` and its `problems`.
+
+Because the order comes from the column list rather than from a
+hand-written list of keys here, a column added to the schema cannot be
+missing from this shape, and this shape cannot carry a key the schema
+does not have.
 
 The output is one flat object per line. There is no nesting: a caller
 piping the stream into `jq` should never have to reach into a wrapper.
 """
 
 from skill_log.json import JsonObject
-from skill_log.store import Invocation
+from skill_log.store import Invocation, invocation_columns
 
 
 def render_row_json(row: Invocation) -> String:
@@ -29,23 +33,16 @@ def render_row_json(row: Invocation) -> String:
     `--dry-run` preview does not claim a row that does not exist.
     """
     var out = JsonObject()
-    if row.id > 0:
-        out.put_int("id", row.id)
-    else:
-        out.put_null("id")
-    out.put("ts", row.ts)
-    out.put("skill", row.skill)
-    out.put("harness", row.harness)
-    out.put("session", row.session)
-    out.put("parent", row.parent)
-    out.put("model", row.model)
-    out.put("repo", row.repo)
-    out.put("worktree", row.worktree)
-    out.put("project", row.project)
-    out.put("t3_thread", row.t3_thread)
-    out.put("machine", row.machine)
-    out.put("fix", row.fix)
-    out.put("resolved_at", row.resolved_at)
+    var columns = invocation_columns()
+    for i in range(len(columns)):
+        var name = columns[i].name
+        if name == "id":
+            if row.id > 0:
+                out.put_int("id", row.id)
+            else:
+                out.put_null("id")
+            continue
+        out.put(name, row.text_column(name))
     out.put("marker", row.marker())
     out.put_strings("problems", row.problems)
     return out.render()

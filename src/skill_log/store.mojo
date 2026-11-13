@@ -51,7 +51,7 @@ from std.os import getenv, makedirs
 from std.pathlib import Path
 from std.time import monotonic, sleep
 
-from sqlite.db import Database
+from sqlite.db import Database, Row
 from skill_log.context import local_timestamp
 from skill_log.errors import Failure, operational_failure
 from skill_log.ffi import dl_sym
@@ -63,27 +63,91 @@ from skill_log.text import sanitize
 # higher is refused: an older CLI must not touch a newer store.
 comptime SCHEMA_VERSION = 1
 
-# The invocation table, exactly as ADR-0002 defines it: one row, explicit
-# harness context. Every text column is `NOT NULL DEFAULT ''`, so empty
-# means "unknown or not applicable" and the SQL layer stays free of NULL
-# semantics.
-comptime INVOCATION_DDL = """\
-CREATE TABLE IF NOT EXISTS invocations (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    ts TEXT NOT NULL,
-    skill TEXT NOT NULL,
-    harness TEXT NOT NULL DEFAULT '',
-    session TEXT NOT NULL DEFAULT '',
-    parent TEXT NOT NULL DEFAULT '',
-    model TEXT NOT NULL DEFAULT '',
-    repo TEXT NOT NULL DEFAULT '',
-    worktree TEXT NOT NULL DEFAULT '',
-    project TEXT NOT NULL DEFAULT '',
-    t3_thread TEXT NOT NULL DEFAULT '',
-    machine TEXT NOT NULL DEFAULT '',
-    fix TEXT NOT NULL DEFAULT '',
-    resolved_at TEXT NOT NULL DEFAULT ''
-)"""
+# The invocation table's columns, exactly as ADR-0002 defines them: one
+# row, explicit harness context. Every text column is `NOT NULL DEFAULT
+# ''`, so empty means "unknown or not applicable" and the SQL layer stays
+# free of NULL semantics.
+#
+# This list is the schema. The DDL, the column-name allow-list, the
+# SELECT lists and the JSON key order are all built from it, so a column
+# added to the schema cannot be missing from one of them, and a column
+# removed from the schema cannot linger in one.
+#
+# The order is the order the columns appear in the table, and it is also
+# the order JSON exposes: one flat object whose fields a reader can take
+# without a guess.
+struct ColumnDef:
+    """One column: its name, its SQL type, and its default.
+
+    `default` is empty for a column that has none — `id` and `ts` are
+    written by the engine and by the writer, not by the schema. A column
+    with a default is `NOT NULL` as well: empty means "unknown or not
+    applicable", and the SQL layer stays free of NULL semantics. A column
+    without a default and without `not_null` is the engine's own `id`.
+    """
+
+    var name: String
+    var sql_type: String
+    var default: String
+    var not_null: Bool
+
+    def __init__(
+        out self,
+        name: String,
+        sql_type: String = "TEXT",
+        default: String = "",
+        not_null: Bool = False,
+    ):
+        self.name = name
+        self.sql_type = sql_type
+        self.default = default
+        self.not_null = not_null
+
+    def ddl(self) -> String:
+        """The column as the `CREATE TABLE` spells it."""
+        var out = self.name + " " + self.sql_type
+        if self.not_null:
+            out += " NOT NULL"
+        if self.default != "":
+            out += " DEFAULT " + self.default
+        return out
+
+
+def invocation_columns() -> List[ColumnDef]:
+    """The invocations table's columns, in the schema's own order."""
+    var columns = List[ColumnDef]()
+    columns.append(ColumnDef("id", "INTEGER PRIMARY KEY AUTOINCREMENT"))
+    columns.append(ColumnDef("ts", "TEXT", "", True))
+    columns.append(ColumnDef("skill", "TEXT", "", True))
+    columns.append(ColumnDef("harness", "TEXT", "''", True))
+    columns.append(ColumnDef("session", "TEXT", "''", True))
+    columns.append(ColumnDef("parent", "TEXT", "''", True))
+    columns.append(ColumnDef("model", "TEXT", "''", True))
+    columns.append(ColumnDef("repo", "TEXT", "''", True))
+    columns.append(ColumnDef("worktree", "TEXT", "''", True))
+    columns.append(ColumnDef("project", "TEXT", "''", True))
+    columns.append(ColumnDef("t3_thread", "TEXT", "''", True))
+    columns.append(ColumnDef("machine", "TEXT", "''", True))
+    columns.append(ColumnDef("fix", "TEXT", "''", True))
+    columns.append(ColumnDef("resolved_at", "TEXT", "''", True))
+    return columns^
+
+
+def invocation_ddl() -> String:
+    """The `CREATE TABLE` for the invocations table, built from the
+    column list.
+
+    The statements the tool runs are the same ones the column list
+    describes: the DDL is generated, never hand-written beside it.
+    """
+    var columns = invocation_columns()
+    var body = String("")
+    for i in range(len(columns)):
+        if i > 0:
+            body += ",\n"
+        body += "    " + columns[i].ddl()
+    return "CREATE TABLE IF NOT EXISTS invocations (\n" + body + "\n)"
+
 
 # One problem per finding, keyed by (invocation, ordinal), cascading with
 # its invocation.
@@ -101,21 +165,42 @@ CREATE TABLE IF NOT EXISTS problems (
 def store_column_names() -> List[String]:
     """Every invocations column the 1.0 schema has."""
     var names = List[String]()
-    names.append("id")
-    names.append("ts")
-    names.append("skill")
-    names.append("harness")
-    names.append("session")
-    names.append("parent")
-    names.append("model")
-    names.append("repo")
-    names.append("worktree")
-    names.append("project")
-    names.append("t3_thread")
-    names.append("machine")
-    names.append("fix")
-    names.append("resolved_at")
+    var columns = invocation_columns()
+    for i in range(len(columns)):
+        names.append(columns[i].name)
     return names^
+
+
+# The SELECT list every read of an invocation row uses, built from the
+# column list. The order is the schema's own order, so a row's fields
+# land in the same order the columns are declared.
+def invocation_select_list() -> String:
+    """The column list a `SELECT` of an invocation row names."""
+    var names = List[String]()
+    var columns = invocation_columns()
+    for i in range(len(columns)):
+        names.append(columns[i].name)
+    return ", ".join(names)
+
+
+# The `INSERT` that writes an invocation row, built from the column
+# list. The `id` is the engine's, so it is left out of the column list
+# and the placeholders: the write names every other column, in order.
+def invocation_insert_sql() -> String:
+    """The `INSERT INTO invocations` statement, built from the columns."""
+    var names = List[String]()
+    var columns = invocation_columns()
+    for i in range(len(columns)):
+        if columns[i].name == "id":
+            continue
+        names.append(columns[i].name)
+    var marks = List[String]()
+    for _ in range(len(names)):
+        marks.append("?")
+    return (
+        "INSERT INTO invocations (" + ", ".join(names) + ") VALUES ("
+        + ", ".join(marks) + ")"
+    )
 
 # The write budget, ported from the reference. Concurrent skill runs log
 # at once; SQLite's journal-mode conversion and BEGIN can report
@@ -826,7 +911,7 @@ def open_write(path: String) raises -> StoreOpen:
         # good.
         try:
             var tx = db.transaction()
-            db.execute(INVOCATION_DDL)
+            db.execute(invocation_ddl())
             db.execute(PROBLEM_DDL)
             tx.commit()
         except e:
@@ -893,7 +978,10 @@ struct Invocation(Movable):
     """One invocation row, as the store holds it.
 
     The column order is ADR-0002's, and it is also the order JSON exposes:
-    one flat object whose fields a reader can take without a guess.
+    one flat object whose fields a reader can take without a guess. The
+    columns themselves live in `invocation_columns`, and the row's fields
+    are read and written through that list, so the struct and the schema
+    cannot drift apart.
     """
 
     var id: Int
@@ -940,6 +1028,99 @@ struct Invocation(Movable):
             return ""
         return marker_text(self.machine, self.id)
 
+    def text_column(self, column: String) -> String:
+        """One text column's value, by the column's name.
+
+        The row's fields are named after the schema's columns, and this
+        is the one place that says which field is which: the reader, the
+        writer and the renderer all go through it.
+        """
+        if column == "ts":
+            return self.ts
+        if column == "skill":
+            return self.skill
+        if column == "harness":
+            return self.harness
+        if column == "session":
+            return self.session
+        if column == "parent":
+            return self.parent
+        if column == "model":
+            return self.model
+        if column == "repo":
+            return self.repo
+        if column == "worktree":
+            return self.worktree
+        if column == "project":
+            return self.project
+        if column == "t3_thread":
+            return self.t3_thread
+        if column == "machine":
+            return self.machine
+        if column == "fix":
+            return self.fix
+        if column == "resolved_at":
+            return self.resolved_at
+        return ""
+
+    def set_text_column(mut self, column: String, value: String):
+        """One text column's value, by the column's name."""
+        if column == "ts":
+            self.ts = value
+        elif column == "skill":
+            self.skill = value
+        elif column == "harness":
+            self.harness = value
+        elif column == "session":
+            self.session = value
+        elif column == "parent":
+            self.parent = value
+        elif column == "model":
+            self.model = value
+        elif column == "repo":
+            self.repo = value
+        elif column == "worktree":
+            self.worktree = value
+        elif column == "project":
+            self.project = value
+        elif column == "t3_thread":
+            self.t3_thread = value
+        elif column == "machine":
+            self.machine = value
+        elif column == "fix":
+            self.fix = value
+        elif column == "resolved_at":
+            self.resolved_at = value
+
+
+# The columns of an invocation row that carry text, in the schema's
+# order. The `id` is a number, so it is not one of these.
+def invocation_text_columns() -> List[ColumnDef]:
+    """Every text column of the invocations table, in order."""
+    var columns = List[ColumnDef]()
+    var all = invocation_columns()
+    for i in range(len(all)):
+        if all[i].sql_type == "TEXT":
+            columns.append(all[i])
+    return columns^
+
+
+def read_invocation_row(row: Row) raises -> Invocation:
+    """One invocation row, read through the column list.
+
+    The `SELECT` names the columns in the schema's order, so the row's
+    values land in the same order, and the column list says which column
+    each one belongs to.
+    """
+    var invocation = Invocation()
+    var columns = invocation_columns()
+    for i in range(len(columns)):
+        if columns[i].name == "id":
+            invocation.id = row.int_val(i)
+        else:
+            invocation.set_text_column(columns[i].name, row.text_val(i))
+    return invocation^
+
 
 def read_invocation(db: Database, id: Int) raises -> Optional[Invocation]:
     """Read one invocation row and its problems.
@@ -948,30 +1129,15 @@ def read_invocation(db: Database, id: Int) raises -> Optional[Invocation]:
     so one problem is one line whatever the writer stored.
     """
     var stmt = db.prepare(
-        "SELECT id, ts, skill, harness, session, parent, model, repo,"
-        " worktree, project, t3_thread, machine, fix, resolved_at"
-        " FROM invocations WHERE id = ?"
+        "SELECT " + invocation_select_list()
+        + " FROM invocations WHERE id = ?"
     )
     stmt.bind_int(1, id)
     var row = stmt.step()
     if row is None:
         return None
 
-    var invocation = Invocation()
-    invocation.id = row.value().int_val(0)
-    invocation.ts = row.value().text_val(1)
-    invocation.skill = row.value().text_val(2)
-    invocation.harness = row.value().text_val(3)
-    invocation.session = row.value().text_val(4)
-    invocation.parent = row.value().text_val(5)
-    invocation.model = row.value().text_val(6)
-    invocation.repo = row.value().text_val(7)
-    invocation.worktree = row.value().text_val(8)
-    invocation.project = row.value().text_val(9)
-    invocation.t3_thread = row.value().text_val(10)
-    invocation.machine = row.value().text_val(11)
-    invocation.fix = row.value().text_val(12)
-    invocation.resolved_at = row.value().text_val(13)
+    var invocation = read_invocation_row(row.value())
 
     var problems = db.prepare(
         "SELECT problem FROM problems WHERE invocation_id = ? ORDER BY ordinal"
@@ -1097,9 +1263,8 @@ def read_invocations(db: Database, filters: Filters) raises -> List[Invocation]:
         limit = ""
 
     var stmt = db.prepare(
-        "SELECT id, ts, skill, harness, session, parent, model, repo,"
-        " worktree, project, t3_thread, machine, fix, resolved_at"
-        " FROM invocations" + clause
+        "SELECT " + invocation_select_list()
+        + " FROM invocations" + clause
         + " ORDER BY datetime(ts) DESC, id DESC" + limit
     )
 
@@ -1116,21 +1281,7 @@ def read_invocations(db: Database, filters: Filters) raises -> List[Invocation]:
         if row is None:
             break
 
-        var invocation = Invocation()
-        invocation.id = row.value().int_val(0)
-        invocation.ts = row.value().text_val(1)
-        invocation.skill = row.value().text_val(2)
-        invocation.harness = row.value().text_val(3)
-        invocation.session = row.value().text_val(4)
-        invocation.parent = row.value().text_val(5)
-        invocation.model = row.value().text_val(6)
-        invocation.repo = row.value().text_val(7)
-        invocation.worktree = row.value().text_val(8)
-        invocation.project = row.value().text_val(9)
-        invocation.t3_thread = row.value().text_val(10)
-        invocation.machine = row.value().text_val(11)
-        invocation.fix = row.value().text_val(12)
-        invocation.resolved_at = row.value().text_val(13)
+        var invocation = read_invocation_row(row.value())
 
         var problems = db.prepare(
             "SELECT problem FROM problems WHERE invocation_id = ? ORDER BY ordinal"
@@ -1353,25 +1504,17 @@ def write_attempt(
 
     row.ts = local_timestamp(db)
 
-    var stmt = db.prepare(
-        "INSERT INTO invocations"
-        " (ts, skill, harness, session, parent, model, repo, worktree,"
-        " project, t3_thread, machine, fix, resolved_at)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-    )
-    stmt.bind_text(1, row.ts)
-    stmt.bind_text(2, row.skill)
-    stmt.bind_text(3, row.harness)
-    stmt.bind_text(4, row.session)
-    stmt.bind_text(5, row.parent)
-    stmt.bind_text(6, row.model)
-    stmt.bind_text(7, row.repo)
-    stmt.bind_text(8, row.worktree)
-    stmt.bind_text(9, row.project)
-    stmt.bind_text(10, row.t3_thread)
-    stmt.bind_text(11, row.machine)
-    stmt.bind_text(12, row.fix)
-    stmt.bind_text(13, row.resolved_at)
+    var stmt = db.prepare(invocation_insert_sql())
+    var columns = invocation_columns()
+    # The `id` is the engine's, so the insert binds every column but the
+    # first, in the column list's own order.
+    for i in range(len(columns)):
+        if columns[i].name == "id":
+            continue
+        if columns[i].name == "ts":
+            stmt.bind_text(i, row.ts)
+        else:
+            stmt.bind_text(i, row.text_column(columns[i].name))
     _ = stmt.step()
 
     var last = db.prepare("SELECT last_insert_rowid()")
