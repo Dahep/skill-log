@@ -90,7 +90,6 @@ detail_of() { # detail_of <out> <artifact>
 }
 
 # ------------------------------------------------------------- creation
-#
 
 make_repo "$TMP/r1"
 run setup --repo "$TMP/r1"
@@ -153,7 +152,6 @@ fi
 check "re-run: the store bytes did not move" "$(cksum <"$DB")" "$DB_SUM"
 
 # --------------------------------------------------------------- check
-#
 
 run setup --repo "$TMP/r1" --check
 check "check on a fresh setup exits 0" "$STATUS" "0"
@@ -250,7 +248,6 @@ check "check: the report directory is not written" \
     "$([ -e "$TMP/r1/.skill-log" ] && echo yes || echo no)" "no"
 
 # ------------------------------------------------------- foreign hook
-#
 
 make_repo "$TMP/r2"
 printf '#!/bin/sh\necho foreign\n' >"$TMP/r2/.git/hooks/post-merge"
@@ -269,7 +266,6 @@ else
 fi
 
 # ---------------------------------------------------------- remove hook
-#
 
 rm -f "$HOOK"
 run setup --repo "$TMP/r1"
@@ -297,7 +293,6 @@ else
 fi
 
 # ------------------------------------------------------- non-git dir
-#
 
 mkdir -p "$TMP/plain"
 run setup --repo "$TMP/plain" --db "$TMP/plain-store.db"
@@ -315,7 +310,6 @@ check "non-git: the store is still created" \
     "$([ -f "$TMP/plain-store.db" ] && echo yes)" "yes"
 
 # ----------------------------------------------------------- no flags
-#
 
 make_repo "$TMP/r5"
 run setup --repo "$TMP/r5" --no-hook --no-report-dir --db "$TMP/r5-store.db"
@@ -333,7 +327,6 @@ check "--no-report-dir: no report directory is written" \
     "$([ -e "$TMP/r5/.skill-log" ] && echo yes || echo no)" "no"
 
 # --------------------------------------------------------------- json
-#
 
 make_repo "$TMP/rjson"
 run setup --repo "$TMP/rjson" --dry-run --json --db "$TMP/rjson-store.db"
@@ -363,7 +356,6 @@ check_contains "json: the drift status is in the output" \
 check_one_line "json: the failure is one stderr line" "$ERR"
 
 # ------------------------------------------------------------- dry-run
-#
 
 make_repo "$TMP/rdry"
 run setup --repo "$TMP/rdry" --dry-run --db "$TMP/rdry-store.db"
@@ -382,7 +374,6 @@ check "dry-run: no report directory is written" \
     "$([ -e "$TMP/rdry/.skill-log" ] && echo yes || echo no)" "no"
 
 # ----------------------------------------------- report dir with content
-#
 
 make_repo "$TMP/r7"
 mkdir -p "$TMP/r7/.skill-log/reports"
@@ -430,7 +421,6 @@ check "complete report dir: only the three entries exist" \
     ".keep README.md topic.md "
 
 # ------------------------------------------------------------- the hook
-#
 
 make_repo "$TMP/rhook"
 bump "$TMP/rhook" two
@@ -540,7 +530,6 @@ check "hook: a failing CLI was still called" \
     "failing:resolve-merged --since $SINCE --quiet"
 
 # ------------------------------------------------------------- the pull
-#
 
 make_repo "$TMP/origin"
 git clone -q "$TMP/origin" "$TMP/clone" 2>/dev/null
@@ -595,7 +584,6 @@ env -u XDG_STATE_HOME -u XDG_CONFIG_HOME HOME="$HOME_DIR" \
 check "pull: keeps its exit status with an absent CLI" "$?" "0"
 
 # ---------------------------------------------------------- worktree
-#
 
 make_repo "$TMP/wtmain"
 git -C "$TMP/wtmain" worktree add -q -b wtbranch "$TMP/wtlink"
@@ -618,7 +606,6 @@ else
 fi
 
 # -------------------------------------------------------------- skills
-#
 
 DIR="$TMP/skillsdir"
 run setup --repo "$TMP/r1" --skills-dir "$DIR" --db "$TMP/skills-store.db"
@@ -834,7 +821,6 @@ run setup --repo "$TMP/r1" --skills-dir "$DIR2" --check --db "$TMP/skills2-store
 check "template override: --check is green" "$STATUS" "0"
 
 # ------------------------------------------- a moved shipped default
-#
 run skills template seed --force
 check "the user copies are seeded" "$STATUS" "0"
 SEEDED_DIR="$HOME_DIR/.local/state/skill-log/seeded-from"
@@ -866,7 +852,6 @@ check "without the record: --check is green again" "$STATUS" "0"
 rm -rf "$HOME_DIR/.config/skill-log"
 
 # --------------------------------------------------------- store refusals
-#
 
 make_repo "$TMP/rref"
 sqlite3 "$TMP/foreign.db" "CREATE TABLE other (x)"
@@ -920,7 +905,6 @@ check_absent "add on the same path leaks no engine wording" \
     "$ERR" "sqlite3 rc="
 
 # ------------------------------------------------------------- usage
-#
 
 run setup --help
 check "help exits 0" "$STATUS" "0"

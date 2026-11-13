@@ -4,13 +4,6 @@
 #
 #   tests/parity.sh
 #
-#
-#
-#
-# Discipline: the binary is the only seam. Every case runs the installed
-# artifact as a process against a sandboxed HOME and XDG state, with no
-# network. Nothing imports an internal.
-#
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -30,11 +23,7 @@ fi
 
 # ------------------------------------------------------------- the sandbox
 #
-#
 
-# sandbox_ok <base> <sandbox-home>: the guard's verdict. Zero when the
-# pair is safe: the sandbox is outside the real home, and the home the
-# binary sees is inside the sandbox.
 #
 sandbox_ok() {
     local base home
@@ -83,8 +72,6 @@ run() {
     ERR="$(cat "$S/stderr")"
 }
 
-# run_in <dir> <args...>: the same, from inside a directory. The verbs
-# that read a checkout are about the tree the caller stands in.
 run_in() {
     local dir="$1"
     shift
@@ -114,9 +101,6 @@ fix_of() {
     sqlite3 "$1" "SELECT COALESCE(fix, '') FROM invocations WHERE id = $2"
 }
 
-# new_repo <name>: an empty git repository under the scratch root. The
-# branch is named explicitly, so the report file's name does not depend on
-# `init.defaultBranch`.
 new_repo() {
     local repo="$S/repos/$1"
     mkdir -p "$repo"
@@ -137,9 +121,6 @@ commit_trailers() {
     git -C "$repo" commit -q -m "$subject" -m "$trailer"
 }
 
-# mkopdb <session-id> <model-json>: a minimal opencode session store with
-# the named session and its model JSON in the exact session_v2 shape
-# skill-log reads.
 mkopdb() {
     mkdir -p "$HOME/.local/share/opencode"
     sqlite3 "$HOME/.local/share/opencode/opencode.db" <<SQL
@@ -185,7 +166,6 @@ H="$(hostname)"
 # =========================================================================
 
 # --- case 1: the migration becomes the refusal parity ---------------------
-#
 say "parity: case 1 — an older store is refused, never converted"
 V1DB="$DBT/c1.db"
 mkolderdb "$V1DB"
@@ -209,7 +189,6 @@ check "case 1: the read names the older store" \
     "$(printf '%s' "$ERR" | grep -c 'older store')" "1"
 
 # --- case 2: auto-detect from the local opencode store ---------------------
-#
 say "parity: case 2 — the model comes from the session store, with the adapter on"
 C2="$DBT/c2.db"
 mkopdb ses_fixture '{"id": "m-test", "providerID": "prov-x"}'
@@ -259,7 +238,6 @@ check "case 3: a dry run with --model keeps the same override" \
     "$(json_field "$OUT" model)" "prov-m/m-fix"
 
 # --- case 4: read paths on a pre-migration db -----------------------------
-#
 say "parity: case 4 — reads of an older store name it, and never read it as empty"
 V1R="$DBT/c4.db"
 mkolderdb "$V1R"
@@ -308,7 +286,6 @@ check "case 5: the default table keeps the rate column" \
     "$("$BIN" stats --db "$C4" | grep -c 'problems/invocation')" "1"
 
 # --- case 6: the parallel first write -------------------------------------
-#
 say "parity: case 6 — parallel first writes on one store both land"
 C6="$DBT/c6.db"
 "$BIN" add --skill race-a --model prov-p/m-a --db "$C6" >/dev/null &
@@ -350,7 +327,6 @@ check_contains "case 8: the show table carries the parent cell" \
     "$("$BIN" show --db "$C8" --last 1)" "thread_abc123"
 
 # --- case 9: a snapshot that carries the model but not the parent ---------
-#
 say "parity: case 9: an older snapshot is refused, whatever its permissions"
 C9="$DBT/c9.db"
 mkolderdb "$C9"
@@ -364,13 +340,6 @@ chmod 644 "$C9"
 
 # --- case 10: a busy write is retried, not lost ---------------------------
 #
-# The contention is exercised with a real second process, so the case
-# holds the write lock for real and lets the bounded retry budget do its
-# work.
-#
-# The lock is held for three seconds — longer than the connection's
-# two-second busy timeout, so the wait inside SQLite cannot cover it. A
-# two-second hold would have ridden the busy timeout instead of proving it.
 say "parity: case 10 — a write survives a real second writer holding the lock"
 C10="$DBT/c10.db"
 "$BIN" add --skill lock-holder --db "$C10" >/dev/null
@@ -387,9 +356,6 @@ check "case 10: the lock holder's row is still there" \
     "$(sqlite3 "$C10" "SELECT COUNT(*) FROM invocations WHERE skill = 'lock-holder'")" "1"
 
 # --- case 11: an exhausted retry fails quietly ----------------------------
-#
-# The retry budget stays bounded, so the case holds the lock for longer
-# than the budget and asserts the failure shape: one stderr line, no row.
 say "parity: case 11 — an exhausted retry fails quietly, with one line"
 C11="$DBT/c11.db"
 "$BIN" add --skill lock-holder --db "$C11" >/dev/null
@@ -443,7 +409,6 @@ check "case 12: a dry run leaves the row's fix" \
     "$(fix_of "$C12" 1)" "abc1234"
 
 # --- cases 13 to 17: the multi-machine sync cases --------------------------
-#
 skip "parity: case 13 — sync merges a remote log" \
     "multi-machine sync left scope in 1.0 (SPEC §10): no sync verb, no aggregate store, no owner authority"
 skip "parity: case 14 — the pull reads a live WAL" \
@@ -456,7 +421,6 @@ skip "parity: case 17 — the default remote path needs no flag" \
     "multi-machine sync left scope in 1.0 (SPEC §10): there is no remote and no remote log path"
 
 # --- case 18: a concurrent write's collision retries ----------------------
-#
 say "parity: case 18 — concurrent writers converge on one store"
 C18="$DBT/c18.db"
 for i in 1 2 3 4 5 6; do
@@ -490,11 +454,7 @@ OUT="$(cd "$R19" && "$BIN" resolve-merged --db "$DB19" --json 2>/dev/null)"
 check "case 19: re-running stamps nothing" "$(json_array "$OUT" resolved)" ""
 check "case 19: re-running names the rows it left alone" \
     "$(json_array "$OUT" unchanged)" "$H#1,$H#2"
-# A row logged after the commit is an id reused by a rebuilt log, not the
-# row the commit fixed.
 #
-# The commit's time is fixed with a git commit date, so the guard is
-# provable without a sleep.
 GIT_COMMITTER_DATE="2020-01-01T00:00:00+0000" \
 GIT_AUTHOR_DATE="2020-01-01T00:00:00+0000" \
     git -C "$R19" commit -q --allow-empty \
@@ -537,9 +497,6 @@ check "case 19: a dry run reports the row it would stamp" \
 check "case 19: a dry run leaves the row unresolved" "$(fix_of "$DB19D" 1)" ""
 
 # --- case 20: one machine, one identity -----------------------------------
-#
-# A marker names a machine exactly, and a marker naming another machine
-# is foreign: there is no owner lookup and no cross-machine resolution.
 say "parity: case 20 — a marker names its machine exactly"
 R20="$(new_repo c20)"
 C20L="$DBT/c20.db"
@@ -570,8 +527,6 @@ DB21="$DBT/c21.db"
 "$BIN" add --skill hidden-marker --db "$DB21" >/dev/null
 printf y >"$R21/f"
 git -C "$R21" add f
-# The shape a multi-author squash leaves behind: the marker block, then a
-# trailer block GitHub appends.
 git -C "$R21" commit -q -m "skills: fix one thing" \
     -m "Skill-log-Fix: $H#1" -m "Co-authored-by: someone <s@example.com>"
 run_in "$R21" resolve-merged --db "$DB21"
@@ -646,8 +601,6 @@ git -C "$R23B" add base
 git -C "$R23B" commit -q -m base
 run setup --repo "$R23B"
 check "case 23: setup installs the owned hook" "$STATUS" "0"
-# The hook resolves the CLI at run time, so a PATH without skill-log
-# makes it exit 0 silently.
 mkdir -p "$S/empty-path"
 ln -sf "$(command -v git)" "$S/empty-path/git"
 git -C "$R23B" checkout -q -b nobin
@@ -664,13 +617,9 @@ else
 fi
 check "case 23: the pull with no CLI says nothing" \
     "$(cat "$S/c23-pull.out" "$S/c23-pull.err")" ""
-# The hook's own store: a state directory of its own, so "the hook created
-# nothing" is a fact about the hook and not about the sandbox.
 check "case 23: the hook with no CLI created no store" \
     "$([ -e "$S/c23-state/skill-log/skills.db" ] \
         && echo created || echo absent)" "absent"
-# The CLI is too old for the subcommand: same promise, and the failing
-# CLI's stderr never reaches the pull.
 cat >"$S/empty-path/skill-log" <<'STUB'
 #!/bin/sh
 echo "skill-log: error: argument command: invalid choice: 'resolve-merged'" >&2
@@ -700,7 +649,6 @@ check_contains "case 23: the non-git checkout skips with a named reason" "$OUT" 
     "not a git checkout"
 
 # --- case 24: report writes the repo report artifact ----------------------
-#
 say "parity: case 24 — report writes the repo report file, validated at authoring time"
 R24="$(new_repo c24)"
 DB24="$DBT/c24.db"
@@ -786,7 +734,6 @@ check "case 25: a full scan resolves the report file's row" \
 # =========================================================================
 
 # --- case 26: the store matrix, per verb's policy -------------------------
-#
 say "parity: case 26 — the store matrix, per verb's policy"
 MATRIX="$S/matrix"
 mkdir -p "$MATRIX"
@@ -972,8 +919,6 @@ run_in "$R28" resolve-merged --db "$DB28" --json
 check "case 28: an uncommitted edit adds no row" "$(fix_of "$DB28" 2)" ""
 
 # --- case 29: the time guard across differing writer offsets --------------
-#
-# The guard compares the row's instant with the commit's time.
 say "parity: case 29 — the time guard compares instants, not offset strings"
 R29="$(new_repo c29)"
 DB29="$DBT/c29.db"
@@ -1050,7 +995,6 @@ check "case 32: the machine is the hostname" \
     "$(json_field "$OUT" machine)" "$H"
 
 # --- case 33: the sandbox guard refuses the real home ---------------------
-#
 say "parity: case 33 — the sandbox guard refuses the real home"
 if sandbox_ok "$REAL_HOME/inside" "$REAL_HOME/inside/home"; then
     fail "case 33: a sandbox inside the real home is refused"

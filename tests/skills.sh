@@ -67,12 +67,6 @@ count_examples() {
 
 # ------------------------------------------- a hostile name is quoted
 #
-# The rendered block is shell source: the agent copies the command line
-# out of it and runs it. So a skill name or a binary path that carries
-# shell metacharacters must be quoted.
-#
-# The name below is `alpha; touch <marker>`: run the rendered line and the
-# marker appears. With the name quoted, it does not.
 HOSTILE="$SCRATCH/hostile"
 rm -rf "$HOSTILE"
 mkdir -p "$HOSTILE/skill"
@@ -388,13 +382,6 @@ check_contains "the refusal names the review's <command>" "$ERR" \
 
 # ------------------------------------------------- a quoted placeholder
 #
-# The rendered block is shell source, so the tool quotes a placeholder's
-# value — but the tool's own quoting is single quotes, and a template that
-# puts the placeholder inside its own double quotes would nest the two,
-# which a shell still expands.
-#
-# So a template that puts a placeholder next to a quote character is
-# refused by name.
 mkdir -p "$SCRATCH/quoted"
 printf '    <command> add --skill "<name>"\n' > "$SCRATCH/quoted/usage-log.md"
 run skills template show --template-dir "$SCRATCH/quoted"
@@ -562,13 +549,6 @@ cat "$SCRATCH/block.txt" >> "$SKILLS/ok/SKILL.md"
 
 # --------------------------------------------- the mirror is the oracle
 #
-# The fixtures above are built by the suite's own render, and the audit
-# compares the tool's render against them byte for byte. So the mirror
-# has to be the tool's render, not a lookalike.
-#
-# The one way they used to disagree: the mirror substituted `<name>` and
-# then `<command>`, in two passes. A name carrying a literal `<command>`
-# token therefore had the second pass run over the first pass's result.
 TOKEN_NAME='skill<command>evil'
 TOKEN_DIR="$SCRATCH/token-name"
 rm -rf "$TOKEN_DIR"
@@ -816,10 +796,6 @@ check "a second adopt reports only unchanged and skipped" \
     "skipped unchanged"
 
 # ------------------------------------------------ a moved binary is stale
-#
-# The block names the resolved binary path. When the binary moves, the
-# current render names a different path, so the block is an older render:
-# `stale`, and `adopt` rewrites it.
 MOVEDBIN="$SCRATCH/moved-bin"
 rm -rf "$MOVEDBIN"
 mkdir -p "$MOVEDBIN"
