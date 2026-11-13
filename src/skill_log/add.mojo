@@ -37,7 +37,7 @@ from skill_log.adapters import apply_adapters, enabled_adapters
 from skill_log.context import hostname, preview_timestamp
 from skill_log.detect import detect_repo, detect_worktree, env_or_empty
 from skill_log.errors import EXIT_FAILURE, EXIT_USAGE, Outcome
-from skill_log.flags import take_value
+from skill_log.flags import take_declared_value
 from skill_log.render import render_row_json
 from skill_log.stdin import read_stdin_line, stdin_is_tty
 from skill_log.store import Invocation, WriteResult, resolve_db, write_invocation
@@ -81,6 +81,31 @@ struct Options(Movable):
         self.adapters = List[String]()
 
 
+def add_value_flags() -> List[String]:
+    """The flags that consume the next argument.
+
+    The declaration lives here, beside the parser that reads them, and
+    the parser checks every flag it reads a value for against it. The
+    dispatcher reads the same list to tell `--problem -h` (a problem
+    spelled `-h`) from a help request.
+    """
+    var flags = List[String]()
+    flags.append("--skill")
+    flags.append("--problem")
+    flags.append("--db")
+    flags.append("--harness")
+    flags.append("--session")
+    flags.append("--parent")
+    flags.append("--model")
+    flags.append("--repo")
+    flags.append("--worktree")
+    flags.append("--project")
+    flags.append("--t3-thread")
+    flags.append("--machine")
+    flags.append("--adapter")
+    return flags^
+
+
 def parse_options(args: List[String]) raises -> Options:
     """Read `add`'s flags.
 
@@ -94,47 +119,74 @@ def parse_options(args: List[String]) raises -> Options:
     `--problem` consumes the next argument (`Verb.value_flags`).
     """
     var options = Options()
+    var value_flags = add_value_flags()
     var i = 0
     while i < len(args):
         var arg = args[i]
         if arg == "--skill":
-            options.skill = take_value(args, i, "--skill", "a name")
+            options.skill = take_declared_value(
+                args, i, "--skill", "a name", value_flags
+            )
             i += 1
         elif arg == "--problem":
-            options.problems.append(take_value(args, i, "--problem", "a text"))
+            options.problems.append(
+                take_declared_value(args, i, "--problem", "a text", value_flags)
+            )
             i += 1
         elif arg == "--db":
-            options.db = take_value(args, i, "--db", "a path")
+            options.db = take_declared_value(
+                args, i, "--db", "a path", value_flags
+            )
             i += 1
         elif arg == "--harness":
-            options.harness = take_value(args, i, "--harness", "a name")
+            options.harness = take_declared_value(
+                args, i, "--harness", "a name", value_flags
+            )
             i += 1
         elif arg == "--session":
-            options.session = take_value(args, i, "--session", "an id")
+            options.session = take_declared_value(
+                args, i, "--session", "an id", value_flags
+            )
             i += 1
         elif arg == "--parent":
-            options.parent = take_value(args, i, "--parent", "an id")
+            options.parent = take_declared_value(
+                args, i, "--parent", "an id", value_flags
+            )
             i += 1
         elif arg == "--model":
-            options.model = take_value(args, i, "--model", "provider/id")
+            options.model = take_declared_value(
+                args, i, "--model", "provider/id", value_flags
+            )
             i += 1
         elif arg == "--repo":
-            options.repo = take_value(args, i, "--repo", "a name")
+            options.repo = take_declared_value(
+                args, i, "--repo", "a name", value_flags
+            )
             i += 1
         elif arg == "--worktree":
-            options.worktree = take_value(args, i, "--worktree", "a path")
+            options.worktree = take_declared_value(
+                args, i, "--worktree", "a path", value_flags
+            )
             i += 1
         elif arg == "--project":
-            options.project = take_value(args, i, "--project", "a name")
+            options.project = take_declared_value(
+                args, i, "--project", "a name", value_flags
+            )
             i += 1
         elif arg == "--t3-thread":
-            options.t3_thread = take_value(args, i, "--t3-thread", "an id")
+            options.t3_thread = take_declared_value(
+                args, i, "--t3-thread", "an id", value_flags
+            )
             i += 1
         elif arg == "--machine":
-            options.machine = take_value(args, i, "--machine", "a name")
+            options.machine = take_declared_value(
+                args, i, "--machine", "a name", value_flags
+            )
             i += 1
         elif arg == "--adapter":
-            options.adapters.append(take_value(args, i, "--adapter", "a name"))
+            options.adapters.append(
+                take_declared_value(args, i, "--adapter", "a name", value_flags)
+            )
             i += 1
         elif arg == "--dry-run":
             options.dry_run = True

@@ -65,7 +65,7 @@ from skill_log.document import (
 )
 from skill_log.errors import EXIT_FAILURE, EXIT_USAGE, Outcome
 from skill_log.files import resolve_path, write_text
-from skill_log.flags import take_value
+from skill_log.flags import take_declared_value, takes_value
 from skill_log.hash import fnv1a64_hex
 from skill_log.help import render_verb
 from skill_log.json import JsonObject
@@ -636,16 +636,19 @@ def parse_skills_options(args: List[String]) raises -> SkillsOptions:
     `usage:` marker the caller turns into exit 2.
     """
     var options = SkillsOptions()
+    var value_flags = skills_value_flags()
     var i = 0
     var positionals = List[String]()
     while i < len(args):
         var arg = args[i]
         if arg == "--dir":
-            options.dir = take_value(args, i, "--dir", "a path")
+            options.dir = take_declared_value(
+                args, i, "--dir", "a path", value_flags
+            )
             i += 1
         elif arg == "--template-dir":
-            options.template_dir = take_value(
-                args, i, "--template-dir", "a path"
+            options.template_dir = take_declared_value(
+                args, i, "--template-dir", "a path", value_flags
             )
             i += 1
         elif arg == "--json":
@@ -699,7 +702,11 @@ def skills_examples() -> List[String]:
 
 
 def skills_value_flags() -> List[String]:
-    """The flags that consume the next argument."""
+    """The flags that consume the next argument.
+
+    The declaration lives here, beside the parser that reads them, and
+    the parser checks every flag it reads a value for against it.
+    """
     var flags = List[String]()
     flags.append("--dir")
     flags.append("--template-dir")
@@ -938,12 +945,13 @@ def handle_skills(args: List[String]) raises -> Outcome:
     # step-over rule applies here.
     var wants_help = False
     var positionals = List[String]()
+    var value_flags = skills_value_flags()
     var i = 0
     while i < len(args):
         var arg = args[i]
         if arg == "--help" or arg == "-h":
             wants_help = True
-        elif arg == "--dir" or arg == "--template-dir":
+        elif takes_value(value_flags, arg):
             i += 1
         elif not arg.startswith("--"):
             positionals.append(arg)

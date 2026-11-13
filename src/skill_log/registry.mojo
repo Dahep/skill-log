@@ -17,7 +17,7 @@ Only verbs that actually work are registered. There is no "not implemented"
 stub: a later ticket appends its verb here when it lands.
 """
 
-from skill_log.add import handle_add
+from skill_log.add import add_value_flags, handle_add
 from skill_log.errors import Outcome
 from skill_log.help import top_level_help
 from skill_log.show import (
@@ -102,21 +102,7 @@ def build_verbs() raises -> List[Verb]:
 
     # The flags that consume the next argument. The dispatcher reads this
     # to tell `--problem -h` (a problem spelled `-h`) from a help request.
-    var add_value_flags = List[String]()
-    add_value_flags.append("--skill")
-    add_value_flags.append("--problem")
-    add_value_flags.append("--db")
-    add_value_flags.append("--harness")
-    add_value_flags.append("--session")
-    add_value_flags.append("--parent")
-    add_value_flags.append("--model")
-    add_value_flags.append("--repo")
-    add_value_flags.append("--worktree")
-    add_value_flags.append("--project")
-    add_value_flags.append("--t3-thread")
-    add_value_flags.append("--machine")
-    add_value_flags.append("--adapter")
-
+    # The list lives with `add`'s own parser, which checks it too.
     verbs.append(
         Verb(
             "add",
@@ -128,7 +114,7 @@ def build_verbs() raises -> List[Verb]:
             "                   [--t3-thread <id>] [--machine <name>]\n"
             "                   [--adapter <name>]... [--dry-run] [--json] [--db <path>]",
             add_examples,
-            add_value_flags,
+            add_value_flags(),
             "A clean run still writes a row: the invocation count is the\n"
             "denominator of the problems-per-invocation rate.\n"
             "\n"

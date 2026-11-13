@@ -54,7 +54,7 @@ database.
 """
 
 from skill_log.errors import EXIT_FAILURE, EXIT_USAGE, Outcome
-from skill_log.flags import take_value
+from skill_log.flags import take_declared_value
 from skill_log.render import render_row_json
 from skill_log.store import (
     DEFAULT_LIMIT,
@@ -104,8 +104,11 @@ def show_examples() -> List[String]:
 def show_value_flags() -> List[String]:
     """The flags that consume the next argument.
 
-    The dispatcher reads this to tell `--run -h` (a run named `-h`) from a
-    help request, the same way `add --problem -h` records the text `-h`.
+    The declaration lives here, beside the parser that reads them, and
+    the parser checks every flag it reads a value for against it. The
+    dispatcher reads the same list to tell `--run -h` (a run named `-h`)
+    from a help request, the same way `add --problem -h` records the
+    text `-h`.
     """
     var flags = List[String]()
     flags.append("--skill")
@@ -231,34 +234,49 @@ def parse_options(args: List[String]) raises -> Options:
     line, the examples, and nothing read.
     """
     var options = Options()
+    var value_flags = show_value_flags()
     var i = 0
     while i < len(args):
         var arg = args[i]
         if arg == "--skill":
-            options.skill = take_value(args, i, "--skill", "a name")
+            options.skill = take_declared_value(
+                args, i, "--skill", "a name", value_flags
+            )
             options.given_skill = True
             i += 1
         elif arg == "--machine":
-            options.machine = take_value(args, i, "--machine", "a name")
+            options.machine = take_declared_value(
+                args, i, "--machine", "a name", value_flags
+            )
             options.given_machine = True
             i += 1
         elif arg == "--harness":
-            options.harness = take_value(args, i, "--harness", "a name")
+            options.harness = take_declared_value(
+                args, i, "--harness", "a name", value_flags
+            )
             options.given_harness = True
             i += 1
         elif arg == "--repo":
-            options.repo = take_value(args, i, "--repo", "a name")
+            options.repo = take_declared_value(
+                args, i, "--repo", "a name", value_flags
+            )
             options.given_repo = True
             i += 1
         elif arg == "--run":
-            options.run = take_value(args, i, "--run", "an id")
+            options.run = take_declared_value(
+                args, i, "--run", "an id", value_flags
+            )
             options.given_run = True
             i += 1
         elif arg == "--db":
-            options.db = take_value(args, i, "--db", "a path")
+            options.db = take_declared_value(
+                args, i, "--db", "a path", value_flags
+            )
             i += 1
         elif arg == "--last":
-            options.last = parse_last(take_value(args, i, "--last", "a number"))
+            options.last = parse_last(
+                take_declared_value(args, i, "--last", "a number", value_flags)
+            )
             i += 1
         elif arg == "--unresolved":
             options.unresolved = True

@@ -5,6 +5,12 @@ Every verb's parser takes a value the same way: the value sits at
 is taken as written whatever it looks like (`--problem -h` is the text
 `-h`). One function, so a flag added later cannot forget the check or
 invent its own wording for it.
+
+A verb also declares which of its flags take a value. The declaration
+lives with the parser — the same place the assignment happens — and
+`take_value` checks the flag against it, so a flag added to one and not
+the other cannot happen: the parser refuses to read a value for a flag
+the verb did not declare.
 """
 
 
@@ -20,6 +26,33 @@ def take_value(
     if next >= len(args):
         raise Error("usage: " + flag + " needs " + what)
     return String(args[next])
+
+
+def take_declared_value(
+    args: List[String],
+    at: Int,
+    flag: String,
+    what: String,
+    value_flags: List[String],
+) raises -> String:
+    """The value of `flag`, which the verb must have declared.
+
+    The check is here, at the one place every verb reads a value, so a
+    flag the parser handles but the declaration does not name is caught
+    at once: the parser and the dispatcher can never disagree about
+    which flags take a value.
+    """
+    if not takes_value(value_flags, flag):
+        raise Error("usage: " + flag + " is not a value flag")
+    return take_value(args, at, flag, what)
+
+
+def takes_value(flags: List[String], flag: String) -> Bool:
+    """True when `flag` is one of the value-taking flags."""
+    for i in range(len(flags)):
+        if flags[i] == flag:
+            return True
+    return False
 
 
 def parse_positive(value: String, message: String) raises -> Int:

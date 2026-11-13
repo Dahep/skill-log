@@ -48,7 +48,7 @@ from std.pathlib import Path
 from skill_log.context import hostname
 from skill_log.detect import shell_quote
 from skill_log.errors import EXIT_FAILURE, EXIT_USAGE, Outcome
-from skill_log.flags import take_value
+from skill_log.flags import take_declared_value
 from skill_log.git import git_commit, git_output, git_toplevel
 from skill_log.json import JsonObject
 from skill_log.markers import parse_marker
@@ -92,7 +92,11 @@ def resolve_merged_examples() -> List[String]:
 
 
 def resolve_merged_value_flags() -> List[String]:
-    """The flags that consume the next argument."""
+    """The flags that consume the next argument.
+
+    The declaration lives here, beside the parser that reads them, and
+    the parser checks every flag it reads a value for against it.
+    """
     var flags = List[String]()
     flags.append("--since")
     flags.append("--db")
@@ -140,16 +144,21 @@ def parse_options(args: List[String]) raises -> Options:
     usage error, raised as a `usage` marker the caller turns into exit 2.
     """
     var options = Options()
+    var value_flags = resolve_merged_value_flags()
     var i = 0
     while i < len(args):
         var arg = args[i]
         if arg == "--since":
-            options.since = take_value(args, i, "--since", "a revision")
+            options.since = take_declared_value(
+                args, i, "--since", "a revision", value_flags
+            )
             i += 1
         elif arg.startswith("--since="):
             options.since = String(arg[byte=8:])
         elif arg == "--db":
-            options.db = take_value(args, i, "--db", "a path")
+            options.db = take_declared_value(
+                args, i, "--db", "a path", value_flags
+            )
             i += 1
         elif arg == "--quiet":
             options.quiet = True

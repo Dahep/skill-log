@@ -44,7 +44,7 @@ nothing written.
 """
 
 from skill_log.errors import EXIT_FAILURE, EXIT_USAGE, Outcome
-from skill_log.flags import take_value
+from skill_log.flags import take_declared_value
 from skill_log.json import JsonObject
 from skill_log.store import (
     GroupCount,
@@ -78,7 +78,11 @@ def stats_examples() -> List[String]:
 
 
 def stats_value_flags() -> List[String]:
-    """The flags that consume the next argument."""
+    """The flags that consume the next argument.
+
+    The declaration lives here, beside the parser that reads them, and
+    the parser checks every flag it reads a value for against it.
+    """
     var flags = List[String]()
     flags.append("--by")
     flags.append("--skill")
@@ -145,21 +149,28 @@ def parse_options(args: List[String]) raises -> Options:
     turns into exit 2: one line, no read.
     """
     var options = Options()
+    var value_flags = stats_value_flags()
     var i = 0
     while i < len(args):
         var arg = args[i]
         if arg == "--by":
-            options.by = parse_by(take_value(args, i, "--by", "a column"))
+            options.by = parse_by(
+                take_declared_value(args, i, "--by", "a column", value_flags)
+            )
             i += 1
         elif arg == "--by-model":
             # The rotation alias, kept so an existing call keeps working.
             options.by = "model"
         elif arg == "--skill":
-            options.skill = take_value(args, i, "--skill", "a name")
+            options.skill = take_declared_value(
+                args, i, "--skill", "a name", value_flags
+            )
             options.given_skill = True
             i += 1
         elif arg == "--db":
-            options.db = take_value(args, i, "--db", "a path")
+            options.db = take_declared_value(
+                args, i, "--db", "a path", value_flags
+            )
             i += 1
         elif arg == "--json":
             options.json = True

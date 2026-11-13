@@ -62,7 +62,7 @@ from sqlite.db import Database
 from skill_log.git import git_branch, git_toplevel
 from skill_log.errors import EXIT_FAILURE, EXIT_USAGE, Outcome
 from skill_log.files import read_text, write_text
-from skill_log.flags import parse_positive, take_value
+from skill_log.flags import parse_positive, take_declared_value
 from skill_log.json import JsonObject
 from skill_log.markers import marker_text, parse_marker
 from skill_log.store import (
@@ -142,7 +142,11 @@ def report_examples() -> List[String]:
 
 
 def report_value_flags() -> List[String]:
-    """The flags that consume the next argument."""
+    """The flags that consume the next argument.
+
+    The declaration lives here, beside the parser that reads them, and
+    the parser checks every flag it reads a value for against it.
+    """
     var flags = List[String]()
     flags.append("--id")
     flags.append("--run")
@@ -334,31 +338,42 @@ def parse_options(args: List[String]) raises -> Options:
     answer is how to.
     """
     var options = Options()
+    var value_flags = report_value_flags()
     var i = 0
     while i < len(args):
         var arg = args[i]
         if arg == "--id":
             options.ids.append(
                 parse_positive(
-                    take_value(args, i, "--id", "an id"),
+                    take_declared_value(
+                        args, i, "--id", "an id", value_flags
+                    ),
                     "--id takes a positive integer",
                 )
             )
             i += 1
         elif arg == "--run":
-            options.run = take_value(args, i, "--run", "an id")
+            options.run = take_declared_value(
+                args, i, "--run", "an id", value_flags
+            )
             options.given_run = True
             i += 1
         elif arg == "--skill":
-            options.skill = take_value(args, i, "--skill", "a name")
+            options.skill = take_declared_value(
+                args, i, "--skill", "a name", value_flags
+            )
             options.given_skill = True
             i += 1
         elif arg == "--slug":
-            options.slug = take_value(args, i, "--slug", "a name")
+            options.slug = take_declared_value(
+                args, i, "--slug", "a name", value_flags
+            )
             options.given_slug = True
             i += 1
         elif arg == "--db":
-            options.db = take_value(args, i, "--db", "a path")
+            options.db = take_declared_value(
+                args, i, "--db", "a path", value_flags
+            )
             i += 1
         elif arg == "--check":
             options.check = True

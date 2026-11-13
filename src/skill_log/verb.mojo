@@ -17,6 +17,8 @@ renderer and the dispatcher both walk the table by path. A tree of
 its own element type.
 """
 
+from skill_log.flags import takes_value
+
 
 struct Verb(Movable):
     """One verb's metadata, as shown by `--help`.
@@ -71,10 +73,7 @@ struct Verb(Movable):
 
     def takes_value(self, arg: String) -> Bool:
         """True when `arg` is one of this verb's value-taking flags."""
-        for i in range(len(self.value_flags)):
-            if self.value_flags[i] == arg:
-                return True
-        return False
+        return takes_value(self.value_flags, arg)
 
 
 def find_verb(verbs: List[Verb], path: String) -> Int:

@@ -29,7 +29,7 @@ row is named from outside the store. `--json` carries the same facts flat.
 from std.pathlib import Path
 
 from skill_log.errors import EXIT_FAILURE, EXIT_USAGE, Outcome
-from skill_log.flags import parse_positive, take_value
+from skill_log.flags import parse_positive, take_declared_value
 from skill_log.json import JsonObject
 from skill_log.markers import marker_text
 from skill_log.store import ResolvedRow, resolve_db, resolve_row
@@ -52,7 +52,11 @@ def resolve_examples() -> List[String]:
 
 
 def resolve_value_flags() -> List[String]:
-    """The flags that consume the next argument."""
+    """The flags that consume the next argument.
+
+    The declaration lives here, beside the parser that reads them, and
+    the parser checks every flag it reads a value for against it.
+    """
     var flags = List[String]()
     flags.append("--id")
     flags.append("--fix")
@@ -101,20 +105,25 @@ def parse_options(args: List[String]) raises -> Options:
     into exit 2.
     """
     var options = Options()
+    var value_flags = resolve_value_flags()
     var i = 0
     while i < len(args):
         var arg = args[i]
         if arg == "--id":
             options.id = parse_positive(
-                take_value(args, i, "--id", "an id"),
+                take_declared_value(args, i, "--id", "an id", value_flags),
                 "--id takes a positive integer",
             )
             i += 1
         elif arg == "--fix":
-            options.fix = take_value(args, i, "--fix", "a commit")
+            options.fix = take_declared_value(
+                args, i, "--fix", "a commit", value_flags
+            )
             i += 1
         elif arg == "--db":
-            options.db = take_value(args, i, "--db", "a path")
+            options.db = take_declared_value(
+                args, i, "--db", "a path", value_flags
+            )
             i += 1
         elif arg == "--dry-run":
             options.dry_run = True

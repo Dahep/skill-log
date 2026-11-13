@@ -73,7 +73,7 @@ from skill_log.files import (
     write_text,
     write_text_mode,
 )
-from skill_log.flags import take_value
+from skill_log.flags import take_declared_value
 from skill_log.json import JsonObject
 from skill_log.report import (
     KEEP_NAME,
@@ -166,19 +166,24 @@ def parse_options(args: List[String]) raises -> Options:
     error, raised as a `usage` marker the caller turns into exit 2.
     """
     var options = Options()
+    var value_flags = setup_value_flags()
     var i = 0
     while i < len(args):
         var arg = args[i]
         if arg == "--repo":
-            options.repo = take_value(args, i, "--repo", "a directory")
+            options.repo = take_declared_value(
+                args, i, "--repo", "a directory", value_flags
+            )
             i += 1
         elif arg == "--skills-dir":
-            options.skills_dir = take_value(
-                args, i, "--skills-dir", "a directory"
+            options.skills_dir = take_declared_value(
+                args, i, "--skills-dir", "a directory", value_flags
             )
             i += 1
         elif arg == "--db":
-            options.db = take_value(args, i, "--db", "a path")
+            options.db = take_declared_value(
+                args, i, "--db", "a path", value_flags
+            )
             i += 1
         elif arg == "--json":
             options.json = True
@@ -800,7 +805,11 @@ def setup_examples() -> List[String]:
 
 
 def setup_value_flags() -> List[String]:
-    """The flags that consume the next argument."""
+    """The flags that consume the next argument.
+
+    The declaration lives here, beside the parser that reads them, and
+    the parser checks every flag it reads a value for against it.
+    """
     var flags = List[String]()
     flags.append("--repo")
     flags.append("--skills-dir")
