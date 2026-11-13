@@ -62,9 +62,7 @@ run() {
     ERR="$(cat "$SCRATCH/stderr")"
 }
 
-# A repository with an origin remote, and a linked worktree of it.
 make_repo() {
-    # make_repo <dir> [repository name]
     mkdir -p "$1"
     git -C "$1" init -q
     git -C "$1" config user.email "test@example.com"
@@ -81,10 +79,8 @@ make_repo() {
 REPO="$SCRATCH/repo"
 make_repo "$REPO"
 
-# The linked worktree gets its own toplevel, not the main checkout's.
 git -C "$REPO" worktree add -q "$SCRATCH/linked" -b linked 2>/dev/null
 
-# Outside a repository: a plain directory that is not one.
 OUTSIDE="$SCRATCH/outside"
 mkdir -p "$OUTSIDE"
 
@@ -107,8 +103,6 @@ run add --skill detect --dry-run --json
 check "outside a repository the repo is empty" "$(json_field "$OUT" repo)" ""
 check "outside a repository the worktree is empty" "$(json_field "$OUT" worktree)" ""
 
-# A repository without an origin remote falls back to the toplevel
-# directory's name.
 NO_REMOTE="$SCRATCH/no-remote"
 mkdir -p "$NO_REMOTE"
 git -C "$NO_REMOTE" init -q
@@ -117,8 +111,6 @@ run add --skill detect --dry-run --json
 check "a repository without an origin falls back to the directory name" \
     "$(json_field "$OUT" repo)" "no-remote"
 
-# A credentialed ssh remote loses its userinfo too, and the name is
-# still the repository's.
 SSH_REPO="$SCRATCH/ssh-repo"
 mkdir -p "$SSH_REPO"
 git -C "$SSH_REPO" init -q
@@ -174,7 +166,6 @@ OUT="$(SKILL_LOG_REPO=fromenv "$BIN" add --skill precedence --dry-run --json \
     --repo flagged)"
 check "the flag wins over the variable" "$(json_field "$OUT" repo)" "flagged"
 
-# Every field's variable is honoured on its own.
 OUT="$(SKILL_LOG_HARNESS=env-harness SKILL_LOG_SESSION=env-session \
     SKILL_LOG_PARENT=env-parent SKILL_LOG_MODEL=env/model \
     SKILL_LOG_WORKTREE=/env/worktree SKILL_LOG_PROJECT=env-project \
@@ -191,7 +182,6 @@ check "SKILL_LOG_T3_THREAD fills the t3 thread" \
     "$(json_field "$OUT" t3_thread)" "env-thread"
 check "the machine is the hostname" "$(json_field "$OUT" machine)" "$(hostname)"
 
-# The flag beats the variable, per field.
 OUT="$(SKILL_LOG_HARNESS=env-harness SKILL_LOG_MODEL=env/model \
     SKILL_LOG_PROJECT=env-project SKILL_LOG_T3_THREAD=env-thread \
     SKILL_LOG_SESSION=env-session SKILL_LOG_PARENT=env-parent \
@@ -228,7 +218,6 @@ check "with no adapter there is no harness" "$(json_field "$OUT" harness)" ""
 check "with no adapter there is no model" "$(json_field "$OUT" model)" ""
 check "with no adapter there is no session" "$(json_field "$OUT" session)" ""
 
-# The opencode adapter, enabled by the environment variable.
 OUT="$(HOME="$OC_HOME" OPENCODE_SESSION_ID=ses_test SKILL_LOG_ADAPTERS=opencode \
     "$BIN" add --skill adapters --dry-run --json)"
 check "the opencode adapter fills the harness" "$(json_field "$OUT" harness)" "opencode"
@@ -241,18 +230,15 @@ OUT="$(HOME="$OC_HOME" OPENCODE_SESSION_ID=ses_nested \
 check "the model reader takes the top-level id" \
     "$(json_field "$OUT" model)" "p/real"
 
-# An escape this reader cannot decode is refused rather than mangled.
 OUT="$(HOME="$OC_HOME" OPENCODE_SESSION_ID=ses_escaped \
     "$BIN" add --skill adapters --dry-run --json --adapter opencode)"
 check "an undecodable escape falls back to the raw value" \
     "$(json_field "$OUT" model)" '{"id":"\u0061","providerID":"p"}'
 
-# A value that is not that shape is passed through unchanged.
 OUT="$(HOME="$OC_HOME" OPENCODE_SESSION_ID=ses_bare \
     "$BIN" add --skill adapters --dry-run --json --adapter opencode)"
 check "a bare model value is passed through" "$(json_field "$OUT" model)" "kimi-k3"
 
-# The same adapter, enabled by the flag.
 OUT="$(HOME="$OC_HOME" OPENCODE_SESSION_ID=ses_test \
     "$BIN" add --skill adapters --dry-run --json --adapter opencode)"
 check "--adapter opencode enables the adapter" "$(json_field "$OUT" harness)" "opencode"
@@ -264,7 +250,6 @@ OUT="$(HOME="$OC_HOME" OPENCODE_SESSION_ID=ses_test \
     "$BIN" add --skill adapters --dry-run --json --adapter opencode --adapter t3)"
 check "--adapter may be repeated" "$(json_field "$OUT" harness)" "opencode"
 
-# The machine is always detected: there is no SKILL_LOG_MACHINE.
 OUT="$(SKILL_LOG_MACHINE=not-the-machine \
     "$BIN" add --skill adapters --dry-run --json)"
 check "SKILL_LOG_MACHINE does not fill the machine" \
@@ -282,13 +267,11 @@ run add --skill machine --dry-run --machine "$(printf 'box\nname')"
 check "a machine with a newline is a usage error" "$STATUS" "2"
 check_one_line "a machine with a newline is one line" "$ERR"
 
-# The flag beats the adapter's value.
 OUT="$(HOME="$OC_HOME" OPENCODE_SESSION_ID=ses_test \
     "$BIN" add --skill adapters --dry-run --json --adapter opencode \
     --model flag/model)"
 check "--model beats the adapter" "$(json_field "$OUT" model)" "flag/model"
 
-# The variable beats the adapter's value.
 OUT="$(HOME="$OC_HOME" OPENCODE_SESSION_ID=ses_test SKILL_LOG_MODEL=env/model \
     "$BIN" add --skill adapters --dry-run --json --adapter opencode)"
 check "SKILL_LOG_MODEL beats the adapter" "$(json_field "$OUT" model)" "env/model"
@@ -311,7 +294,6 @@ OUT="$(T3CODE_HOME="$T3_HOME" "$BIN" add --skill adapters --dry-run --json \
 check "the t3 adapter fills the project" "$(json_field "$OUT" project)" "myproject"
 check "the t3 adapter never invents a thread id" "$(json_field "$OUT" t3_thread)" ""
 
-# Without T3CODE_HOME, the T3 home is `$HOME/.t3`.
 FALLBACK_HOME="$SCRATCH/t3fallback-home"
 mkdir -p "$FALLBACK_HOME/.t3/worktrees/fallback/sub"
 OUT="$(HOME="$FALLBACK_HOME" T3CODE_HOME="" \
@@ -328,7 +310,6 @@ check "the t3 adapter leaves the project empty outside T3" \
 run add --skill adapters --dry-run --json --adapter no-such-adapter
 check "an unknown adapter is ignored" "$STATUS" "0"
 
-# An unknown flag is a usage error, and it is one line.
 run add --skill adapters --no-such-flag
 check "an unknown flag exits 2" "$STATUS" "2"
 check_one_line "an unknown flag is one stderr line" "$ERR"

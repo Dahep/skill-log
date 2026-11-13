@@ -81,8 +81,6 @@ bump() {
     git -C "$1" commit -q -m "$2"
 }
 
-# The human verdict lines are `status  artifact  detail`; the machine
-# line is not one. Two spaces separate the columns.
 status_of() { # status_of <out> <artifact>
     printf '%s\n' "$1" | awk -F'  ' -v a="$2" '$2 == a { print $1 }'
 }
@@ -93,8 +91,6 @@ detail_of() { # detail_of <out> <artifact>
 
 # ------------------------------------------------------------- creation
 #
-# One command makes the repo and the machine ready; a second run is a
-# no-op.
 
 make_repo "$TMP/r1"
 run setup --repo "$TMP/r1"
@@ -158,8 +154,6 @@ check "re-run: the store bytes did not move" "$(cksum <"$DB")" "$DB_SUM"
 
 # --------------------------------------------------------------- check
 #
-# --check asks each owner for its verdict and writes nothing: clean is
-# exit 0, and every drift is exit 1 with the state untouched.
 
 run setup --repo "$TMP/r1" --check
 check "check on a fresh setup exits 0" "$STATUS" "0"
@@ -168,7 +162,6 @@ check "check: the hook is unchanged" "$(status_of "$OUT" hook)" "unchanged"
 check "check: the report dir is unchanged" \
     "$(status_of "$OUT" report_dir)" "unchanged"
 
-# drift: the store is missing.
 rm -f "$DB"
 run setup --repo "$TMP/r1" --check
 check "check: a missing store exits 1" "$STATUS" "1"
@@ -178,7 +171,6 @@ check_contains "check: the drift names the store path" \
 check "check: the store is not written" "$([ -f "$DB" ] && echo yes || echo no)" "no"
 check_one_line "check: one stderr line" "$ERR"
 
-# drift: the hook is missing.
 run setup --repo "$TMP/r1"
 rm -f "$HOOK"
 run setup --repo "$TMP/r1" --check
@@ -188,7 +180,6 @@ check_contains "check: the drift names the hook path" \
     "$(detail_of "$OUT" hook)" "no post-merge hook at $HOOK"
 check "check: the hook is not written" "$([ -e "$HOOK" ] && echo yes || echo no)" "no"
 
-# drift: the ownership marker was stripped from the hook.
 run setup --repo "$TMP/r1"
 sed -i '/^# skill-log:post-merge-hook$/d' "$HOOK"
 cp "$HOOK" "$SCRATCH/hook.nomarker"
@@ -203,9 +194,6 @@ else
     fail "check: the unmarked hook is left byte-for-byte alone"
 fi
 
-# drift: the hook is not executable. Git skips a hook it cannot run, so
-# the merged reports stop resolving — silently. The executable bit is
-# part of the hook's install, and --check sees it.
 rm -f "$HOOK"
 run setup --repo "$TMP/r1"
 chmod 0644 "$HOOK"
@@ -218,7 +206,6 @@ check_contains "check: the drift names the executable bit" \
 check "check: the non-executable hook is not rewritten" \
     "$([ -x "$HOOK" ] && echo yes || echo no)" "no"
 
-# A normal run repairs the mode, and says it did.
 run setup --repo "$TMP/r1"
 check "a non-executable hook: the run exits 0" "$STATUS" "0"
 check "a non-executable hook: the mode is repaired" \
@@ -230,9 +217,6 @@ check_contains "a non-executable hook: the detail names the path" \
 run setup --repo "$TMP/r1" --check
 check "check: a repaired hook is green" "$STATUS" "0"
 
-# drift: the hook carries an execute bit, but not the owner's. Git runs
-# the hook as the user who pulled, which is the owner here — and the
-# owner cannot execute it, so git skips it silently.
 rm -f "$HOOK"
 run setup --repo "$TMP/r1"
 chmod 0641 "$HOOK"
@@ -245,8 +229,6 @@ check_contains "check: the drift names the executable bit" \
 check "check: the hook the owner cannot execute is not rewritten" \
     "$(stat -c %a "$HOOK")" "641"
 
-# A normal run repairs the mode, and says it did. The repair adds the
-# owner's execute bit and leaves the file's other bits alone.
 run setup --repo "$TMP/r1"
 check "a hook the owner cannot execute: the run exits 0" "$STATUS" "0"
 check "a hook the owner cannot execute: the mode is repaired" \
@@ -269,8 +251,6 @@ check "check: the report directory is not written" \
 
 # ------------------------------------------------------- foreign hook
 #
-# A post-merge this tool did not write is refused by name and never
-# overwritten.
 
 make_repo "$TMP/r2"
 printf '#!/bin/sh\necho foreign\n' >"$TMP/r2/.git/hooks/post-merge"
@@ -290,7 +270,6 @@ fi
 
 # ---------------------------------------------------------- remove hook
 #
-# --remove-hook removes only a hook carrying the ownership marker.
 
 rm -f "$HOOK"
 run setup --repo "$TMP/r1"
@@ -319,8 +298,6 @@ fi
 
 # ------------------------------------------------------- non-git dir
 #
-# A checkout that is not a git repository skips the repo-scoped
-# artifacts with a named reason and exits 0.
 
 mkdir -p "$TMP/plain"
 run setup --repo "$TMP/plain" --db "$TMP/plain-store.db"
@@ -339,7 +316,6 @@ check "non-git: the store is still created" \
 
 # ----------------------------------------------------------- no flags
 #
-# --no-hook and --no-report-dir turn one artifact off.
 
 make_repo "$TMP/r5"
 run setup --repo "$TMP/r5" --no-hook --no-report-dir --db "$TMP/r5-store.db"
@@ -358,7 +334,6 @@ check "--no-report-dir: no report directory is written" \
 
 # --------------------------------------------------------------- json
 #
-# One object per artifact examined, exactly the keys the contract names.
 
 make_repo "$TMP/rjson"
 run setup --repo "$TMP/rjson" --dry-run --json --db "$TMP/rjson-store.db"
@@ -389,7 +364,6 @@ check_one_line "json: the failure is one stderr line" "$ERR"
 
 # ------------------------------------------------------------- dry-run
 #
-# --dry-run shows the changes and writes nothing.
 
 make_repo "$TMP/rdry"
 run setup --repo "$TMP/rdry" --dry-run --db "$TMP/rdry-store.db"
@@ -409,7 +383,6 @@ check "dry-run: no report directory is written" \
 
 # ----------------------------------------------- report dir with content
 #
-# A report directory that already exists is left byte-for-byte alone.
 
 make_repo "$TMP/r7"
 mkdir -p "$TMP/r7/.skill-log/reports"
@@ -458,8 +431,6 @@ check "complete report dir: only the three entries exist" \
 
 # ------------------------------------------------------------- the hook
 #
-# The generated hook resolves the CLI at run time, derives the pre-merge
-# reflog position, and exits 0 whatever the CLI does.
 
 make_repo "$TMP/rhook"
 bump "$TMP/rhook" two
@@ -467,7 +438,6 @@ SINCE="$(git -C "$TMP/rhook" rev-parse 'HEAD@{1}')"
 run setup --repo "$TMP/rhook" --db "$TMP/rhook-store.db"
 HOOK8="$TMP/rhook/.git/hooks/post-merge"
 
-# A logging CLI on PATH: branch one of the resolution order.
 FAKE1="$SCRATCH/fake1"
 mkdir -p "$FAKE1"
 ln -s "$GIT_BIN" "$FAKE1/git"
@@ -491,7 +461,6 @@ check "hook: passes the pre-merge reflog position" \
     "$(cat "$SCRATCH/cli1.log" 2>/dev/null)" \
     "resolve-merged --since $SINCE --quiet"
 
-# No skill-log on PATH, but mise is: branch two.
 FAKE2="$SCRATCH/fake2"
 mkdir -p "$FAKE2"
 ln -s "$GIT_BIN" "$FAKE2/git"
@@ -519,7 +488,6 @@ check "hook: the mise fallback runs" \
     "$(cat "$SCRATCH/cli2.log" 2>/dev/null)" \
     "mise:resolve-merged --since $SINCE --quiet"
 
-# Neither on PATH: the shim under $HOME is branch three.
 FAKE3="$SCRATCH/fake3"
 mkdir -p "$FAKE3" "$HOME_DIR/.local/share/mise/shims"
 ln -s "$GIT_BIN" "$FAKE3/git"
@@ -538,7 +506,6 @@ check "hook: the shim fallback runs" \
     "$(cat "$SCRATCH/cli3.log" 2>/dev/null)" \
     "shim:resolve-merged --since $SINCE --quiet"
 
-# Nothing resolves: exit 0 silently.
 rm -rf "$HOME_DIR/.local/share/mise"
 rm -f "$SCRATCH/cli4.log"
 ( cd "$TMP/rhook" && env HOME="$HOME_DIR" PATH="$FAKE3" \
@@ -550,7 +517,6 @@ check "hook: no CLI found is silent on stdout" \
 check "hook: no CLI found is silent on stderr" \
     "$(wc -c <"$SCRATCH/hook.err" | tr -d ' ')" "0"
 
-# A failing CLI: the hook still exits 0 and says nothing.
 FAKE5="$SCRATCH/fake5"
 mkdir -p "$FAKE5"
 ln -s "$GIT_BIN" "$FAKE5/git"
@@ -575,8 +541,6 @@ check "hook: a failing CLI was still called" \
 
 # ------------------------------------------------------------- the pull
 #
-# The acceptance case: a pull keeps its exit status whatever the CLI
-# does, and the hook contributes nothing to the output.
 
 make_repo "$TMP/origin"
 git clone -q "$TMP/origin" "$TMP/clone" 2>/dev/null
@@ -586,7 +550,6 @@ git -C "$TMP/clone" config commit.gpgsign false
 git -C "$TMP/clone" config pull.rebase false
 git -C "$TMP/clone" config pull.ff false
 
-# Diverge: one commit upstream, one in the clone.
 bump "$TMP/origin" upstream
 bump "$TMP/clone" local
 PRE="$(git -C "$TMP/clone" rev-parse HEAD)"
@@ -607,8 +570,6 @@ check "pull: the hook passed the pre-merge position" \
     "$(cat "$SCRATCH/cli5.log")" \
     "failing:resolve-merged --since $PRE --quiet"
 
-# An absent CLI: same promise. The controlled PATH holds git and a
-# failing mise, and the scratch HOME holds no shims.
 git clone -q "$TMP/origin" "$TMP/clone2" 2>/dev/null
 git -C "$TMP/clone2" config user.email test@example.com
 git -C "$TMP/clone2" config user.name test
@@ -635,8 +596,6 @@ check "pull: keeps its exit status with an absent CLI" "$?" "0"
 
 # ---------------------------------------------------------- worktree
 #
-# The hook goes into the repository's common hooks directory, never the
-# worktree's own.
 
 make_repo "$TMP/wtmain"
 git -C "$TMP/wtmain" worktree add -q -b wtbranch "$TMP/wtlink"
@@ -660,10 +619,6 @@ fi
 
 # -------------------------------------------------------------- skills
 #
-# --skills-dir installs the two bundled skills: the read-and-report
-# skill copied verbatim with its version stamp, and the review skill
-# rendered from its template followed by its own usage-log block. A
-# differing copy is left alone unless --force.
 
 DIR="$TMP/skillsdir"
 run setup --repo "$TMP/r1" --skills-dir "$DIR" --db "$TMP/skills-store.db"
@@ -683,9 +638,6 @@ if [ -f "$REVIEW_DOC" ]; then pass "skills install: the review skill lands"; els
     fail "skills install: the review skill lands"
 fi
 
-# The installed body teaches the contract's vocabulary: the marker
-# grammar, the report/show --run/stats --by surface, and the deliberate
-# non-idempotency of add.
 check_contains "the body teaches the marker grammar" \
     "$(cat "$LOG_DOC")" "machine#id"
 check_contains "the body teaches report" "$(cat "$LOG_DOC")" "report"
@@ -696,14 +648,10 @@ check_contains "the body teaches the non-idempotency of add" \
 check_contains "the body says a reader never calls add" \
     "$(cat "$LOG_DOC")" "reader never calls"
 
-# The version stamp is the copied skill's only provenance, and it names
-# this build.
 VER="$(get --version)"
 check_contains "the version stamp matches --version" "$(cat "$LOG_DOC")" \
     "<!-- skill-log:installed version=$VER -->"
 
-# The review skill is the rendered template followed by its own
-# usage-log block; both skills' blocks name their own skill.
 check_contains "the review skill is the rendered template" \
     "$(cat "$REVIEW_DOC")" "# Skill friction review"
 check_contains "the review skill carries its own usage-log block" \
@@ -711,14 +659,12 @@ check_contains "the review skill carries its own usage-log block" \
 check_contains "the read-and-report skill carries its usage-log block" \
     "$(cat "$LOG_DOC")" "add --skill 'skill-log'"
 
-# A fresh install audits clean: install and audit agree.
 run skills audit --dir "$DIR"
 check "skills audit over the install exits 0" "$STATUS" "0"
 check_contains "skills audit reports skill-log ok" "$OUT" "ok  skill-log"
 check_contains "skills audit reports the review skill ok" "$OUT" \
     "ok  skill-friction-review"
 
-# Re-running is a no-op: byte-identical files, an unchanged verdict.
 cp "$LOG_DOC" "$SCRATCH/skill-log.before"
 cp "$REVIEW_DOC" "$SCRATCH/review.before"
 LOG_SUM="$(cksum <"$LOG_DOC")"
@@ -732,16 +678,12 @@ check "skills re-run: the read-and-report bytes did not move" \
 check "skills re-run: the review bytes did not move" \
     "$(cksum <"$REVIEW_DOC")" "$REVIEW_SUM"
 
-# A differing copy is left alone and named; --force replaces it. The
-# reason names the skill, the refusal and the one flag that overrides.
 sed -i 's/# Skill log/# Skill log, edited/' "$LOG_DOC"
 cp "$LOG_DOC" "$SCRATCH/skill-log.edited"
 run setup --repo "$TMP/r1" --skills-dir "$DIR" --db "$TMP/skills-store.db"
 check "a differing copy exits 0" "$STATUS" "0"
 check_contains "the differing copy is refused by name" \
     "$(detail_of "$OUT" skills)" "skill-log:skipped"
-# The aggregate says what happened: nothing was written, so the
-# verdict is `skipped`, not `updated`.
 check "a differing copy: the verdict is skipped" \
     "$(status_of "$OUT" skills)" "skipped"
 check_contains "the refusal names the skill's path" \
@@ -768,14 +710,11 @@ else
     fail "--force replaces the copy with this version's install"
 fi
 
-# --check verifies the install: green when it matches, drift on each
-# drift with nothing written.
 run setup --repo "$TMP/r1" --skills-dir "$DIR" --check --db "$TMP/skills-store.db"
 check "check on a fresh install exits 0" "$STATUS" "0"
 check "check on a fresh install is unchanged" \
     "$(status_of "$OUT" skills)" "unchanged"
 
-# drift: a skill is missing.
 rm "$REVIEW_DOC"
 run setup --repo "$TMP/r1" --skills-dir "$DIR" --check --db "$TMP/skills-store.db"
 check "check: a missing skill exits 1" "$STATUS" "1"
@@ -786,7 +725,6 @@ check "check: the missing skill is not written" \
     "$([ -e "$REVIEW_DOC" ] && echo yes || echo no)" "no"
 cp "$SCRATCH/review.before" "$REVIEW_DOC"
 
-# drift: the version stamp was stripped.
 sed -i '/skill-log:installed version/d' "$LOG_DOC"
 cp "$LOG_DOC" "$SCRATCH/skill-log.nostamp"
 run setup --repo "$TMP/r1" --skills-dir "$DIR" --check --db "$TMP/skills-store.db"
@@ -801,7 +739,6 @@ else
 fi
 cp "$SCRATCH/skill-log.before" "$LOG_DOC"
 
-# drift: an edited body.
 sed -i 's/# Skill log/# Skill log, edited/' "$LOG_DOC"
 cp "$LOG_DOC" "$SCRATCH/skill-log.edited2"
 run setup --repo "$TMP/r1" --skills-dir "$DIR" --check --db "$TMP/skills-store.db"
@@ -816,7 +753,6 @@ else
 fi
 cp "$SCRATCH/skill-log.before" "$LOG_DOC"
 
-# drift: a stale install — the stamp names another version.
 sed -i "s/version=$VER/version=0.0.1/" "$LOG_DOC"
 run setup --repo "$TMP/r1" --skills-dir "$DIR" --check --db "$TMP/skills-store.db"
 check "check: a stale install exits 1" "$STATUS" "1"
@@ -824,8 +760,6 @@ check_contains "check: the stale install names its version" \
     "$(detail_of "$OUT" skills)" \
     "skill-log:drift (installed by 0.0.1"
 
-# A normal run leaves a stale install alone: nothing was written, so
-# the per-skill answer is `skipped` and the aggregate says `skipped`.
 cp "$LOG_DOC" "$SCRATCH/skill-log.stale"
 run setup --repo "$TMP/r1" --skills-dir "$DIR" --db "$TMP/skills-store.db"
 check "a stale install: the run exits 0" "$STATUS" "0"
@@ -840,8 +774,6 @@ else
 fi
 cp "$SCRATCH/skill-log.before" "$LOG_DOC"
 
-# The skills verdict keeps the artifact/status/detail shape, with each
-# skill and its verdict named in detail, and --dry-run writes nothing.
 DIRJ="$TMP/skillsdir-json"
 mkdir -p "$DIRJ"
 run setup --repo "$TMP/r1" --skills-dir "$DIRJ" --dry-run --json \
@@ -868,8 +800,6 @@ if objects[-1]["detail"] != ("skill-log:created (would write " + dirj + "/skill-
 print(verdict)
 ' "$DIRJ")" "ok"
 
-# A missing skills directory is created by the install; a path that is
-# not a directory is skipped with its named reason.
 DIR3="$TMP/skillsdir3"
 run setup --repo "$TMP/r1" --skills-dir "$DIR3" --db "$TMP/skills3-store.db"
 check "a missing skills directory is created" \
@@ -889,8 +819,6 @@ check "a non-directory path is skipped" \
 check_contains "a non-directory skip is named" \
     "$(detail_of "$OUT" skills)" "is not a directory"
 
-# The review skill renders from the effective template: customising
-# means editing the template, not the installed file.
 mkdir -p "$HOME_DIR/.config/skill-log/templates"
 printf '# custom review body <command>\n' \
     >"$HOME_DIR/.config/skill-log/templates/skill-friction-review.md"
@@ -907,8 +835,6 @@ check "template override: --check is green" "$STATUS" "0"
 
 # ------------------------------------------- a moved shipped default
 #
-# A shipped default that moved since the user copy was seeded is named
-# by `setup --check`, with the two commands that adopt it.
 run skills template seed --force
 check "the user copies are seeded" "$STATUS" "0"
 SEEDED_DIR="$HOME_DIR/.local/state/skill-log/seeded-from"
@@ -928,7 +854,6 @@ check_contains "a moved default: --check names seed --force" \
     "$(detail_of "$OUT" skills)" "skills template seed --force"
 check_contains "a moved default: --check names adopt" \
     "$(detail_of "$OUT" skills)" "skills adopt"
-# The same answer in JSON, where the detail carries the two commands.
 run setup --repo "$TMP/r1" --skills-dir "$DIR4" --check --json \
     --db "$TMP/skills4-store.db"
 check_contains "a moved default: --json names it" \
@@ -942,8 +867,6 @@ rm -rf "$HOME_DIR/.config/skill-log"
 
 # --------------------------------------------------------- store refusals
 #
-# A store that is not this schema is named and left exactly as found:
-# setup never migrates.
 
 make_repo "$TMP/rref"
 sqlite3 "$TMP/foreign.db" "CREATE TABLE other (x)"
@@ -989,8 +912,6 @@ check_absent "a store that cannot be created leaks no sqlite3_open text" \
     "$ERR" "sqlite3_open("
 check_one_line "a store that cannot be created is one stderr line" "$ERR"
 
-# The same path through `add` is classified the same way — the two paths
-# share one taxonomy, so the wording agrees.
 run add --skill demo --db "$TMP/store-is-a-dir"
 check "add on the same path exits 1" "$STATUS" "1"
 check_contains "add on the same path is named by the taxonomy" \
@@ -1000,7 +921,6 @@ check_absent "add on the same path leaks no engine wording" \
 
 # ------------------------------------------------------------- usage
 #
-# Every help level ends with 2 to 4 real invocations.
 
 run setup --help
 check "help exits 0" "$STATUS" "0"
