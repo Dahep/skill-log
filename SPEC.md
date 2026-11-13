@@ -326,9 +326,10 @@ Write the committed report listing the rows a change resolves. Policy
 - Ids are validated against the store; unknown ids are named. Already-resolved
   rows are skipped and reported.
 - New markers are unioned with the file's current contents. Existing lines are
-  preserved byte-for-byte, including a marker naming another machine: the tool
-  never adds a foreign marker, and never removes one a previous report carried.
-  Problem text and project details never appear.
+  preserved in their canonical spelling; a hand-written non-canonical line is
+  rewritten to it, never removed. A marker naming another machine is kept: the
+  tool never adds a foreign marker, and never removes one a previous report
+  carried. Problem text and project details never appear.
 - `--check` validates an existing report without writing. `--dry-run` writes
   nothing. `--json` carries the path and the markers.
 - Re-running over an unchanged report prints that it is already reported.
@@ -413,7 +414,8 @@ Read-only. Reports each skill's usage-log state and writes nothing.
 - `--dir <dir>` is required. `--json` for pipes. `--dry-run` is accepted and
   changes nothing.
 - One line per skill. Exit 1 on any state other than `ok` or `vendored`, 0
-  when clean.
+  when clean. A shipped default that moved since the user copy was seeded also
+  exits 1, even when every skill's own state is `ok`.
 - A directory that holds no skills is refused.
 - §7 defines the states and the fence.
 
@@ -660,7 +662,9 @@ session decides how the log gets read. Neither changes the other's contract.
 - **Hand-written infrastructure** (the ecosystem does not provide it):
   subcommand dispatch; the writer's clock, read through SQLite's own `now` and
   the hostname through libc `gethostname`; the JSON writer (the tool writes
-  JSON and never parses it); marker and report parsing; the read-only SQLite
+  JSON and does not parse it — the one exception is the opencode adapter's
+  single-field scan of another program's session file, which reads one string
+  field out of a JSON object); marker and report parsing; the read-only SQLite
   reader for another tool's store. Process execution is not hand-written:
   git is run through the standard library's `std.subprocess`.
   [ADR-0001](docs/adr/0001-mojo-binary-and-sqlite.md) records why.
