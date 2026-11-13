@@ -2,8 +2,7 @@ package cli
 
 import "strings"
 
-// RenderVerb is the usage block for one verb: its summary, its usage line, its
-// notes, and two to four real invocations.
+// RenderVerb renders one verb's usage block.
 func RenderVerb(verb Verb) string {
 	var text strings.Builder
 	text.WriteString(verb.Name + " — " + verb.Summary + "\n")
@@ -18,9 +17,7 @@ func RenderVerb(verb Verb) string {
 	return text.String()
 }
 
-// TopLevelHelp is the top-level usage: what the tool is, how to call it, and
-// the verbs it knows. The verb list is one line per verb; the per-verb
-// invocations live in the verb's own --help.
+// TopLevelHelp renders the top-level usage.
 func TopLevelHelp(verbs []Verb) string {
 	var text strings.Builder
 	text.WriteString("skill-log — record agent-skill invocations and the friction they produced\n")

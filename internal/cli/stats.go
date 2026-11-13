@@ -80,7 +80,6 @@ func parseStatsOptions(args []string) (statsOptions, error) {
 	options := statsOptions{by: "skill"}
 	flags := statsFlags(&options)
 	flags.switchFlag("--by-model", func() error {
-		// The rotation alias, kept so an existing call keeps working.
 		options.by = "model"
 		return nil
 	})
@@ -95,9 +94,6 @@ func parseStatsOptions(args []string) (statsOptions, error) {
 	return options, nil
 }
 
-// ratioText is problems per invocation, to two decimals, in integer
-// arithmetic: hundredths are rounded half up, and the same string feeds the
-// table and the JSON so both say the same number.
 func ratioText(problems, invocations int64) string {
 	if invocations <= 0 {
 		return "0.00"
@@ -165,8 +161,6 @@ func handleStats(args []string) Outcome {
 	var groups []store.GroupCount
 	if opened != nil {
 		defer opened.Close()
-		// A store with no tables yet is an empty log: the read answers with
-		// no groups rather than an error.
 		groups, err = opened.GroupCounts(options.by, options.skill)
 		if err != nil {
 			failure := readFailure(path, err)

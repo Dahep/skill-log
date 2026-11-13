@@ -1,10 +1,8 @@
 package cli
 
-// version is the release version, baked in at build time from the tag with
-// -ldflags '-X github.com/Dahep/skill-log/internal/cli.version=...'.
 var version = "0.0.0-dev"
 
-// Version is the release version of this build.
+// Version returns the release version of this build.
 func Version() string { return version }
 
 func versionVerb() Verb {

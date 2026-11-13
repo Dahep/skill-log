@@ -1,5 +1,4 @@
-// Command skill-log records agent-skill invocations and the friction they
-// produced.
+// Command skill-log records agent-skill invocations and their friction.
 package main
 
 import (

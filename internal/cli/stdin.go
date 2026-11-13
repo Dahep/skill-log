@@ -5,16 +5,9 @@ import (
 	"os"
 )
 
-// stdinSize is how much of standard input one read takes. A problem's own
-// text is one line, so this is generous; anything longer is truncated at the
-// first line, which is the invariant that matters.
 const stdinSize = 65536
 
-// stdinIsTTY reports whether standard input is a terminal. A hook that reads
-// the problem text from stdin must not block on an interactive terminal, so
-// the caller asks this first and refuses instead of waiting. False is not the
-// safe answer here: a terminal mistaken for a pipe would hang, so an unknown
-// answer counts as a terminal.
+// stdinIsTTY reports whether stdin is a terminal; unknown state counts as a terminal.
 func stdinIsTTY() bool {
 	info, err := os.Stdin.Stat()
 	if err != nil {
@@ -23,8 +16,7 @@ func stdinIsTTY() bool {
 	return info.Mode()&os.ModeCharDevice != 0
 }
 
-// readStdinLine reads one line from standard input, without its newline. An
-// empty string when standard input carries nothing, or cannot be read.
+// readStdinLine reads at most 64 KiB through the first newline from stdin.
 func readStdinLine() string {
 	buffer := make([]byte, stdinSize)
 	count := 0

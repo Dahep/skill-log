@@ -117,8 +117,6 @@ func parseShowOptions(args []string) (showOptions, error) {
 	if err := flags.parse(args); err != nil {
 		return options, err
 	}
-	// An empty filter value selects nothing, which is never what the caller
-	// meant: it is a usage error rather than a silently empty result.
 	if options.givenSkill && strings.TrimSpace(options.skill) == "" {
 		return options, usageError{"--skill needs a name"}
 	}
@@ -216,8 +214,6 @@ func handleShow(args []string) Outcome {
 	var rows []store.Invocation
 	if opened != nil {
 		defer opened.Close()
-		// A store with no tables yet is an empty log: the read answers
-		// with no rows rather than an error.
 		rows, err = opened.Rows(filters)
 		if err != nil {
 			failure := readFailure(path, err)
@@ -227,8 +223,6 @@ func handleShow(args []string) Outcome {
 
 	if len(rows) == 0 {
 		if options.json {
-			// The JSON stream stays parseable: an empty result prints nothing
-			// at all, not an empty object.
 			return OK("")
 		}
 		return OK(showEmptyMessage(filters))
