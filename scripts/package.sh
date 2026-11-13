@@ -105,8 +105,30 @@ case "$VERSION" in
 esac
 
 # ------------------------------------------------------------------ build
+#
+# The archive name states the target: x86_64-unknown-linux-gnu. The
+# binary must be that target, or the name lies about what is inside the
+# archive.
+#
+# Two things guard that. The build is given the target explicitly, so
+# the binary is amd64-linux whatever the builder's own machine is. And
+# the toolchain's target is checked first: a builder whose go env says
+# otherwise is a misconfigured builder, and the archive refuses to be
+# produced by it rather than quietly cross-building from a host the
+# release was never tested on.
 
-SKILL_LOG_VERSION="$VERSION" "$HERE/build.sh"
+TARGET_GOOS=linux
+TARGET_GOARCH=amd64
+
+GOARCH_ENV="$(go env GOARCH)"
+GOOS_ENV="$(go env GOOS)"
+[ "$GOARCH_ENV" = "amd64" ] ||
+    die "the archive name says x86_64-unknown-linux-gnu, but this toolchain builds for $GOARCH_ENV"
+[ "$GOOS_ENV" = "linux" ] ||
+    die "the archive name says x86_64-unknown-linux-gnu, but this toolchain builds for $GOOS_ENV"
+
+GOOS="$TARGET_GOOS" GOARCH="$TARGET_GOARCH" \
+    SKILL_LOG_VERSION="$VERSION" "$HERE/build.sh"
 
 # ------------------------------------------------------- the licence material
 #
@@ -172,8 +194,14 @@ done
 
 # Every file the notices point at is in the archive: a reference that does
 # not resolve is a licence nobody can read.
+#
+# The grep may match nothing, and a pipeline whose first command fails
+# kills the script under `set -o pipefail` — before the `die`s below
+# could report anything. The `|| true` keeps the empty result an empty
+# file, so a notices file with no reference is a fact the loop reads,
+# not a silent death.
 grep -oE 'NOTICE-LICENSES/[A-Za-z0-9._-]+' "$PACK/THIRD-PARTY-NOTICES.md" |
-    sort -u >"$PACK/.referenced"
+    sort -u >"$PACK/.referenced" || true
 while IFS= read -r referenced; do
     [ -n "$referenced" ] || continue
     [ -f "$PACK/$referenced" ] ||
@@ -187,16 +215,8 @@ rm -f "$PACK/.referenced"
 # names in the notices are paths inside the upstream module tree, whose
 # texts the notices reproduce in full in their own appendix.
 for name in "${NOTICE_LICENSES[@]}"; do
-    case "$name" in
-        LICENSE)
-            grep -qF 'NOTICE-LICENSES/LICENSE' "$PACK/THIRD-PARTY-NOTICES.md" ||
-                die "the third-party notices no longer name $name"
-            ;;
-        *)
-            grep -qF "NOTICE-LICENSES/$name" "$PACK/THIRD-PARTY-NOTICES.md" ||
-                die "the third-party notices no longer name $name"
-            ;;
-    esac
+    grep -qF "NOTICE-LICENSES/$name" "$PACK/THIRD-PARTY-NOTICES.md" ||
+        die "the third-party notices no longer name $name"
 done
 
 # The archive carries no shared object: the executable is statically
