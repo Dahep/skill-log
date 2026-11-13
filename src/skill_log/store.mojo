@@ -1,49 +1,4 @@
 """The store: where it lives, what it holds, and when it is refused.
-
-The store is a SQLite file with one schema — the one ADR-0002 defines, with
-explicit harness context in typed columns — stamped with a `PRAGMA
-user_version`. 1.0 has no sync: one store per machine, no origin ids, no
-merged copies.
-
-Three things are decided here, once, so no command has to decide them
-again:
-
-1. **Where the store is.** `--db` first, then `SKILL_LOG_DB`, then
-   `${XDG_STATE_HOME:-$HOME/.local/state}/skill-log/skills.db`.
-2. **What a store may look like.** The schema below, exactly. A file that
-   is not this schema is refused by name; it is never converted and never
-   half-migrated.
-3. **What a store may be asked to do.** A read never creates the state
-   directory, the file, or an empty database. Only a write creates.
-
-The refusal vocabulary is ADR-0002's: a damaged file is *damaged*, a
-SQLite file that is not a skill-log store is *foreign*, a store written by
-the pre-ADR-0002 schema (the Python era) is *older*, and a store stamped
-newer than this binary is *newer*. Every one of them is one named line,
-and none of them is written to. The kind is a value (`Refusal`), never a
-word inside a message: a path the caller named can contain any word, so a
-refusal re-derived from message text would let the path choose the
-answer.
-
-The store classifies a SQLite failure too, on both paths: damage is
-damage, a lock is a lock, a file that cannot be written is read-only, a
-store path that cannot be opened at all is unusable, and anything else
-is the generic operational failure. The read path's classifier is
-`read_failure`; the write path's is `write_failure`. The handler
-renders that answer and never inspects a SQLite message itself
-(SPEC §3).
-
-Both classifiers look at the engine's own wording only: the caller's
-path is stripped from the message first, because the binding puts the
-path it was given into that wording and a path can carry any word in the
-vocabulary.
-
-The write path follows the reference: one transaction covers the
-invocation row and every problem row, and a BUSY/LOCKED failure is retried
-as a whole attempt inside a small wall-clock budget, because the store is
-written by concurrent skill runs. A lock is therefore *not* a refusal: a
-refusal is final, and a lock is retryable. The budget is spent only when
-the lock outlives it, and then the failure is named as the lock it was.
 """
 
 from std.ffi import OwnedDLHandle, RTLD
@@ -64,26 +19,18 @@ from skill_log.text import sanitize
 # higher is refused: an older CLI must not touch a newer store.
 comptime SCHEMA_VERSION = 1
 
-# The invocation table's columns, exactly as ADR-0002 defines them: one
-# row, explicit harness context. Every text column is `NOT NULL DEFAULT
-# ''`, so empty means "unknown or not applicable" and the SQL layer stays
-# free of NULL semantics.
+# The invocation table's columns, exactly as ADR-0002 defines them. This
+# list is the schema: the DDL, the column-name allow-list, the SELECT
+# lists and the JSON key order are all built from it, so a column added
+# to the schema cannot be missing from one of them.
 #
-# This list is the schema. The DDL, the column-name allow-list, the
-# SELECT lists and the JSON key order are all built from it, so a column
-# added to the schema cannot be missing from one of them, and a column
-# removed from the schema cannot linger in one.
-#
-# The order is the order the columns appear in the table, and it is also
-# the order JSON exposes: one flat object whose fields a reader can take
-# without a guess.
+# Every text column is `NOT NULL DEFAULT ''`, so empty means "unknown or
+# not applicable" and the SQL layer stays free of NULL semantics.
 struct ColumnDef:
     """One column: its name, its SQL type, and its default.
 
     `default` is empty for a column that has none — `id` and `ts` are
     written by the engine and by the writer, not by the schema. A column
-    with a default is `NOT NULL` as well: empty means "unknown or not
-    applicable", and the SQL layer stays free of NULL semantics. A column
     without a default and without `not_null` is the engine's own `id`.
     """
 
@@ -137,9 +84,6 @@ def invocation_columns() -> List[ColumnDef]:
 def invocation_ddl() -> String:
     """The `CREATE TABLE` for the invocations table, built from the
     column list.
-
-    The statements the tool runs are the same ones the column list
-    describes: the DDL is generated, never hand-written beside it.
     """
     var columns = invocation_columns()
     var body = String("")
@@ -268,28 +212,14 @@ def foreign_failure(path: String) -> Failure:
 
 
 def locked_failure(path: String) -> Failure:
-    """The named failure for a store another writer is holding.
-
-    A read that arrives behind a write lock waits for it; a write that
-    cannot wait any longer gives up. Both are the same fact: the store
-    is locked, and the path names it.
-    """
+    """The named failure for a store another writer is holding."""
     return operational_failure(
         "locked store: " + path + " is held by another writer"
     )
 
 
 def read_only_failure(path: String) -> Failure:
-    """The named failure for a store file the writer may not write.
-
-    The file is there and the schema is right, but the bytes cannot
-    change: the file carries no write permission, or the directory it
-    lives in does. That is a fact about the store, so it is named as
-    one — and it is named apart from the generic operational failure,
-    because "your store file is read-only" says what to do and
-    "sqlite3_exec failed: … attempt to write a readonly database" does
-    not.
-    """
+    """The named failure for a store file the writer may not write."""
     return operational_failure(
         "read-only store: " + path + " cannot be written to"
     )
@@ -311,15 +241,7 @@ def is_read_only(message: String) -> Bool:
 
 
 def unopenable_failure(path: String) -> Failure:
-    """The named failure for a store file that cannot be opened at all.
-
-    The store's path names something that cannot hold a database: a
-    directory, a path whose parent cannot be written, a path that does
-    not exist and cannot be created. The engine reports it as a bare
-    return code — "sqlite3_open('…') failed (sqlite3 rc=14)" — which
-    says nothing a reader can act on, so the store names the fact
-    instead: the path is there, and it is not a file this tool can open.
-    """
+    """The named failure for a store file that cannot be opened at all."""
     return operational_failure(
         "unusable store path: " + path + " cannot be opened for writing"
     )
@@ -344,18 +266,6 @@ def strip_path(message: String, path: String) -> String:
     message carries the caller's path — and a path can contain any word
     the taxonomy uses. The classification is made on what the binding
     appended *after* the path, never on the path itself.
-
-    Only a *recognized filename field* is removed: the path inside the
-    binding's own quoting — `sqlite3_open('<path>')` — and the path
-    SQLite names after a colon — `unable to open database: <path>`. A
-    path that happens to be a word of the vocabulary is left alone,
-    because removing it would take the engine's own wording with it: a
-    store named `locked` would turn "database is locked" into "database
-    is ", and the write path would stop recognising a lock it has to
-    retry.
-
-    Everything else keeps its order, so the classification sees the
-    engine's own wording.
     """
     if path == "":
         return message
@@ -364,12 +274,7 @@ def strip_path(message: String, path: String) -> String:
 
 
 def strip_field(message: String, field: String) -> String:
-    """`message` with every occurrence of `field` removed.
-
-    The field is a delimited one — the binding's own quoting of a
-    filename, or the separator in front of one — so what is removed is a
-    filename, not a word.
-    """
+    """`message` with every occurrence of `field` removed."""
     if field == "":
         return message
     var at = message.find(field)
@@ -389,15 +294,8 @@ def read_failure(path: String, message: String) -> Failure:
     """The named failure for a SQLite error on the read path.
 
     The store classifies the error and the handler renders the answer:
-    a handler never inspects a SQLite message itself (SPEC §3). Damage
-    is damage, a lock is a lock, and anything else is the generic
-    operational failure.
-
-    The classification is made on the message *without* the caller's
-    path: the binding puts the path it was given into its own wording,
-    and a path can carry any word in the vocabulary. The generic answer
-    keeps the whole message, because there the engine's own words are
-    the only thing known.
+    a handler never inspects a SQLite message itself (SPEC §3). The
+    classification is made on the message *without* the caller's path.
     """
     var detail = strip_path(message, path)
     if is_corruption(detail):
@@ -413,16 +311,8 @@ def write_failure(path: String, message: String) -> Failure:
     """The named failure for a SQLite error on the write path.
 
     The same taxonomy the read path has (SPEC §3), because a write
-    meets the same facts: the file is damaged, another writer holds it,
-    the file cannot be written at all, the store's path cannot be opened
-    at all, or the write failed for some other reason. The generic answer
-    carries the engine's own words, because nothing better is known —
-    but the named ones do not, so a caller never has to read SQLite's
-    wording to learn what happened.
-
-    A path the caller named can carry any word in the vocabulary, so the
-    classification is made on the message the binding appended *after*
-    the path; the path itself is stripped first (see `strip_path`).
+    meets the same facts. The named ones do not carry SQLite's wording,
+    so a caller never has to read it to learn what happened.
     """
     var detail = strip_path(message, path)
     if is_corruption(detail):
@@ -439,27 +329,13 @@ def write_failure(path: String, message: String) -> Failure:
 
 
 def raise_write_failure(path: String, message: String) raises:
-    """Raise the named failure for a write error.
-
-    The store classifies and the handler renders (SPEC §3), but the
-    handler's only seam is the raised error's text. So the store
-    classifies here and raises the *named* message: the handler never
-    sees SQLite's wording, and the taxonomy lives in one place.
-
-    Nothing is raised when the failure is a busy one and the budget is
-    not over — the caller retries that before it gets here.
-    """
+    """Raise the named failure for a write error."""
     var failure = write_failure(path, message)
     raise Error(failure.message)
 
 
 def older_failure(path: String) -> Failure:
-    """The named failure for a store written by the pre-ADR-0002 schema.
-
-    The Python-era file carries the old columns and says nothing about
-    harness, session or repo. It is a skill-log store, but not this one:
-    it is named as older and left exactly as found.
-    """
+    """The named failure for a store written by the pre-ADR-0002 schema."""
     return operational_failure(
         "older store: " + path + " was written by an older skill-log schema"
         + "; 1.0 does not convert it"
@@ -494,11 +370,10 @@ comptime REFUSAL_NEWER = 4
 struct Refusal(Movable):
     """A store that was refused, and why.
 
-    The kind is a value rather than a word inside a message. A path the
+    The kind is a value rather than a word inside a message: a path the
     caller named can contain any word at all, so a scheme that
     re-derived the kind from the message text would let the path decide
-    which refusal the tool reports — `/proc/older/foo.db` would be an
-    older store, and `newer5` would surrender a schema version.
+    which refusal the tool reports.
 
     `found` is the version a newer store carries, and zero for every
     other kind.
@@ -520,10 +395,7 @@ struct Refusal(Movable):
         return self.kind != REFUSAL_NONE
 
     def failure(self) -> Failure:
-        """The named failure for this refusal.
-
-        Called only on a refusal: `refused()` is the caller's check.
-        """
+        """The named failure for this refusal."""
         if self.kind == REFUSAL_DAMAGED:
             return damaged_failure(self.path)
         if self.kind == REFUSAL_FOREIGN:
@@ -570,12 +442,7 @@ def user_version(db: Database) raises -> Int:
 
 
 def missing_store_columns(db: Database) raises -> List[String]:
-    """The 1.0 columns the invocations table lacks.
-
-    Empty means the table carries the current schema. A table that
-    carries the two store tables but misses one of these is the
-    pre-ADR-0002 store, which is refused rather than converted.
-    """
+    """The 1.0 columns the invocations table lacks."""
     return missing_columns(db, "invocations", store_column_names())
 
 
@@ -589,13 +456,7 @@ def store_problem_column_names() -> List[String]:
 
 
 def missing_problem_columns(db: Database) raises -> List[String]:
-    """The 1.0 columns the problems table lacks.
-
-    A file that carries both tables and the right invocations columns
-    but a different problems table is not this schema: it is refused as
-    foreign, because *writing* into it is what would fail, and it would
-    fail after the store had already been accepted.
-    """
+    """The 1.0 columns the problems table lacks."""
     return missing_columns(db, "problems", store_problem_column_names())
 
 
@@ -631,12 +492,7 @@ def is_skill_log_store(db: Database) raises -> Bool:
 
 
 def is_older_store(db: Database) raises -> Bool:
-    """True when this is a skill-log store written before ADR-0002.
-
-    It carries both tables, so it is ours, but it lacks a column the 1.0
-    schema has. The file is named as older and never migrated: moving that
-    data belongs to switching a machine's setup, not to the binary.
-    """
+    """True when this is a skill-log store written before ADR-0002."""
     if not has_store_tables(db):
         return False
     return len(missing_store_columns(db)) > 0
@@ -659,8 +515,7 @@ def disable_close_checkpoint(db: Database):
 
     Best-effort: an older SQLite without the option still reads — it may
     checkpoint on close, which moves committed rows within the store
-    rather than changing them. The connection is the vendored binding's,
-    and its handle is the one field this needs.
+    rather than changing them.
     """
     try:
         var lib = OwnedDLHandle(
@@ -687,11 +542,7 @@ def apply_read_pragmas(db: Database, busy_timeout: Int) raises:
 
 
 def apply_write_pragmas(db: Database, busy_timeout: Int) raises:
-    """The connection settings a write carries.
-
-    The read settings plus WAL, so a concurrent reader never blocks a
-    writer and a writer never blocks a reader.
-    """
+    """The connection settings a write carries."""
     db.execute("PRAGMA journal_mode=WAL")
     apply_read_pragmas(db, busy_timeout)
 
@@ -700,11 +551,7 @@ def apply_write_pragmas(db: Database, busy_timeout: Int) raises:
 
 
 def user_table_count(db: Database) raises -> Int:
-    """How many ordinary tables the file holds.
-
-    A brand-new SQLite file holds none; a file that already holds
-    something else is not ours to convert.
-    """
+    """How many ordinary tables the file holds."""
     var stmt = db.prepare(
         "SELECT count(*) FROM sqlite_master"
         " WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
@@ -739,11 +586,6 @@ def schema_refusal(db: Database, existed: Bool, path: String) raises -> Refusal:
     the write path has to recognise an error. A file with no tables at
     all is not a refusal — it is a store waiting to be initialised — and
     only an *existing* file that already holds something else is foreign.
-
-    The path is filled in by the caller, which is the only place that
-    knows it. It is also the path the damage check strips before it
-    classifies: the binding puts the path it was given into its own
-    wording, and a path can carry any word in the vocabulary.
     """
     try:
         if is_older_store(db):
@@ -779,12 +621,6 @@ def open_read(path: String) raises -> StoreOpen:
     the state directory, the file, or an empty database. A file that
     exists but is not a usable store is refused by name; nothing is
     written to it, not even its journal mode.
-
-    Two settings make that true beyond the schema check: the connection
-    is put in `query_only` mode, so no statement on it can write, and the
-    close-time WAL checkpoint is disabled, so a read does not move the
-    store's bytes. SQLite may still leave its `-wal`/`-shm` sidecars
-    beside a WAL store, which is how the engine reads one.
 
     The vendored binding opens read-write (it exposes no open flags), so
     a file deleted between the `is_file` check and the open would be
@@ -887,13 +723,7 @@ def open_write(path: String) raises -> StoreOpen:
 
 
 struct Verify(Movable):
-    """What `verify` found: a usable store, no file, or a named refusal.
-
-    Exactly the answer the `verify` policy needs (`setup --check`): it
-    says whether the machine's store is ready without creating anything
-    and without a caller re-deriving the taxonomy from a message or a
-    SQLite error.
-    """
+    """What `verify` found: a usable store, no file, or a named refusal."""
 
     var absent: Bool
     var refusal: Refusal
@@ -912,8 +742,7 @@ def verify(path: String) raises -> Verify:
 
     A read that answers instead of failing: a missing file is `absent`,
     a file this tool refuses is that named refusal, and only a store the
-    read accepts is `ok`. Nothing is created and nothing is written —
-    the same no-write promise `open_read` makes.
+    read accepts is `ok`. Nothing is created and nothing is written.
     """
     var result = Verify()
     var opened = open_read(path)
@@ -934,11 +763,9 @@ def verify(path: String) raises -> Verify:
 struct Invocation(Movable):
     """One invocation row, as the store holds it.
 
-    The column order is ADR-0002's, and it is also the order JSON exposes:
-    one flat object whose fields a reader can take without a guess. The
-    columns themselves live in `invocation_columns`, and the row's fields
-    are read and written through that list, so the struct and the schema
-    cannot drift apart.
+    The columns themselves live in `invocation_columns`, and the row's
+    fields are read and written through that list, so the struct and the
+    schema cannot drift apart.
     """
 
     var id: Int
@@ -977,21 +804,16 @@ struct Invocation(Movable):
     def marker(self) -> String:
         """The row's marker: `machine#id`.
 
-        The machine is required because ids are per store. A row that has
-        not been written has no id yet, so it has no marker either: the
-        `--dry-run` preview must not claim a row that does not exist.
+        A row that has not been written has no id yet, so it has no
+        marker either: the `--dry-run` preview must not claim a row that
+        does not exist.
         """
         if self.id == 0:
             return ""
         return marker_text(self.machine, self.id)
 
     def text_column(self, column: String) -> String:
-        """One text column's value, by the column's name.
-
-        The row's fields are named after the schema's columns, and this
-        is the one place that says which field is which: the reader, the
-        writer and the renderer all go through it.
-        """
+        """One text column's value, by the column's name."""
         if column == "ts":
             return self.ts
         if column == "skill":
@@ -1063,12 +885,7 @@ def invocation_text_columns() -> List[ColumnDef]:
 
 
 def read_invocation_row(row: Row) raises -> Invocation:
-    """One invocation row, read through the column list.
-
-    The `SELECT` names the columns in the schema's order, so the row's
-    values land in the same order, and the column list says which column
-    each one belongs to.
-    """
+    """One invocation row, read through the column list."""
     var invocation = Invocation()
     var columns = invocation_columns()
     for i in range(len(columns)):
@@ -1203,9 +1020,6 @@ def read_invocations(db: Database, filters: Filters) raises -> List[Invocation]:
     breaks a tie between two rows of the same instant, so the order is
     total and stable.
 
-    Every problem is read with its row, in ordinal order and sanitized on
-    the way out, so one problem is one line whatever the writer stored.
-
     `filters.limit` of zero means every matching row: `show` always asks
     for 1..500, and `report` must not cap a selection it is stamping.
     """
@@ -1262,9 +1076,7 @@ def group_columns() -> List[String]:
     """The columns a count may be grouped by, default first.
 
     `skill` leads because friction is per skill before it is per anything
-    else, and it is what a bare `stats` reports. The rest are ADR-0002's
-    context columns — the cuts that separate an instruction defect from
-    environment noise.
+    else, and it is what a bare `stats` reports.
     """
     var columns = List[String]()
     columns.append("skill")
@@ -1280,9 +1092,8 @@ def group_columns() -> List[String]:
 def is_group_column(name: String) -> Bool:
     """True when `name` is one of the columns `stats` may group by.
 
-    The one allow-list. `stats` validates its flag against it, and the
-    query below refuses anything else, so no caller can put a column
-    name into the SQL text without having been through this check.
+    The one allow-list: no caller can put a column name into the SQL
+    text without having been through this check.
     """
     var columns = group_columns()
     for i in range(len(columns)):
@@ -1322,12 +1133,7 @@ def read_group_counts(
 
     `COUNT(DISTINCT i.id)` is the denominator and the only honest count:
     the LEFT JOIN produces one line per problem, so `COUNT(*)` would
-    count problems and `COUNT(DISTINCT i.id)` counts runs. `p` is joined
-    rather than sub-queried so a run with no problems still appears, with
-    zeroes, which is what the rate's denominator requires.
-
-    `skill` narrows the whole cut to one skill; empty means every skill.
-    `column` must have passed `is_group_column`.
+    count problems and `COUNT(DISTINCT i.id)` counts runs.
     """
     if not is_group_column(column):
         raise Error("not a groupable column: " + column)
@@ -1376,11 +1182,7 @@ def is_busy(message: String) -> Bool:
 
 
 def now_seconds() -> Float64:
-    """A monotonic clock reading in seconds, for the write budget.
-
-    The retry budget only needs a clock that does not run backwards;
-    `monotonic` is exactly that.
-    """
+    """A monotonic clock reading in seconds, for the write budget."""
     return Float64(monotonic()) / 1_000_000_000.0
 
 
@@ -1404,12 +1206,7 @@ struct WriteResult(Movable):
 # every write: the deadline is the same, the sleep is the same, and the
 # failure that outlives the budget is named as the lock it was.
 struct BusyBudget:
-    """The wall-clock budget a write spends on a lock.
-
-    The deadline is the moment the budget runs out. `retry` answers
-    whether the attempt may be made again, and waits for the shorter of
-    the sleep and the time left.
-    """
+    """The wall-clock budget a write spends on a lock."""
 
     var deadline: Float64
 
@@ -1639,11 +1436,7 @@ def stamp_attempt(path: String, id: Int, fix: String) raises -> ResolvedRow:
     earlier read was only a fast path: two concurrent resolves of the
     same fix would otherwise both see the old value and both write a new
     timestamp. Inside the transaction the second one finds the fix it was
-    about to write and answers `changed = false` instead. A busy failure
-    on the snapshot re-runs the whole attempt, so it rechecks too.
-
-    The transaction guard rolls back if the update fails, so a row is
-    either fully stamped or untouched.
+    about to write and answers `changed = false` instead.
     """
     var result = ResolvedRow()
     var opened = open_write(path)
@@ -1707,10 +1500,8 @@ comptime SKIP_LOGGED_AFTER = "logged_after_commit"
 struct Located(Movable):
     """One marker the scan found, and the commit and time it came from.
 
-    A marker parses to `machine#id`; the commit and its epoch are the
-    stamp and the guard. The epoch is the commit time in seconds, which
-    is what a row logged after the commit is compared against. This is
-    the scan's yield: only the resolution plan consumes it.
+    The epoch is the commit time in seconds, which is what a row logged
+    after the commit is compared against.
     """
 
     var machine: String
@@ -1754,11 +1545,8 @@ struct MergedSkip(Movable):
 struct Stamped(Movable):
     """One row a merged scan stamped: its marker and what stamped it.
 
-    The commit travels with the marker because the two consumers of the
-    answer both need it — the writer stamps the row with it, and the
-    summary names it. The machine and the id travel too, so the writer
-    finds the row without searching the scan's markers for the one that
-    matches.
+    The machine and the id travel too, so the writer finds the row
+    without searching the scan's markers for the one that matches.
     """
 
     var marker: String
@@ -1784,9 +1572,8 @@ struct MergedResult(Movable):
 
     `stamped` carries the marker and the commit that stamped it;
     `unchanged` carries markers only, because a row that already
-    carries the commit is named and nothing else. `refusal` is the
-    store refusal when the file could not be used at all. A dry run
-    fills the same three lists and writes nothing.
+    carries the commit is named and nothing else. A dry run fills the
+    same three lists and writes nothing.
     """
 
     var stamped: List[Stamped]
@@ -1828,8 +1615,6 @@ def read_resolution_rows(db: Database) raises -> List[ResolutionRow]:
     The timestamp becomes epoch seconds through `strftime('%s', ts)`,
     not through `unixepoch(ts)`: `unixepoch` was added in SQLite 3.38
     and the release bundles the pinned 3.37, where it does not exist.
-    A timestamp SQLite cannot parse reads as NULL, and `COALESCE` turns
-    that into zero — the same answer the old query gave.
     """
     var rows = List[ResolutionRow]()
     var stmt = db.prepare(
@@ -1884,16 +1669,12 @@ def plan(
     Newest wins because the scan walks commits newest first and the plan
     sees one marker per row. A row stamped with the *same* commit is
     unchanged; a row stamped with a *different* commit is restamped, so
-    an amended fix supersedes the earlier one — idempotency is a second
-    scan seeing the same commit, not a freeze on the first fix.
+    an amended fix supersedes the earlier one.
 
     A marker whose machine is not this host's spelling is foreign and is
-    never stamped (SPEC §2). The rows this store holds do not change
-    that: a row carrying another machine's name is a row this machine
-    does not own, and its id is not this store's to stamp. The one
-    exception the store has always had is a row with an *empty* machine
-    column — written before `add` always filled it — and that row
-    belongs to the machine reading it.
+    never stamped (SPEC §2). The one exception the store has always had
+    is a row with an *empty* machine column — written before `add`
+    always filled it — and that row belongs to the machine reading it.
     """
     var result = MergedResult()
     for i in range(len(located)):

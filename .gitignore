@@ -4,3 +4,6 @@
 
 # Release packaging cache (scripts/package.sh)
 /.package-cache/
+
+# Python bytecode (scripts/prose-count.py)
+__pycache__/
