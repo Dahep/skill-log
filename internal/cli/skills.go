@@ -10,6 +10,7 @@ import (
 	"github.com/Dahep/skill-log/internal/document"
 	"github.com/Dahep/skill-log/internal/format"
 	"github.com/Dahep/skill-log/internal/settings"
+	templatepkg "github.com/Dahep/skill-log/internal/template"
 )
 
 // The `skills` verb: `audit`, `adopt`, and `template show|seed|reset`.
@@ -57,11 +58,6 @@ import (
 // A skill whose frontmatter carries `metadata:` with a `source:` key is a
 // copy of someone else's skill and is skipped entirely (SPEC §7); see
 // document.IsVendored.
-
-// The state directory that records the seeded-from hash of each user copy. It
-// is under XDG state — never under the user config dir — so a tool that reads
-// the config dir never trips over it.
-const seededDirName = "seeded-from"
 
 // The five actions `adopt` reports, exactly the SPEC §5.10 vocabulary.
 const (
@@ -125,7 +121,7 @@ func skillsVerb() Verb {
 		// The flags that consume the next argument. The dispatcher reads this
 		// to tell `--dir --help` (a directory named `--help`) from a help
 		// request.
-		ValueFlags: []string{"--dir", "--template-dir"},
+		ValueFlags: skillsFlags(&skillsOptions{}).names(),
 		Notes: "The subcommands, not mode flags: audit classifies, template\n" +
 			"manages the two shipped defaults, adopt writes. audit is\n" +
 			"read-only and exits 1 on any state but ok or vendored.\n" +
@@ -167,26 +163,20 @@ func init() { register(skillsVerb()) }
 // `template` takes a second positional (`show`, `seed`, `reset`). An unknown
 // flag or a missing value is a usage error, raised as a usage marker the
 // caller turns into exit 2.
+func skillsFlags(options *skillsOptions) *flagSet {
+	flags := &flagSet{}
+	flags.value("--dir", "a path", func(value string) error { options.dir = value; return nil })
+	flags.value("--template-dir", "a path", func(value string) error { options.templateDir = value; return nil })
+	return flags
+}
+
 func parseSkillsOptions(args []string) (skillsOptions, error) {
 	var options skillsOptions
 	var positionals []string
+	flags := skillsFlags(&options)
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		switch arg {
-		case "--dir":
-			value, err := takeValue(args, i, "--dir", "a path")
-			if err != nil {
-				return options, err
-			}
-			options.dir = value
-			i++
-		case "--template-dir":
-			value, err := takeValue(args, i, "--template-dir", "a path")
-			if err != nil {
-				return options, err
-			}
-			options.templateDir = value
-			i++
 		case "--json":
 			options.json = true
 		case "--dry-run":
@@ -194,11 +184,18 @@ func parseSkillsOptions(args []string) (skillsOptions, error) {
 		case "--force":
 			options.force = true
 		default:
+			if _, ok := flags.lookup(arg); ok {
+				i++
+				continue
+			}
 			if strings.HasPrefix(arg, "--") {
 				return options, usageError{"unknown option: " + arg}
 			}
 			positionals = append(positionals, arg)
 		}
+	}
+	if err := flags.parse(args); err != nil {
+		return options, err
 	}
 
 	if len(positionals) == 0 {
@@ -216,66 +213,6 @@ func parseSkillsOptions(args []string) (skillsOptions, error) {
 	return options, nil
 }
 
-// skillTemplate is one effective template: its bytes, its source, its hash.
-type skillTemplate struct {
-	name    string
-	content string
-	source  string
-	hash    string
-	moved   bool
-}
-
-// loadTemplate returns the effective template name, resolved over the shipped
-// default.
-//
-// The source is the first of the chain that has the file: the resolved
-// directory, then the shipped default embedded in the binary. The hash is of
-// the effective bytes. `moved` is set when the file came from the user
-// directory and the shipped default's hash differs from the seeded-from hash
-// on record — that is the "the shipped default moved since this copy was
-// seeded" report.
-func loadTemplate(name, templateDir string) (skillTemplate, error) {
-	out := skillTemplate{name: name, source: "shipped"}
-	// The directory is checked before the path is built: an empty directory
-	// has no file to name, and joining onto it would spell a path at the
-	// filesystem root.
-	if templateDir != "" {
-		candidate := joinPath(templateDir, name)
-		if format.IsRegularFile(candidate) {
-			content, err := format.ReadText(candidate)
-			if err != nil {
-				return out, errors.New("cannot read template " + candidate + ": " + err.Error())
-			}
-			out.content = content
-			out.source = candidate
-		}
-	}
-	if out.source == "shipped" {
-		content, err := assets.Shipped(name)
-		if err != nil {
-			return out, err
-		}
-		out.content = content
-	}
-	out.hash = document.Hash(out.content)
-
-	// A user copy's provenance: compare the shipped default's current hash to
-	// the hash the copy was seeded from. Only a user copy has a seeded-from
-	// record to compare against; a shipped default cannot have "moved" from
-	// itself.
-	if out.source != "shipped" {
-		seeded := readSeeded(name)
-		if seeded != "" {
-			shipped, err := assets.Shipped(name)
-			if err != nil {
-				return out, err
-			}
-			out.moved = seeded != document.Hash(shipped)
-		}
-	}
-	return out, nil
-}
-
 // movedDefaultNote is the one line that names a moved shipped default, or "".
 //
 // SPEC §7: a shipped default that moved since the user copy was seeded is
@@ -285,8 +222,8 @@ func loadTemplate(name, templateDir string) (skillTemplate, error) {
 //
 // The line is one line, because the failure it belongs to gets exactly one
 // stderr line (SPEC §2).
-func movedDefaultNote(usage, review skillTemplate) string {
-	if !usage.moved && !review.moved {
+func movedDefaultNote(usage, review templatepkg.Template) string {
+	if !usage.Moved && !review.Moved {
 		return ""
 	}
 	return "the shipped default moved; adopt it with" +
@@ -304,121 +241,6 @@ func movedSuffix(moved string) string {
 		return ""
 	}
 	return "; " + moved
-}
-
-// validateEffective refuses a template whose placeholders are wrong, by name.
-//
-// This is the boundary guard SPEC §7 names: a usage-log template that lost
-// its `<name>` or its `<command> add` invocation would silently stop every
-// skill from logging, so it is refused before it renders.
-func validateEffective(name string, template skillTemplate) error {
-	return document.ValidateTemplate(name, template.content)
-}
-
-// resolveTemplateDir returns the effective template directory, by the spec's
-// chain.
-//
-// `--template-dir` first, then `SKILL_LOG_TEMPLATE_DIR`, then the user config
-// directory. The shipped defaults are a separate fallback: a directory that
-// does not contain a given template name falls through to the shipped default
-// for that name.
-func resolveTemplateDir(flag string) string {
-	if strings.TrimSpace(flag) != "" {
-		return strings.TrimSpace(flag)
-	}
-	if env := settings.EnvOrEmpty("SKILL_LOG_TEMPLATE_DIR"); strings.TrimSpace(env) != "" {
-		return strings.TrimSpace(env)
-	}
-	return settings.TemplatesDir()
-}
-
-// seededPath is where the seeded-from record for template name lives (XDG
-// state).
-func seededPath(name string) string {
-	return joinPath(joinPath(settings.StateDir(), seededDirName), name)
-}
-
-// readSeeded returns the seeded-from hash of the user's name copy, or "".
-//
-// The record is a single line: the hash of the shipped default the copy was
-// seeded from. A missing record means the copy predates the record (or was
-// never seeded here) — reported as unknown, not moved.
-func readSeeded(name string) string {
-	path := seededPath(name)
-	if !format.IsRegularFile(path) {
-		return ""
-	}
-	text, err := format.ReadText(path)
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(text)
-}
-
-// writeSeeded records the seeded-from hash for template name under XDG state.
-func writeSeeded(name, hashValue string) error {
-	dir := joinPath(settings.StateDir(), seededDirName)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	return format.WriteText(seededPath(name), hashValue+"\n")
-}
-
-// clearSeeded removes the seeded-from record for template name (as `reset`).
-func clearSeeded(name string) {
-	path := seededPath(name)
-	if format.IsRegularFile(path) {
-		_ = os.Remove(path)
-	}
-}
-
-// findInPath returns program as the first executable name on PATH, or
-// unchanged.
-//
-// The shell's own first-match rule, for when the tool is invoked by bare name:
-// PATH is walked left to right and the first entry that holds the file wins. A
-// name PATH does not carry comes back as it went in — the caller still
-// resolves it, and still falls back to the given name.
-func findInPath(program string) string {
-	path := settings.EnvOrEmpty("PATH")
-	start := 0
-	n := len(path)
-	for start <= n {
-		cut := strings.Index(path[start:], ":")
-		if cut < 0 {
-			cut = n
-		} else {
-			cut = start + cut
-		}
-		entry := path[start:cut]
-		if entry != "" {
-			candidate := entry + "/" + program
-			if format.IsRegularFile(candidate) {
-				return candidate
-			}
-		}
-		start = cut + 1
-	}
-	return program
-}
-
-// resolvedCommand returns the path of this binary, resolved: `<command>`'s
-// value.
-//
-// "The resolved binary path" is one answer no matter how the tool was
-// invoked: a bare name is looked up on PATH, and whatever is found — or given
-// — is resolved to one absolute, symlink-free path. A name the filesystem
-// cannot resolve (a deleted binary, say) is used as it was given rather than
-// dropped.
-func resolvedCommand() string {
-	program := os.Args[0]
-	if !strings.Contains(program, "/") {
-		program = findInPath(program)
-	}
-	if real := format.ResolvePath(program); real != "" {
-		return real
-	}
-	return program
 }
 
 // joinPath is the tool's path spelling: the directory and the name joined
@@ -474,7 +296,7 @@ type skillState struct {
 //
 // The name is the skill's frontmatter `name:`, else the directory name it is
 // called by everywhere else: the same name `adopt` renders for.
-func auditSkill(dir, name string, template skillTemplate, command string) (skillState, error) {
+func auditSkill(dir, name string, template templatepkg.Template, command string) (skillState, error) {
 	result := skillState{skill: name, path: joinPath(dir, name)}
 	docPath := joinPath(result.path, "SKILL.md")
 	text, err := format.ReadText(docPath)
@@ -485,7 +307,7 @@ func auditSkill(dir, name string, template skillTemplate, command string) (skill
 	if skillName == "" {
 		skillName = name
 	}
-	rendered := document.Render(template.content, skillName, command)
+	rendered := document.Render(template.Content, skillName, command)
 	// The document package owns the classification; the audit only names the
 	// skill it came from. IsVendored short-circuits inside Classify, which
 	// is where the vendor stamp is decided.
@@ -517,7 +339,7 @@ type adopted struct {
 // the atomic replacement, so no byte outside the fence can change and no
 // half-written file is ever visible. A dry run reports the same actions and
 // writes nothing.
-func adoptSkill(dir, name string, template skillTemplate, command string, force, dryRun bool) (adopted, error) {
+func adoptSkill(dir, name string, template templatepkg.Template, command string, force, dryRun bool) (adopted, error) {
 	result := adopted{skill: name, path: joinPath(dir, name)}
 	docPath := joinPath(result.path, "SKILL.md")
 	text, err := format.ReadText(docPath)
@@ -531,7 +353,7 @@ func adoptSkill(dir, name string, template skillTemplate, command string, force,
 	if skillName == "" {
 		skillName = name
 	}
-	rendered := document.Render(template.content, skillName, command)
+	rendered := document.Render(template.Content, skillName, command)
 	result.state = document.Classify(
 		text,
 		rendered.TemplateHash,
@@ -571,11 +393,11 @@ func adoptSkill(dir, name string, template skillTemplate, command string, force,
 // auditJSONLine is one audit object, exactly `skill`, `path`, `state`
 // (SPEC §5.10).
 func auditJSONLine(item skillState) string {
-	return "{" +
-		`"skill":` + format.JSONString(item.skill) +
-		`,"path":` + format.JSONString(item.path) +
-		`,"state":` + format.JSONString(item.state) +
-		"}"
+	return format.Object(
+		format.Str("skill", item.skill),
+		format.Str("path", item.path),
+		format.Str("state", item.state),
+	)
 }
 
 // auditTextLine is one audit line for a person: the state, the skill, the path.
@@ -586,12 +408,12 @@ func auditTextLine(item skillState) string {
 // adoptJSONLine is one adopt object, exactly `skill`, `path`, `state`,
 // `action` (SPEC §5.10).
 func adoptJSONLine(item adopted) string {
-	return "{" +
-		`"skill":` + format.JSONString(item.skill) +
-		`,"path":` + format.JSONString(item.path) +
-		`,"state":` + format.JSONString(item.state) +
-		`,"action":` + format.JSONString(item.action) +
-		"}"
+	return format.Object(
+		format.Str("skill", item.skill),
+		format.Str("path", item.path),
+		format.Str("state", item.state),
+		format.Str("action", item.action),
+	)
 }
 
 // adoptTextLine is one adopt line for a person: the action, the state, the
@@ -601,15 +423,17 @@ func adoptTextLine(item adopted) string {
 }
 
 // templateJSON is one template object, per SPEC §5.10's `skills template show`.
-func templateJSON(t skillTemplate) string {
-	return "{" +
-		`"name":` + format.JSONString(t.name) +
-		`,"source":` + format.JSONString(t.source) +
-		`,"content":` + format.JSONString(t.content) +
-		`,"template_hash":` + format.JSONString(t.hash) +
-		`,"content_hash":` + format.JSONString(t.hash) +
-		`,"moved":` + format.JSONBool(t.moved) +
-		"}"
+func templateJSON(t templatepkg.Template) string {
+	// The template file's source is its content, so template_hash and
+	// content_hash deliberately carry the same value.
+	return format.Object(
+		format.Str("name", t.Name),
+		format.Str("source", t.Source),
+		format.Str("content", t.Content),
+		format.Str("template_hash", t.Hash),
+		format.Str("content_hash", t.Hash),
+		format.Bool("moved", t.Moved),
+	)
 }
 
 // templateAction is one template's outcome under `seed` or `reset`.
@@ -626,10 +450,10 @@ type templateAction struct {
 // templateActionJSON is one action object, exactly `path`, `action`
 // (SPEC §5.10).
 func templateActionJSON(item templateAction) string {
-	return "{" +
-		`"path":` + format.JSONString(item.path) +
-		`,"action":` + format.JSONString(item.action) +
-		"}"
+	return format.Object(
+		format.Str("path", item.path),
+		format.Str("action", item.action),
+	)
 }
 
 // subcommandHelp is the usage block for one `skills` subcommand.
@@ -760,6 +584,12 @@ func subcommandHelp(sub string) string {
 // show --help` the show block, and `skills --help` the whole verb block. The
 // subcommand is read from the first positional, so the help target is known
 // before flags are parsed.
+
+func skillsFlagValue(arg string) bool {
+	flags := skillsFlags(&skillsOptions{})
+	_, ok := flags.lookup(arg)
+	return ok
+}
 func handleSkills(args []string) Outcome {
 	// Find the subcommand and whether help was asked for, without parsing
 	// values: a bare scan, so `--dir --help` still treats `--help` as a value
@@ -772,7 +602,7 @@ func handleSkills(args []string) Outcome {
 		switch {
 		case arg == "--help" || arg == "-h":
 			wantsHelp = true
-		case arg == "--dir" || arg == "--template-dir":
+		case skillsFlagValue(arg):
 			i++
 		case !strings.HasPrefix(arg, "--"):
 			positionals = append(positionals, arg)
@@ -799,11 +629,7 @@ func handleSkills(args []string) Outcome {
 
 	options, err := parseSkillsOptions(args)
 	if err != nil {
-		var usage usageError
-		if errors.As(err, &usage) {
-			return Fail(usage.Error()[len("usage: "):], ExitUsage)
-		}
-		return Fail(err.Error(), ExitFailure)
+		return usageOutcome(err)
 	}
 
 	switch options.sub {
@@ -841,16 +667,16 @@ func handleAudit(options skillsOptions) Outcome {
 	// The current render is what the fence is compared against. The effective
 	// template is validated first: a broken template must not silently mark
 	// every skill stale.
-	templateDir := resolveTemplateDir(options.templateDir)
-	template, err := loadTemplate(assets.UsageLogName, templateDir)
+	templateDir := templatepkg.ResolveDir(options.templateDir)
+	template, err := templatepkg.Load(assets.UsageLogName, templateDir)
 	if err != nil {
 		return Fail(err.Error(), ExitFailure)
 	}
-	review, err := loadTemplate(assets.ReviewName, templateDir)
+	review, err := templatepkg.Load(assets.ReviewName, templateDir)
 	if err != nil {
 		return Fail(err.Error(), ExitFailure)
 	}
-	if err := validateEffective(assets.UsageLogName, template); err != nil {
+	if err := templatepkg.Validate(assets.UsageLogName, template); err != nil {
 		return Fail(err.Error(), ExitFailure)
 	}
 
@@ -863,7 +689,7 @@ func handleAudit(options skillsOptions) Outcome {
 	// The resolved binary path is the other half of the current render: the
 	// block names it, so a binary that moved makes every block an older
 	// render.
-	command := resolvedCommand()
+	command := templatepkg.ResolvedCommand()
 	names := skillDirs(dir)
 	if len(names) == 0 {
 		return Fail("no skills in "+dir+" (no subdirectory holds a SKILL.md)", ExitFailure)
@@ -919,16 +745,16 @@ func handleAdopt(options skillsOptions) Outcome {
 
 	// The effective template is validated first: rendering from a broken
 	// template would write blocks no skill can log from.
-	templateDir := resolveTemplateDir(options.templateDir)
-	template, err := loadTemplate(assets.UsageLogName, templateDir)
+	templateDir := templatepkg.ResolveDir(options.templateDir)
+	template, err := templatepkg.Load(assets.UsageLogName, templateDir)
 	if err != nil {
 		return Fail(err.Error(), ExitFailure)
 	}
-	if err := validateEffective(assets.UsageLogName, template); err != nil {
+	if err := templatepkg.Validate(assets.UsageLogName, template); err != nil {
 		return Fail(err.Error(), ExitFailure)
 	}
 
-	command := resolvedCommand()
+	command := templatepkg.ResolvedCommand()
 	names := skillDirs(dir)
 	if len(names) == 0 {
 		return Fail("no skills in "+dir+" (no subdirectory holds a SKILL.md)", ExitFailure)
@@ -968,19 +794,19 @@ func handleAdopt(options skillsOptions) Outcome {
 // handleTemplateShow is `skills template show`: both effective templates,
 // their source, hashes, and whether the shipped default has moved.
 func handleTemplateShow(options skillsOptions) Outcome {
-	templateDir := resolveTemplateDir(options.templateDir)
-	usage, err := loadTemplate(assets.UsageLogName, templateDir)
+	templateDir := templatepkg.ResolveDir(options.templateDir)
+	usage, err := templatepkg.Load(assets.UsageLogName, templateDir)
 	if err != nil {
 		return Fail(err.Error(), ExitFailure)
 	}
-	review, err := loadTemplate(assets.ReviewName, templateDir)
+	review, err := templatepkg.Load(assets.ReviewName, templateDir)
 	if err != nil {
 		return Fail(err.Error(), ExitFailure)
 	}
-	if err := validateEffective(assets.UsageLogName, usage); err != nil {
+	if err := templatepkg.Validate(assets.UsageLogName, usage); err != nil {
 		return Fail(err.Error(), ExitFailure)
 	}
-	if err := validateEffective(assets.ReviewName, review); err != nil {
+	if err := templatepkg.Validate(assets.ReviewName, review); err != nil {
 		return Fail(err.Error(), ExitFailure)
 	}
 
@@ -991,16 +817,16 @@ func handleTemplateShow(options skillsOptions) Outcome {
 
 	var text strings.Builder
 	text.WriteString("usage-log.md\n")
-	text.WriteString("  source: " + usage.source + "\n")
-	text.WriteString("  template_hash: " + usage.hash + "\n")
-	text.WriteString("  content_hash: " + usage.hash + "\n")
-	text.WriteString("  moved: " + format.JSONBool(usage.moved) + "\n")
+	text.WriteString("  source: " + usage.Source + "\n")
+	text.WriteString("  template_hash: " + usage.Hash + "\n")
+	text.WriteString("  content_hash: " + usage.Hash + "\n")
+	text.WriteString("  moved: " + format.JSONBool(usage.Moved) + "\n")
 	text.WriteString("\nskill-friction-review.md\n")
-	text.WriteString("  source: " + review.source + "\n")
-	text.WriteString("  template_hash: " + review.hash + "\n")
-	text.WriteString("  content_hash: " + review.hash + "\n")
-	text.WriteString("  moved: " + format.JSONBool(review.moved) + "\n")
-	if usage.moved || review.moved {
+	text.WriteString("  source: " + review.Source + "\n")
+	text.WriteString("  template_hash: " + review.Hash + "\n")
+	text.WriteString("  content_hash: " + review.Hash + "\n")
+	text.WriteString("  moved: " + format.JSONBool(review.Moved) + "\n")
+	if usage.Moved || review.Moved {
 		text.WriteString(
 			"\nthe shipped default moved; adopt it with:\n" +
 				"  skill-log skills template seed --force\n" +
@@ -1008,7 +834,7 @@ func handleTemplateShow(options skillsOptions) Outcome {
 		)
 	}
 	text.WriteString("\nusage-log snippet (paste into a skill):\n")
-	text.WriteString(usage.content + "\n")
+	text.WriteString(usage.Content + "\n")
 	return OK(text.String())
 }
 
@@ -1053,8 +879,8 @@ func handleTemplateSeed(options skillsOptions) Outcome {
 		if err := format.WriteText(target, content); err != nil {
 			return Fail("cannot write "+target+": "+err.Error(), ExitFailure)
 		}
-		if err := writeSeeded(name, document.Hash(content)); err != nil {
-			return Fail("cannot write "+seededPath(name)+": "+err.Error(), ExitFailure)
+		if err := templatepkg.WriteSeeded(name, document.Hash(content)); err != nil {
+			return Fail("cannot write "+templatepkg.SeededPath(name)+": "+err.Error(), ExitFailure)
 		}
 		actions = append(actions, templateAction{
 			path:   target,
@@ -1129,7 +955,7 @@ func handleTemplateReset(options skillsOptions) Outcome {
 
 	if options.force && !options.dryRun {
 		for _, name := range names {
-			clearSeeded(name)
+			templatepkg.ClearSeeded(name)
 		}
 	}
 

@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 
-	"github.com/Dahep/skill-log/internal/format"
 	"github.com/Dahep/skill-log/internal/store"
 )
 
@@ -35,9 +34,6 @@ func refusalFailure(refusal *store.Refusal) Failure {
 		return Failure{Message: "cannot use the store: " + path, Code: ExitFailure}
 	}
 }
-
-// formatSanitize is the sanitizer every diagnostic and problem passes through.
-func formatSanitize(text string) string { return format.Sanitize(text) }
 
 // readFailure is the named failure for a SQLite error on the read path. The
 // store classifies the error and this boundary renders the answer: damage is

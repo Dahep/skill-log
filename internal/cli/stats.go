@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 
@@ -30,7 +29,7 @@ func statsVerb() Verb {
 			"skill-log stats --by harness --skill skill-log",
 			"skill-log stats --by repo --json",
 		},
-		ValueFlags: []string{"--by", "--skill", "--db"},
+		ValueFlags: statsFlags(&statsOptions{}).names(),
 		Notes: "Counts are distinct invocations, runs with at least one problem,\n" +
 			"problem rows, and resolved runs; problems/invocation is the rate\n" +
 			"between the last two, to two decimals.\n" +
@@ -62,44 +61,41 @@ func parseBy(value string) (string, error) {
 	return key, nil
 }
 
+func statsFlags(options *statsOptions) *flagSet {
+	flags := &flagSet{}
+	flags.value("--by", "a column", func(value string) error {
+		by, err := parseBy(value)
+		if err != nil {
+			return err
+		}
+		options.by = by
+		return nil
+	})
+	flags.value("--skill", "a name", func(value string) error { options.skill = value; options.givenSkill = true; return nil })
+	flags.value("--db", "a path", func(value string) error { options.db = value; return nil })
+	return flags
+}
+
 func parseStatsOptions(args []string) (statsOptions, error) {
 	options := statsOptions{by: "skill"}
+	flags := statsFlags(&options)
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
-		case "--by":
-			value, err := takeValue(args, i, "--by", "a column")
-			if err != nil {
-				return options, err
-			}
-			by, err := parseBy(value)
-			if err != nil {
-				return options, err
-			}
-			options.by = by
-			i++
 		case "--by-model":
 			// The rotation alias, kept so an existing call keeps working.
 			options.by = "model"
-		case "--skill":
-			value, err := takeValue(args, i, "--skill", "a name")
-			if err != nil {
-				return options, err
-			}
-			options.skill = value
-			options.givenSkill = true
-			i++
-		case "--db":
-			value, err := takeValue(args, i, "--db", "a path")
-			if err != nil {
-				return options, err
-			}
-			options.db = value
-			i++
 		case "--json":
 			options.json = true
 		default:
+			if _, ok := flags.lookup(args[i]); ok {
+				i++
+				continue
+			}
 			return options, usageError{"unknown option: " + args[i]}
 		}
+	}
+	if err := flags.parse(args); err != nil {
+		return options, err
 	}
 	if options.givenSkill && strings.TrimSpace(options.skill) == "" {
 		return options, usageError{"--skill needs a name"}
@@ -154,57 +150,28 @@ func statsCell(group store.GroupCount, column string, at int) string {
 
 func renderStatsTable(groups []store.GroupCount, column string) string {
 	headers := statsHeaders(column)
-	widths := make([]int, len(headers))
-	for c, header := range headers {
-		widths[c] = len([]rune(header))
-		for _, group := range groups {
-			if width := len([]rune(statsCell(group, column, c))); width > widths[c] {
-				widths[c] = width
-			}
-		}
-	}
-	var lines []string
-	var header strings.Builder
-	for c, name := range headers {
-		if c > 0 {
-			header.WriteString("  ")
-		}
-		if c == len(headers)-1 {
-			header.WriteString(name)
-		} else {
-			header.WriteString(format.Pad(name, widths[c]))
-		}
-	}
-	lines = append(lines, header.String())
+	rows := make([][]string, 0, len(groups))
 	for _, group := range groups {
-		var line strings.Builder
+		cells := make([]string, 0, len(headers))
 		for c := range headers {
-			if c > 0 {
-				line.WriteString("  ")
-			}
-			if c == len(headers)-1 {
-				line.WriteString(statsCell(group, column, c))
-			} else {
-				line.WriteString(format.Pad(statsCell(group, column, c), widths[c]))
-			}
+			cells = append(cells, statsCell(group, column, c))
 		}
-		lines = append(lines, strings.TrimRight(line.String(), " "))
+		rows = append(rows, cells)
 	}
-	return format.JoinLines(lines)
+	return format.JoinLines(format.TableLines(headers, rows))
 }
 
 func renderStatsJSON(groups []store.GroupCount, column string) string {
 	lines := make([]string, 0, len(groups))
 	for _, group := range groups {
-		var out strings.Builder
-		out.WriteString("{" + format.JSONString(column) + ":" + format.JSONString(group.Key))
-		out.WriteString(`,"invocations":` + formatInt(group.Invocations))
-		out.WriteString(`,"with_problems":` + formatInt(group.WithProblems))
-		out.WriteString(`,"problems":` + formatInt(group.Problems))
-		out.WriteString(`,"resolved":` + formatInt(group.Resolved))
-		out.WriteString(`,"problems_per_invocation":` + ratioText(group.Problems, group.Invocations))
-		out.WriteString("}")
-		lines = append(lines, out.String())
+		lines = append(lines, format.Object(
+			format.Str(column, group.Key),
+			format.Int("invocations", group.Invocations),
+			format.Int("with_problems", group.WithProblems),
+			format.Int("problems", group.Problems),
+			format.Int("resolved", group.Resolved),
+			format.Raw("problems_per_invocation", ratioText(group.Problems, group.Invocations)),
+		))
 	}
 	return format.JoinLines(lines)
 }
@@ -212,11 +179,7 @@ func renderStatsJSON(groups []store.GroupCount, column string) string {
 func handleStats(args []string) Outcome {
 	options, err := parseStatsOptions(args)
 	if err != nil {
-		var usage usageError
-		if errors.As(err, &usage) {
-			return Fail(usage.Error()[len("usage: "):], ExitUsage)
-		}
-		return Fail(err.Error(), ExitFailure)
+		return usageOutcome(err)
 	}
 	path := settings.ResolveDB(options.db)
 

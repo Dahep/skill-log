@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"errors"
 	"strings"
 
 	"github.com/Dahep/skill-log/internal/format"
@@ -31,7 +30,7 @@ func resolveVerb() Verb {
 		},
 		// The flags that consume the next argument. The dispatcher reads this
 		// to tell `--fix -h` (a commit spelled `-h`) from a help request.
-		ValueFlags: []string{"--id", "--fix", "--db"},
+		ValueFlags: resolveFlags(&resolveOptions{}).names(),
 		Notes: "The commit is the squash merge's hash, and the time is now —\n" +
 			"run it after the merge, not when the fix is authored. This is\n" +
 			"the manual path: the post-merge hook resolves the rows a report\n" +
@@ -50,39 +49,41 @@ func resolveVerb() Verb {
 
 func init() { register(resolveVerb()) }
 
+func resolveFlags(options *resolveOptions) *flagSet {
+	flags := &flagSet{}
+	flags.value("--id", "an id", func(value string) error {
+		id, err := parsePositive(value, "--id takes a positive integer")
+		if err != nil {
+			return err
+		}
+		options.id = id
+		return nil
+	})
+	flags.value("--fix", "a commit", func(value string) error { options.fix = value; return nil })
+	flags.value("--db", "a path", func(value string) error { options.db = value; return nil })
+	return flags
+}
+
 func parseResolveOptions(args []string) (resolveOptions, error) {
 	var options resolveOptions
+	flags := resolveFlags(&options)
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		switch arg {
-		case "--id", "--fix", "--db":
-			what := map[string]string{
-				"--id": "an id", "--fix": "a commit", "--db": "a path",
-			}[arg]
-			value, err := takeValue(args, i, arg, what)
-			if err != nil {
-				return options, err
-			}
-			switch arg {
-			case "--id":
-				id, err := parsePositive(value, "--id takes a positive integer")
-				if err != nil {
-					return options, err
-				}
-				options.id = id
-			case "--fix":
-				options.fix = value
-			case "--db":
-				options.db = value
-			}
-			i++
 		case "--dry-run":
 			options.dryRun = true
 		case "--json":
 			options.json = true
 		default:
+			if _, ok := flags.lookup(arg); ok {
+				i++
+				continue
+			}
 			return options, usageError{"unknown option: " + arg}
 		}
+	}
+	if err := flags.parse(args); err != nil {
+		return options, err
 	}
 	if options.id == 0 {
 		return options, usageError{"--id needs an id"}
@@ -103,33 +104,21 @@ func parseResolveOptions(args []string) (resolveOptions, error) {
 
 // renderResolveJSON renders the resolved row as one flat JSON object.
 func renderResolveJSON(options resolveOptions, row store.Resolved) string {
-	var out []byte
-	out = append(out, `{"id":`...)
-	out = append(out, formatInt(options.id)...)
-	out = append(out, `,"marker":`...)
-	out = append(out, format.JSONString(marker.Format(row.Machine, options.id))...)
-	out = append(out, `,"skill":`...)
-	out = append(out, format.JSONString(row.Skill)...)
-	out = append(out, `,"fix":`...)
-	out = append(out, format.JSONString(row.Fix)...)
-	out = append(out, `,"resolved_at":`...)
-	out = append(out, format.JSONString(row.ResolvedAt)...)
-	out = append(out, `,"changed":`...)
-	out = append(out, format.JSONBool(row.Changed)...)
-	out = append(out, `,"dry_run":`...)
-	out = append(out, format.JSONBool(options.dryRun)...)
-	out = append(out, '}')
-	return string(out)
+	return format.Object(
+		format.Int("id", options.id),
+		format.Str("marker", marker.Format(row.Machine, options.id)),
+		format.Str("skill", row.Skill),
+		format.Str("fix", row.Fix),
+		format.Str("resolved_at", row.ResolvedAt),
+		format.Bool("changed", row.Changed),
+		format.Bool("dry_run", options.dryRun),
+	)
 }
 
 func handleResolve(args []string) Outcome {
 	options, err := parseResolveOptions(args)
 	if err != nil {
-		var usage usageError
-		if errors.As(err, &usage) {
-			return Fail(usage.Error()[len("usage: "):], ExitUsage)
-		}
-		return Fail(err.Error(), ExitFailure)
+		return usageOutcome(err)
 	}
 
 	path := settings.ResolveDB(options.db)

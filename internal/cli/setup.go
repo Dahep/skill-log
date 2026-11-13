@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"errors"
 	"os"
 	"strings"
 
@@ -10,6 +9,7 @@ import (
 	"github.com/Dahep/skill-log/internal/format"
 	"github.com/Dahep/skill-log/internal/settings"
 	"github.com/Dahep/skill-log/internal/store"
+	templatepkg "github.com/Dahep/skill-log/internal/template"
 )
 
 // The `setup` verb: make a machine and a repo ready.
@@ -127,7 +127,7 @@ func setupVerb() Verb {
 		// The flags that consume the next argument. The dispatcher reads this
 		// to tell `--repo --help` (a directory named `--help`) from a help
 		// request.
-		ValueFlags: []string{"--repo", "--skills-dir", "--db"},
+		ValueFlags: setupFlags(&setupOptions{}).names(),
 		Notes: "One command makes a machine and a repo ready: the store, the git\n" +
 			"post-merge hook that resolves what a pull landed, the report\n" +
 			"directory (.skill-log/reports/ with its README and keep file),\n" +
@@ -171,32 +171,20 @@ func init() { register(setupVerb()) }
 //
 // An unknown flag, a missing value or a contradictory pair is a usage error,
 // raised as a usage marker the caller turns into exit 2.
+func setupFlags(options *setupOptions) *flagSet {
+	flags := &flagSet{}
+	flags.value("--repo", "a directory", func(value string) error { options.repo = value; return nil })
+	flags.value("--skills-dir", "a directory", func(value string) error { options.skillsDir = value; return nil })
+	flags.value("--db", "a path", func(value string) error { options.db = value; return nil })
+	return flags
+}
+
 func parseSetupOptions(args []string) (setupOptions, error) {
 	var options setupOptions
+	flags := setupFlags(&options)
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		switch arg {
-		case "--repo":
-			value, err := takeValue(args, i, "--repo", "a directory")
-			if err != nil {
-				return options, err
-			}
-			options.repo = value
-			i++
-		case "--skills-dir":
-			value, err := takeValue(args, i, "--skills-dir", "a directory")
-			if err != nil {
-				return options, err
-			}
-			options.skillsDir = value
-			i++
-		case "--db":
-			value, err := takeValue(args, i, "--db", "a path")
-			if err != nil {
-				return options, err
-			}
-			options.db = value
-			i++
 		case "--json":
 			options.json = true
 		case "--dry-run":
@@ -212,10 +200,16 @@ func parseSetupOptions(args []string) (setupOptions, error) {
 		case "--no-report-dir":
 			options.noReportDir = true
 		default:
+			if _, ok := flags.lookup(arg); ok {
+				i++
+				continue
+			}
 			return options, usageError{"unknown option: " + arg}
 		}
 	}
-
+	if err := flags.parse(args); err != nil {
+		return options, err
+	}
 	// Two modes that say opposite things about the hook cannot be one run.
 	// The pair is refused before anything is examined.
 	if options.check && options.removeHook {
@@ -308,11 +302,11 @@ func verdictLine(v verdict) string {
 // verdictJSON is one JSON object, exactly `artifact`, `status`, `detail`
 // (§5.10).
 func verdictJSON(v verdict) string {
-	return "{" +
-		`"artifact":` + format.JSONString(v.artifact) +
-		`,"status":` + format.JSONString(v.status) +
-		`,"detail":` + format.JSONString(v.detail) +
-		"}"
+	return format.Object(
+		format.Str("artifact", v.artifact),
+		format.Str("status", v.status),
+		format.Str("detail", v.detail),
+	)
 }
 
 // storeVerdict is the store's verdict: `create`, or `verify` under `--check`.
@@ -567,25 +561,25 @@ func skillsVerdict(skillsDir string, options setupOptions) verdict {
 
 	// The effective templates are validated first: a broken one would
 	// silently write blocks no skill can log from.
-	templateDir := resolveTemplateDir("")
-	usage, err := loadTemplate(assets.UsageLogName, templateDir)
+	templateDir := templatepkg.ResolveDir("")
+	usage, err := templatepkg.Load(assets.UsageLogName, templateDir)
 	if err != nil {
 		return verdict{artifactSkills, statusDrift, err.Error()}
 	}
-	review, err := loadTemplate(assets.ReviewName, templateDir)
+	review, err := templatepkg.Load(assets.ReviewName, templateDir)
 	if err != nil {
 		return verdict{artifactSkills, statusDrift, err.Error()}
 	}
-	if err := validateEffective(assets.UsageLogName, usage); err != nil {
+	if err := templatepkg.Validate(assets.UsageLogName, usage); err != nil {
 		return verdict{artifactSkills, statusDrift, err.Error()}
 	}
-	if err := validateEffective(assets.ReviewName, review); err != nil {
+	if err := templatepkg.Validate(assets.ReviewName, review); err != nil {
 		return verdict{artifactSkills, statusDrift, err.Error()}
 	}
-	command := resolvedCommand()
+	command := templatepkg.ResolvedCommand()
 
-	wantedLog := skillLogDocument(usage.content, command)
-	wantedReview := reviewDocument(review.content, usage.content, command)
+	wantedLog := skillLogDocument(usage.Content, command)
+	wantedReview := reviewDocument(review.Content, usage.Content, command)
 
 	// Per-skill verdicts, in the order the artifact names them. Each answer
 	// is one install; the aggregate status and detail follow.
@@ -834,11 +828,7 @@ func resolveSetupRepo(flag string) string {
 func handleSetup(args []string) Outcome {
 	options, err := parseSetupOptions(args)
 	if err != nil {
-		var usage usageError
-		if errors.As(err, &usage) {
-			return Fail(usage.Error()[len("usage: "):], ExitUsage)
-		}
-		return Fail(err.Error(), ExitFailure)
+		return usageOutcome(err)
 	}
 
 	// The machine identity the log will use, printed every run: the hostname

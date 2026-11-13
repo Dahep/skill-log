@@ -1,9 +1,9 @@
 package cli
 
 import (
-	"errors"
 	"strings"
 
+	"github.com/Dahep/skill-log/internal/format"
 	"github.com/Dahep/skill-log/internal/marker"
 	"github.com/Dahep/skill-log/internal/settings"
 	"github.com/Dahep/skill-log/internal/store"
@@ -45,11 +45,7 @@ func addVerb() Verb {
 		},
 		// The flags that consume the next argument. The dispatcher reads this
 		// to tell `--problem -h` (a problem spelled `-h`) from a help request.
-		ValueFlags: []string{
-			"--skill", "--problem", "--db", "--harness", "--session", "--parent",
-			"--model", "--repo", "--worktree", "--project", "--t3-thread",
-			"--machine", "--adapter",
-		},
+		ValueFlags: addFlags(&addOptions{}).names(),
 		Notes: "A clean run still writes a row: the invocation count is the\n" +
 			"denominator of the problems-per-invocation rate.\n" +
 			"\n" +
@@ -79,62 +75,44 @@ func addVerb() Verb {
 
 func init() { register(addVerb()) }
 
+func addFlags(options *addOptions) *flagSet {
+	flags := &flagSet{}
+	flags.value("--skill", "a name", func(value string) error { options.skill = value; return nil })
+	flags.value("--problem", "a text", func(value string) error { options.problems = append(options.problems, value); return nil })
+	flags.value("--db", "a path", func(value string) error { options.db = value; return nil })
+	flags.value("--harness", "a name", func(value string) error { options.harness = value; return nil })
+	flags.value("--session", "an id", func(value string) error { options.session = value; return nil })
+	flags.value("--parent", "an id", func(value string) error { options.parent = value; return nil })
+	flags.value("--model", "provider/id", func(value string) error { options.model = value; return nil })
+	flags.value("--repo", "a name", func(value string) error { options.repo = value; return nil })
+	flags.value("--worktree", "a path", func(value string) error { options.worktree = value; return nil })
+	flags.value("--project", "a name", func(value string) error { options.project = value; return nil })
+	flags.value("--t3-thread", "an id", func(value string) error { options.t3Thread = value; return nil })
+	flags.value("--machine", "a name", func(value string) error { options.machine = value; return nil })
+	flags.value("--adapter", "a name", func(value string) error { options.adapters = append(options.adapters, value); return nil })
+	return flags
+}
+
 func parseAddOptions(args []string) (addOptions, error) {
 	var options addOptions
+	flags := addFlags(&options)
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		switch arg {
-		case "--skill", "--problem", "--db", "--harness", "--session", "--parent",
-			"--model", "--repo", "--worktree", "--project", "--t3-thread",
-			"--machine", "--adapter":
-			what := map[string]string{
-				"--skill": "a name", "--problem": "a text", "--db": "a path",
-				"--harness": "a name", "--session": "an id", "--parent": "an id",
-				"--model": "provider/id", "--repo": "a name",
-				"--worktree": "a path", "--project": "a name",
-				"--t3-thread": "an id", "--machine": "a name",
-				"--adapter": "a name",
-			}[arg]
-			value, err := takeValue(args, i, arg, what)
-			if err != nil {
-				return options, err
-			}
-			switch arg {
-			case "--skill":
-				options.skill = value
-			case "--problem":
-				options.problems = append(options.problems, value)
-			case "--db":
-				options.db = value
-			case "--harness":
-				options.harness = value
-			case "--session":
-				options.session = value
-			case "--parent":
-				options.parent = value
-			case "--model":
-				options.model = value
-			case "--repo":
-				options.repo = value
-			case "--worktree":
-				options.worktree = value
-			case "--project":
-				options.project = value
-			case "--t3-thread":
-				options.t3Thread = value
-			case "--machine":
-				options.machine = value
-			case "--adapter":
-				options.adapters = append(options.adapters, value)
-			}
-			i++
 		case "--dry-run":
 			options.dryRun = true
 		case "--json":
 			options.json = true
 		default:
+			if _, ok := flags.lookup(arg); ok {
+				i++
+				continue
+			}
 			return options, usageError{"unknown option: " + arg}
 		}
+	}
+	if err := flags.parse(args); err != nil {
+		return options, err
 	}
 	if strings.TrimSpace(options.skill) == "" {
 		return options, usageError{"--skill needs a name"}
@@ -170,11 +148,7 @@ func resolveField(flag, variable, adapterValue, detected string) string {
 func handleAdd(args []string) Outcome {
 	options, err := parseAddOptions(args)
 	if err != nil {
-		var usage usageError
-		if errors.As(err, &usage) {
-			return Fail(usage.Error()[len("usage: "):], ExitUsage)
-		}
-		return Fail(err.Error(), ExitFailure)
+		return usageOutcome(err)
 	}
 
 	// --problem - reads the text from stdin. On a terminal there is nothing
@@ -258,14 +232,14 @@ func handleAdd(args []string) Outcome {
 	if strings.Contains(row.Machine, "#") {
 		return Fail("usage: --machine names a marker; it cannot contain '#' or a control character", ExitUsage)
 	}
-	if formatSanitize(row.Machine) != row.Machine {
+	if format.Sanitize(row.Machine) != row.Machine {
 		return Fail("usage: --machine names a marker; it cannot contain '#' or a control character", ExitUsage)
 	}
 
 	// The problems are sanitized on the way in as well as on the way out.
 	clean := make([]string, 0, len(problems))
 	for _, problem := range problems {
-		clean = append(clean, formatSanitize(problem))
+		clean = append(clean, format.Sanitize(problem))
 	}
 
 	if options.dryRun {

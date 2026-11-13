@@ -36,7 +36,10 @@ lives in `CONTEXT.md`; design decisions in `docs/adr/`.
   missing one prints a `skip` line rather than pretending it ran.
 - The source layout: `cmd/skill-log` is the entry point, `internal/cli` holds
   the verbs, the dispatch and the help, and `internal/` holds `store`,
-  `settings`, `document`, `format`, `marker`, `process` and `assets`.
+  `settings`, `document`, `format`, `template`, `marker`, `process` and
+  `assets`. `format` owns the shared ordered JSON object and table builders;
+  `template` owns template resolution, seeded-from state and binary-path
+  resolution.
   `reference/` is the verbatim report-era Python implementation, kept as the
   parity ground truth: it is never built, never staged and never shipped.
 

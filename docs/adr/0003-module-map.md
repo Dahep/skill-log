@@ -228,8 +228,9 @@ the Go ones.
 | 4 | Settings | `internal/settings` | `paths.go`, `detect.go`, `clock.go`, `adapters.go` — store path, clock, machine, git detection, the opt-in adapters |
 | 5 | Resolution | `internal/store` | `plan.go` — `Plan`, the pure decision; `cli/resolve.go` applies it |
 | 6 | Document | `internal/document` | `document.go`, `hash.go` — parse, classify, render, rewrite around the fence |
-| 7 | Output | `internal/format` | `json.go`, `text.go`, `table.go`, `files.go` — the JSON writer, the sanitizer, the table helpers, atomic file writes |
+| 7 | Output | `internal/format` | `json.go`, `text.go`, `table.go`, `files.go` — the ordered JSON object writer, the sanitizer, the shared table renderer, atomic file writes |
 | — | CLI boundary | `internal/cli` | `main.go`, `cli.go`, `flags.go`, `help.go`, `render.go` and one file per verb |
+| — | Templates | `internal/template` | `template.go` — template-directory resolution, effective-template loading and validation, seeded-from state, and the resolved binary path |
 
 `internal/assets` holds the two shipped default templates, embedded into the
 binary with `go:embed`. `cmd/skill-log` is the entry point and holds nothing
