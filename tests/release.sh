@@ -37,28 +37,80 @@ fi
 # The lines of the workflow that are the body of a `run:` block: the
 # shell source a GitHub expression would be interpolated into.
 #
-# The block form is `run: |` (or `run: >`, or `run:` with the body
-# indented under it). The scanner has to enter block mode on all of
-# them: a workflow whose blocks are `run: |` — which is every real one
-# — was invisible to the scan, so an expression in a block body passed.
+# The block form is not one spelling. A step's `run:` may be a plain
+# key (`run: |`) or a list item (`- run: |`), and the block indicator
+# may carry a comment (`run: | # why`). The scanner has to enter block
+# mode on all of them: a workflow whose blocks use one of the other
+# spellings was invisible to the scan, so an expression in a block body
+# passed.
+#
+# The body of a block is the lines indented *more* than the key that
+# opened it, so the scanner tracks the indentation of the `run:` it
+# entered on rather than looking for the next key: a body may hold a
+# line that looks like a key, and the keys of the step that owns the
+# run are indented deeper than the step.
 #
 # The scanner takes the workflow to read as its argument, so the
 # mutation case below can point it at a workflow of its own.
 run_lines() {
     awk '
-        # A block form: `run: |`, `run: >`, `run: |-`, `run: >-`. The
-        # body is the indented lines under it.
-        /^[[:space:]]*run:[[:space:]]*[|>][-+0-9]*[[:space:]]*$/ { inrun = 1; next }
-        # A bare `run:` with the body indented under it.
-        /^[[:space:]]*run:[[:space:]]*$/ { inrun = 1; next }
-        # A one-line `run:` is shell source too.
-        /^[[:space:]]*run:[[:space:]]*[^|>]/ {
-            print
-            next
+        function indent_of(line,   i) {
+            i = 1
+            while (i <= length(line) && substr(line, i, 1) == " ") {
+                i++
+            }
+            return i - 1
         }
+
+        # The value of the `run:` key of a step, in either spelling: a
+        # plain key or a list item. The value after the key is what says
+        # which form it is; an empty answer means the line is not a run.
+        function run_value(line,   stripped, rest) {
+            stripped = line
+            sub(/^[[:space:]]*/, "", stripped)
+            if (substr(stripped, 1, 1) == "-") {
+                sub(/^-[[:space:]]*/, "", stripped)
+            }
+            if (stripped !~ /^run:/) {
+                return ""
+            }
+            rest = stripped
+            sub(/^run:[[:space:]]*/, "", rest)
+            return rest
+        }
+
         inrun {
-            # The block ends at the next key at the step'"'"'s indentation.
-            if ($0 ~ /^[[:space:]]*[-a-zA-Z_]+:/) { inrun = 0; next }
+            # The body ends at the first line that is not indented more
+            # than the key that opened it. A line in the body that looks
+            # like a key is still a line in the body.
+            bodyindent = indent_of($0)
+            if ($0 ~ /^[[:space:]]*$/ || bodyindent > runindent) {
+                print
+                next
+            }
+            inrun = 0
+        }
+
+        {
+            value = run_value($0)
+            if (value == "") {
+                next
+            }
+            # A block form: `run: |`, `run: >`, with an optional
+            # chomping indicator and an optional comment after it. The
+            # body is the lines indented more than the key.
+            if (value ~ /^[|>][-+0-9]*[[:space:]]*([#].*)?$/) {
+                inrun = 1
+                runindent = indent_of($0)
+                next
+            }
+            # A bare `run:` with the body indented under it.
+            if (value ~ /^$/) {
+                inrun = 1
+                runindent = indent_of($0)
+                next
+            }
+            # A one-line `run:` is shell source too.
             print
         }
     ' "${1:-$WORKFLOW}"
@@ -136,5 +188,68 @@ else
         fail "the scanner does not see an expression in a block body"
     fi
 fi
+
+# ------------------------------------- the scanner sees every block form
+#
+# The block form is not one spelling. A step's `run:` may be written as
+# a plain key or as a list item (`- run: |`), and the block indicator
+# may carry a comment (`run: | # why`). A scanner that recognises only
+# one spelling sees no body in the others, and a workflow that uses them
+# passes the scan with an expression in its shell source.
+#
+# Each form is mutation-tested on a workflow of its own: an expression
+# inside a body the scanner must see, and the scanner must find it.
+#
+# The scanner takes the workflow to read as its argument, so each case
+# points it at its own file.
+for form in list comment; do
+    case "$form" in
+    list)
+        # The list-item form: the step's key carries the item's dash.
+        FORM_YML="$SCRATCH/form-list.yml"
+        cat > "$FORM_YML" <<'FORM'
+name: form
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: a list-item step
+        - run: |
+            echo "made up"
+FORM
+        ;;
+    comment)
+        # The comment form: the block indicator carries a comment.
+        FORM_YML="$SCRATCH/form-comment.yml"
+        cat > "$FORM_YML" <<'FORM'
+name: form
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: a commented step
+        run: | # why this step runs
+          echo "made up"
+FORM
+        ;;
+    esac
+
+    # The mutation: the body of the block gets an expression.
+    # shellcheck disable=SC2016  # the expression is the text being looked for
+    sed 's|echo "made up"|echo "${{ github.ref_name }}"|' \
+        "$FORM_YML" > "$FORM_YML.mutant"
+
+    # The mutation really did put an expression into the block body.
+    # shellcheck disable=SC2016  # the expression is the text being looked for
+    if ! grep -qF '${{' "$FORM_YML.mutant"; then
+        fail "the $form mutation could not be written"
+    elif ! run_lines "$FORM_YML.mutant" | grep -qF '${{'; then
+        fail "the scanner does not see an expression in a $form block body"
+    else
+        pass "the scanner sees an expression in a $form block body"
+    fi
+done
 
 tally
