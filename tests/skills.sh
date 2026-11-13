@@ -425,6 +425,84 @@ check "a review template missing <command> is refused" "$STATUS" "1"
 check_contains "the refusal names the review's <command>" "$ERR" \
     "skill-log: skill-friction-review.md has no <command> placeholder"
 
+# ------------------------------------------------- a quoted placeholder
+#
+# The rendered block is shell source: the agent copies the command line
+# out of it and runs it. The tool quotes a placeholder's value for that
+# reason — but the tool's own quoting is single quotes, and a template
+# that puts the placeholder inside its own double quotes would nest the
+# two: "--skill "'demo'"", which a shell still expands. A name carrying
+# "$(touch …)" would then run.
+#
+# So a template that puts a placeholder next to a quote character is
+# refused by name. The refusal says which placeholder and why, because
+# the template is the user's own text and the fix is theirs to make.
+mkdir -p "$SCRATCH/quoted"
+printf '    <command> add --skill "<name>"\n' > "$SCRATCH/quoted/usage-log.md"
+run skills template show --template-dir "$SCRATCH/quoted"
+check "a template with a quoted placeholder is refused" "$STATUS" "1"
+check_contains "the refusal names the quoted placeholder" "$ERR" \
+    "usage-log.md"
+check_contains "the refusal says a placeholder may not be quoted" "$ERR" \
+    "quote"
+check_one_line "the refusal for a quoted placeholder is one line" "$ERR"
+
+# The same for the review template.
+mkdir -p "$SCRATCH/quoted-review"
+printf 'review with <command>\n' > "$SCRATCH/quoted-review/skill-friction-review.md"
+printf "    <command> add --skill '<name>'\n" > "$SCRATCH/quoted-review/usage-log.md"
+run skills template show --template-dir "$SCRATCH/quoted-review"
+check "a template with a single-quoted placeholder is refused" "$STATUS" "1"
+check_contains "the refusal names the single-quoted placeholder" "$ERR" \
+    "usage-log.md"
+check_contains "the refusal says a placeholder may not be quoted" "$ERR" \
+    "quote"
+
+# And the hostile name must not run through either path: the default
+# template (which quotes the value itself) and the quoted override (which
+# is refused before it renders).
+HOSTILE_NAME='$(touch '"$SCRATCH"'/quoted-pwned)'
+
+# The default template: the value is quoted by the tool, so the name is
+# a word and not a command.
+rm -rf "$SCRATCH/hostile-quoted"
+mkdir -p "$SCRATCH/hostile-quoted/evil"
+printf -- '---\nname: %s\n---\n' "$HOSTILE_NAME" \
+    > "$SCRATCH/hostile-quoted/evil/SKILL.md"
+rm -f "$SCRATCH/quoted-pwned"
+run skills adopt --dir "$SCRATCH/hostile-quoted"
+check "the hostile name adopts through the default template" "$STATUS" "0"
+HOSTILE_CMD="$(grep -m1 -- '--skill' "$SCRATCH/hostile-quoted/evil/SKILL.md" \
+    | sed 's/^[[:space:]]*//')"
+if [ -n "$HOSTILE_CMD" ]; then
+    sh "$SCRATCH/hostile.cmd" >/dev/null 2>&1 || true
+    printf '%s\n' "$HOSTILE_CMD" > "$SCRATCH/hostile-quoted.cmd"
+    sh "$SCRATCH/hostile-quoted.cmd" >/dev/null 2>&1 || true
+fi
+if [ -e "$SCRATCH/quoted-pwned" ]; then
+    fail "the default template ran the injected command"
+else
+    pass "the default template did not run the injected command"
+fi
+
+# The quoted override: refused before it renders, so nothing is written
+# and nothing can run.
+rm -rf "$SCRATCH/hostile-override"
+mkdir -p "$SCRATCH/hostile-override/evil"
+printf -- '---\nname: %s\n---\n' "$HOSTILE_NAME" \
+    > "$SCRATCH/hostile-override/evil/SKILL.md"
+rm -f "$SCRATCH/quoted-pwned"
+run skills adopt --dir "$SCRATCH/hostile-override" \
+    --template-dir "$SCRATCH/quoted"
+check "the quoted override refuses the hostile name" "$STATUS" "1"
+check_absent "the quoted override wrote no block" \
+    "$(cat "$SCRATCH/hostile-override/evil/SKILL.md")" "skill-log:usage-log"
+if [ -e "$SCRATCH/quoted-pwned" ]; then
+    fail "the quoted override ran the injected command"
+else
+    pass "the quoted override did not run the injected command"
+fi
+
 # The resolved binary the block names: the tool resolves its own path,
 # so the suite computes the same answer independently. The current
 # render embeds it, so the fixtures need it too.

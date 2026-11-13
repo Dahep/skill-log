@@ -271,6 +271,34 @@ def has_placeholder(text: String, placeholder: String) -> Bool:
     return text.find(placeholder) != -1
 
 
+def quoted_placeholder(text: String, placeholder: String) -> Bool:
+    """True when `placeholder` sits next to a quote character.
+
+    A quote immediately before or after the placeholder means the
+    template is quoting the placeholder itself. The tool quotes a
+    placeholder's value with single quotes, and a template's own double
+    quotes around the placeholder would nest the two — `--skill
+    "'demo'"` — which a shell still expands. So the value would reach
+    the shell unquoted where it matters, and a name carrying
+    `$(…)` would run.
+    """
+    var at = text.find(placeholder)
+    while at >= 0:
+        var before = at - 1
+        var after = at + placeholder.byte_length()
+        if before >= 0 and is_quote(String(text[byte=before])):
+            return True
+        if after < text.byte_length() and is_quote(String(text[byte=after])):
+            return True
+        at = text.find(placeholder, after)
+    return False
+
+
+def is_quote(char: String) -> Bool:
+    """True when the character is one of the two shell quote characters."""
+    return char == "'" or char == '"'
+
+
 def validate_template(name: String, template: String) raises:
     """Refuse a template whose placeholders are wrong, by name.
 
@@ -280,8 +308,16 @@ def validate_template(name: String, template: String) raises:
     needs `<command>`. Any other template name is not validated: the two
     names above are the ones the contract defines placeholders for.
 
-    A missing placeholder raises; the caller turns the message into the
-    one named line.
+    A placeholder may not sit next to a quote character. The tool
+    quotes a placeholder's value with single quotes, because the
+    rendered block is shell source; a template that quotes the
+    placeholder itself would nest the two, and the value would reach
+    the shell where a shell expands it. The refusal names the template
+    and the rule, because the template is the user's own text and the
+    fix is theirs to make.
+
+    A missing or quoted placeholder raises; the caller turns the
+    message into the one named line.
     """
     if name == "usage-log.md":
         if not has_placeholder(template, "<name>"):
@@ -300,6 +336,23 @@ def validate_template(name: String, template: String) raises:
                 "skill-friction-review.md has no <command> placeholder"
                 " (nothing would name the binary)"
             )
+    else:
+        return
+
+    if quoted_placeholder(template, "<name>"):
+        raise Error(
+            name
+            + " puts <name> next to a quote character (the tool quotes"
+            " the value itself, and a quoted placeholder would let the"
+            " shell expand it)"
+        )
+    if quoted_placeholder(template, "<command>"):
+        raise Error(
+            name
+            + " puts <command> next to a quote character (the tool"
+            " quotes the value itself, and a quoted placeholder would"
+            " let the shell expand it)"
+        )
 
 
 def parse(text: String) -> Parsed:

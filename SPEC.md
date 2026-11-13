@@ -517,7 +517,10 @@ directory, then the defaults shipped in the binary.
 Placeholders: `<name>` (the skill's name) and `<command>` (the resolved binary
 path). `usage-log.md` requires both, and `audit` rejects a template that lacks
 `<name>` or an invocation of `<command> add` — a typo there would silently stop
-every skill from logging. The review template requires `<command>`.
+every skill from logging. The review template requires `<command>`. A
+placeholder may not sit next to a quote character: the tool quotes a
+placeholder's value itself, and a template that quoted the placeholder would
+nest the two, so the value would reach the shell where a shell expands it.
 
 The rendered block is shell source: the reader copies a command line out of
 it and runs it. So a substituted value is shell-quoted on every command line
