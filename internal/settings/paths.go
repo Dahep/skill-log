@@ -9,8 +9,7 @@ import (
 )
 
 // EnvOrEmpty returns the value of an environment variable, or an empty
-// string. An unset variable and an empty one are the same thing to every
-// caller here: the field is simply not filled.
+// string.
 func EnvOrEmpty(name string) string {
 	return os.Getenv(name)
 }
@@ -37,14 +36,9 @@ func ExpandHome(path string) string {
 
 // DefaultDB is the store path when nothing overrides it.
 //
-// XDG_STATE_HOME wins; HOME/.local/state is the fallback. The directory is
-// never created here: a read must not change the machine.
+// The directory is never created here: a read must not change the machine.
 func DefaultDB() string {
-	state := os.Getenv("XDG_STATE_HOME")
-	if state == "" {
-		state = os.Getenv("HOME") + "/.local/state"
-	}
-	return state + "/skill-log/skills.db"
+	return stateDir() + "/skill-log/skills.db"
 }
 
 // ResolveDB is the store path: --db first, then SKILL_LOG_DB, then the
@@ -62,11 +56,7 @@ func ResolveDB(flag string) string {
 // StateDir is the per-machine skill-log state directory: where the seeded
 // template record lives, beside the store.
 func StateDir() string {
-	state := os.Getenv("XDG_STATE_HOME")
-	if state == "" {
-		state = os.Getenv("HOME") + "/.local/state"
-	}
-	return state + "/skill-log"
+	return stateDir() + "/skill-log"
 }
 
 // UserConfigDir is the directory the user may edit: the templates and the
@@ -82,4 +72,12 @@ func UserConfigDir() string {
 // TemplatesDir is the user-owned template directory.
 func TemplatesDir() string {
 	return UserConfigDir() + "/templates"
+}
+
+func stateDir() string {
+	state := os.Getenv("XDG_STATE_HOME")
+	if state == "" {
+		state = os.Getenv("HOME") + "/.local/state"
+	}
+	return state
 }

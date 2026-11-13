@@ -17,10 +17,8 @@ func isControl(code rune) bool {
 	return code == 0x7F
 }
 
-// Sanitize turns every control character into a space. A newline becomes
-// a space, so one problem stays one line and cannot inject a terminal
-// escape, and a diagnostic carrying a path with a newline in it stays a
-// diagnostic on one line.
+// Sanitize turns every control character into a space, so one problem stays
+// one line and cannot inject a terminal escape.
 func Sanitize(text string) string {
 	var out strings.Builder
 	out.Grow(len(text))

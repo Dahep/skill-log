@@ -1,8 +1,4 @@
 // Package process is the one process boundary.
-//
-// Run returns a child's status and both streams. Git returns the same plus a
-// typed cause, so no caller decodes an error string or treats empty output
-// as a failure on its own.
 package process
 
 import (

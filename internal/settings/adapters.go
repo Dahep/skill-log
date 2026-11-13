@@ -23,10 +23,6 @@ const openCodeModelSQL = "SELECT model FROM session_v2 WHERE id = ?"
 // AdapterContext is what an enabled adapter filled. Every field is a string;
 // an empty one means the adapter did not fill it, or that it failed. An
 // adapter never overwrites anything the caller said.
-//
-// The session and the model travel together: the model is the one of the
-// session that was resolved, so a caller that names a session gets that
-// session's model.
 type AdapterContext struct {
 	Harness string
 	Session string
@@ -147,9 +143,7 @@ func jsonStringValue(text string, at int) string {
 //
 // A small targeted scanner, not a JSON parser: the only shape this tool reads
 // is opencode's `{"id":"...","providerID":"..."}`. The scan tracks nesting, so
-// a key spelled inside a nested object never answers for the top-level one. An
-// empty string when the key is absent, when its value is not a string, or when
-// the text is not a JSON object at all.
+// a key spelled inside a nested object never answers for the top-level one.
 func jsonStringField(text, key string) string {
 	i := 0
 	for i < len(text) && isJSONSpace(text[i]) {
@@ -169,7 +163,6 @@ func jsonStringField(text, key string) string {
 			}
 			name := jsonStringValue(text, i)
 			i = end
-			// A string is a key only when a colon follows it.
 			j := i
 			for j < len(text) && isJSONSpace(text[j]) {
 				j++
@@ -204,10 +197,8 @@ func jsonStringField(text, key string) string {
 
 // renderModel turns an opencode model value into `provider/id`.
 //
-// The stored value is a JSON object such as
-// `{"id":"kimi-k3","providerID":"opencode"}`. A value that is not that shape
-// — an older shape, a bare id, something else entirely — is passed through
-// unchanged: a value nobody can parse is better than a value silently
+// A value that is not the `{"id":"...","providerID":"..."}` shape is passed
+// through unchanged: a value nobody can parse is better than a value silently
 // mangled.
 func renderModel(raw string) string {
 	if raw == "" {
@@ -225,9 +216,6 @@ func renderModel(raw string) string {
 }
 
 // fileURI is the path as a `file:` URI.
-//
-// The encoding lives in the format package, so this read of another tool's
-// database names the same file the store names for the same path.
 func fileURI(path string) string {
 	return format.FileURI(path)
 }
@@ -236,10 +224,6 @@ func fileURI(path string) string {
 //
 // The session store is read read-only; a missing file, a changed schema, an
 // absent row — every one of them is an empty string.
-//
-// The path is opened as a `file:` URI: a path carrying a reserved character
-// would otherwise be truncated or reinterpreted by the driver, and the
-// session's model would be read from another file — or from none.
 func openCodeModel(sessionID string) string {
 	if sessionID == "" {
 		return ""
@@ -263,11 +247,8 @@ func openCodeModel(sessionID string) string {
 // ApplyAdapters runs the enabled adapters and collects what they filled.
 //
 // worktree is the worktree the run happened in; session is the session the
-// row will carry, already resolved by the caller's chain — the explicit
-// flag, then the field's variable, then the adapter's own value. The model
-// is the one of *that* session (SPEC §4: `model` resolves after `session`),
-// so a caller that names a session gets that session's model and not the
-// one of whatever session the environment happened to name.
+// row will carry, already resolved by the caller's chain. The model is the
+// one of *that* session.
 //
 // An unknown adapter name is ignored: enabling an adapter this binary does
 // not know must not fail the write.

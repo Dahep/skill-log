@@ -7,8 +7,8 @@ import (
 	"github.com/Dahep/skill-log/internal/settings"
 )
 
-// The skip reasons resolve-merged reports. SPEC §5.10 fixes these tokens:
-// the --json skipped[].reason and the human note carry the same value.
+// The skip reasons resolve-merged reports: the --json skipped[].reason and
+// the human note carry the same value.
 const (
 	SkipUnknownID   = "unknown_id"
 	SkipForeign     = "foreign"
@@ -65,8 +65,8 @@ func mergedRowIndex(rows []resolutionRow, machine string, id int64, localHost st
 	for i, row := range rows {
 		stored := row.Machine
 		if stored == "" {
-			// A row written before add always populated the machine column
-			// belongs to the machine reading it.
+			// A row written before the machine column existed belongs to
+			// the machine reading it.
 			stored = localHost
 		}
 		if stored == machine && row.ID == id {
@@ -115,7 +115,7 @@ type querier interface {
 	Query(query string, args ...any) (*sql.Rows, error)
 }
 
-func readresolutionRows(q querier) ([]resolutionRow, error) {
+func readResolutionRows(q querier) ([]resolutionRow, error) {
 	rows, err := q.Query(
 		"SELECT id, machine, fix," +
 			" COALESCE(CAST(strftime('%s', ts) AS INTEGER), 0)" +
@@ -168,7 +168,7 @@ func ResolveMergedRows(path string, located []Located, localHost string, dryRun 
 	}
 	var rows []resolutionRow
 	if !emptyLog {
-		rows, err = readresolutionRows(opened.db)
+		rows, err = readResolutionRows(opened.db)
 		if err != nil {
 			return empty, nil, err
 		}
@@ -210,7 +210,7 @@ func mergedWriteAttempt(path string, located []Located, localHost string) (Merge
 	}()
 
 	stamp := settings.LocalTimestamp()
-	rows, err := readresolutionRows(tx)
+	rows, err := readResolutionRows(tx)
 	if err != nil {
 		return empty, nil, err
 	}

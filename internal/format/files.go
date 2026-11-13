@@ -10,22 +10,14 @@ import (
 
 // FileURI is the path as a `file:` URI.
 //
-// A path is a path, not a URI: a `?`, a `#` or a `%` in it would end the
-// file name or start a query, and a SQLite driver would open a different
-// file — or create one. Percent-encoding the path keeps the name the
-// caller named, so a store under a path with a reserved character in it is
-// the file that is read and the file that is written.
-//
-// The separators stay separators: the path is escaped segment by segment,
-// so the leading slash is still a root and the rest is still a path. Only
-// the characters inside a name are encoded.
+// The path is escaped segment by segment, so a `?`, a `#` or a `%` in a name
+// cannot end the file name or start a query, and the separators stay
+// separators.
 func FileURI(path string) string {
 	absolute, err := filepath.Abs(path)
 	if err != nil {
 		absolute = path
 	}
-	// A Windows-style volume name is not a URL path; the slash form is
-	// what a driver expects.
 	absolute = filepath.ToSlash(absolute)
 	if !strings.HasPrefix(absolute, "/") {
 		absolute = "/" + absolute
@@ -54,13 +46,9 @@ func WriteText(path, text string) error {
 
 // WriteTextMode replaces path with text, atomically, at exactly mode.
 //
-// The temporary lives beside the target — a rename across filesystems is a
-// copy, not an atomic swap — and is created exclusively under an
-// unpredictable name, so a file already at that name (a planted symlink
-// included) is never followed. The mode is set on the descriptor before the
-// rename, so the replacement is never visible at the wrong permissions and
-// the process's umask cannot narrow it: a generated git hook must come out
-// executable whatever the umask says.
+// The temporary lives beside the target and is created exclusively under an
+// unpredictable name, and the mode is set on the descriptor before the rename,
+// so the replacement is never visible at the wrong permissions.
 func WriteTextMode(path, text string, mode os.FileMode) error {
 	dir := filepath.Dir(path)
 	file, err := os.CreateTemp(dir, filepath.Base(path)+".tmp.*")
@@ -93,9 +81,6 @@ func WriteTextMode(path, text string, mode os.FileMode) error {
 }
 
 // IsRegularFile reports whether path is a regular file.
-//
-// A directory is not a regular file, and neither is a socket or a device:
-// only a file the tool may read as text is one.
 func IsRegularFile(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.Mode().IsRegular()
@@ -108,10 +93,6 @@ func IsDir(path string) bool {
 }
 
 // IsExecutable reports whether path carries an execute bit for somebody.
-//
-// A git hook is run only when it is executable, and git says nothing when
-// it is not — the hook simply never fires. A file that cannot be stat'ed is
-// not executable: the caller is asking about a hook it should have written.
 func IsExecutable(path string) bool {
 	info, err := os.Stat(path)
 	if err != nil {
@@ -134,9 +115,6 @@ func SetExecutable(path string) error {
 }
 
 // ResolvePath returns path as one absolute, symlink-resolved path, or "".
-//
-// The answer is best-effort: a name the filesystem cannot resolve is still
-// a usable command, and the caller keeps the name it was given.
 func ResolvePath(path string) string {
 	absolute, err := filepath.Abs(path)
 	if err != nil {

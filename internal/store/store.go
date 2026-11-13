@@ -1,14 +1,5 @@
-// Package store is the typed store surface.
-//
-// One SQLite file with one schema, stamped with `PRAGMA user_version`. A file
-// that is not this schema is refused by name; it is never converted and never
-// half-migrated. A read never creates the state directory, the file, or an
-// empty database.
-//
-// The refusal vocabulary is a value (Kind), never a word inside a message: a
-// path the caller named can contain any word, so a refusal re-derived from
-// message text would let the path choose the answer. The CLI boundary renders
-// the one-line message and maps the exit code; nothing here prints.
+// Package store is the typed store surface: one SQLite file with one schema,
+// stamped with `PRAGMA user_version`.
 package store
 
 import (
@@ -83,7 +74,7 @@ const (
 	// Foreign means the file is a SQLite database that is not a skill-log
 	// store.
 	Foreign
-	// Older means a store written by the pre-ADR-0002 schema.
+	// Older means a store whose schema predates this one.
 	Older
 	// Newer means a store written by a newer schema than this binary.
 	Newer
@@ -211,7 +202,7 @@ func openRead(path string) (*Store, *Refusal, error) {
 		db.Close()
 		return nil, nil, err
 	}
-	// And no statement on this connection may write: a read path that grew a
+	// No statement on this connection may write: a read path that grew a
 	// write would fail loudly instead of changing the store.
 	if _, err := db.Exec("PRAGMA query_only=ON"); err != nil {
 		db.Close()

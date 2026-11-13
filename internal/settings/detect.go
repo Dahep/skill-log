@@ -36,10 +36,10 @@ func GitToplevelOf(dir string) string {
 
 // GitCommonDir is the repository's common git directory, or "".
 //
-// The common directory is the one every linked worktree shares — the main
-// repository's `.git` — and it is where the hooks directory belongs. Older
-// git without --path-format answers with a path relative to dir; it is
-// joined back onto dir so the caller always gets a path it can open.
+// The common directory is the one every linked worktree shares, and it is
+// where the hooks directory belongs. Older git without --path-format answers
+// with a path relative to dir; it is joined back onto dir so the caller
+// always gets a path it can open.
 func GitCommonDir(dir string) string {
 	out := gitDir(dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
 	if out != "" {
@@ -129,10 +129,8 @@ func RepoName(url string) string {
 
 // DetectRepo is the repository the named worktree belongs to.
 //
-// top is the worktree the row will carry. The origin remote's basename is
-// the name; the directory's own name is the fallback. Empty when top is not
-// a git working tree: a path that is not a checkout names no repository, and
-// one is never invented from the directory's name alone.
+// The origin remote's basename is the name; the directory's own name is the
+// fallback. Empty when top is not a git working tree.
 func DetectRepo(top string) string {
 	if top == "" {
 		return ""
