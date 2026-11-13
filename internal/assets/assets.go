@@ -1,4 +1,5 @@
-// Package assets carries the two shipped default templates and the bundled `skill-log` skill body.
+// Package assets carries the two shipped default templates and the bundled
+// `skill-log` skill body.
 package assets
 
 import (
@@ -22,7 +23,7 @@ var review string
 //go:embed skills/skill-log.md
 var skillLogBody string
 
-// SkillLogBody returns the bundled `skill-log` skill body, installed verbatim by `setup --skills-dir`.
+// SkillLogBody returns the bundled `skill-log` skill body.
 func SkillLogBody() string { return skillLogBody }
 
 // Names returns the two template names, in canonical order.

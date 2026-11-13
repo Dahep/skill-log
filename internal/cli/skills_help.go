@@ -1,10 +1,7 @@
 package cli
 
-// subcommandHelp is the usage block for one `skills` subcommand.
-//
-// Each nesting level's help ends with two to four real invocations. The block
-// is the subcommand's own: what it does, how to call it, and copy-pasteable
-// examples.
+// subcommandHelp is the usage block for one `skills` subcommand: what it does, how
+// to call it, and copy-pasteable examples.
 func subcommandHelp(sub string) string {
 	switch sub {
 	case "audit":

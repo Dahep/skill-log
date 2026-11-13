@@ -3,15 +3,12 @@ package cli
 // The report directory's README and keep file, which `setup` creates with the
 // directory and never touches again.
 const (
-	// reportReadmeName is the operator's one-page explanation of the
-	// transport.
+	// reportReadmeName is the operator's one-page explanation of the transport.
 	reportReadmeName = "README.md"
-	// reportKeepName keeps the directory in the tree when it holds no report
-	// yet.
+	// reportKeepName keeps the directory in the tree when it holds no report.
 	reportKeepName = ".keep"
 )
 
-// reportDirReadme is the README `setup` writes into a new report directory.
 func reportDirReadme() string {
 	return `# .skill-log/reports
 

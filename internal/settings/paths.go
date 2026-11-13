@@ -1,6 +1,5 @@
-// Package settings resolves the writer's context: where the store lives,
-// when a row happened, which machine wrote it, the git detection behind the
-// repo and worktree columns, and the opt-in adapters.
+// Package settings resolves the writer's context: where the store lives, when a
+// row happened, which machine wrote it, the git detection, the opt-in adapters.
 package settings
 
 import (
@@ -8,15 +7,13 @@ import (
 	"strings"
 )
 
-// EnvOrEmpty returns the value of an environment variable, or an empty
-// string.
+// EnvOrEmpty returns the value of an environment variable, or an empty string.
 func EnvOrEmpty(name string) string {
 	return os.Getenv(name)
 }
 
-// ExpandHome expands a leading `~` to the user's home. `~` alone is the
-// home directory; `~/x` is `x` inside it. A path that does not start with
-// `~` is returned unchanged.
+// ExpandHome expands a leading `~` to the user's home. `~` alone is the home
+// directory; `~/x` is `x` inside it.
 func ExpandHome(path string) string {
 	if !strings.HasPrefix(path, "~") {
 		return path
@@ -34,15 +31,13 @@ func ExpandHome(path string) string {
 	return path
 }
 
-// DefaultDB is the store path when nothing overrides it.
-//
-// The directory is never created here: a read must not change the machine.
+// DefaultDB is the store path when nothing overrides it. The directory is never
+// created here: a read must not change the machine.
 func DefaultDB() string {
 	return stateDir() + "/skill-log/skills.db"
 }
 
-// ResolveDB is the store path: --db first, then SKILL_LOG_DB, then the
-// default. An empty --db means the flag was not given.
+// ResolveDB is the store path: --db first, then SKILL_LOG_DB, then the default.
 func ResolveDB(flag string) string {
 	if flag != "" {
 		return ExpandHome(flag)
@@ -53,8 +48,8 @@ func ResolveDB(flag string) string {
 	return DefaultDB()
 }
 
-// StateDir is the per-machine skill-log state directory: where the seeded
-// template record lives, beside the store.
+// StateDir is the per-machine skill-log state directory: where the seeded template
+// record lives, beside the store.
 func StateDir() string {
 	return stateDir() + "/skill-log"
 }
@@ -69,7 +64,6 @@ func UserConfigDir() string {
 	return config + "/skill-log"
 }
 
-// TemplatesDir is the user-owned template directory.
 func TemplatesDir() string {
 	return UserConfigDir() + "/templates"
 }

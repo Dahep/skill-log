@@ -11,9 +11,9 @@ import (
 	templatepkg "github.com/Dahep/skill-log/internal/template"
 )
 
-// templateJSON is one template object.
 func templateJSON(t templatepkg.Template) string {
-	// The template file's source is its content, so template_hash and content_hash carry the same value.
+	// The source is the content, so template_hash and content_hash carry the
+	// same value.
 	return format.Object(
 		format.Str("name", t.Name),
 		format.Str("source", t.Source),
@@ -24,14 +24,12 @@ func templateJSON(t templatepkg.Template) string {
 	)
 }
 
-// templateAction is one template's outcome under `seed` or `reset`.
 type templateAction struct {
 	path   string
 	action string
 	note   string
 }
 
-// templateActionJSON is one action object, exactly `path`, `action`.
 func templateActionJSON(item templateAction) string {
 	return format.Object(
 		format.Str("path", item.path),
@@ -39,7 +37,8 @@ func templateActionJSON(item templateAction) string {
 	)
 }
 
-// handleTemplateShow is `skills template show`: both effective templates, their source and hashes.
+// handleTemplateShow is `skills template show`: both effective templates, their
+// source and hashes.
 func handleTemplateShow(options skillsOptions) Outcome {
 	templateDir := templatepkg.ResolveDir(options.templateDir)
 	usage, err := templatepkg.Load(assets.UsageLogName, templateDir)
@@ -85,9 +84,8 @@ func handleTemplateShow(options skillsOptions) Outcome {
 	return OK(text.String())
 }
 
-// handleTemplateSeed is `skills template seed`: copy the shipped defaults into the user directory.
-//
-// It refuses an existing copy without `--force`.
+// handleTemplateSeed is `skills template seed`: copy the shipped defaults into the
+// user directory. It refuses an existing copy without `--force`.
 func handleTemplateSeed(options skillsOptions) Outcome {
 	dir := settings.TemplatesDir()
 	names := assets.Names()
@@ -141,9 +139,8 @@ func handleTemplateSeed(options skillsOptions) Outcome {
 	return OK(text)
 }
 
-// handleTemplateReset is `skills template reset`: delete the user copies back to the shipped defaults.
-//
-// It refuses while copies exist without `--force`.
+// handleTemplateReset is `skills template reset`: delete the user copies back to
+// the shipped defaults. It refuses while copies exist without `--force`.
 func handleTemplateReset(options skillsOptions) Outcome {
 	dir := settings.TemplatesDir()
 	names := assets.Names()
@@ -201,7 +198,6 @@ func handleTemplateReset(options skillsOptions) Outcome {
 	return OK(text)
 }
 
-// templateActionLines renders the actions as JSON objects or human notes.
 func templateActionLines(actions []templateAction, json bool) []string {
 	var lines []string
 	for _, action := range actions {

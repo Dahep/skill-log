@@ -13,8 +13,8 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// SchemaVersion is the schema version this binary writes and understands. A
-// store stamped higher is refused: an older CLI must not touch a newer store.
+// SchemaVersion is the schema version this binary writes and understands. A store
+// stamped higher is refused: an older CLI must not touch a newer store.
 const SchemaVersion = 1
 
 const invocationDDL = `CREATE TABLE IF NOT EXISTS invocations (
@@ -41,8 +41,8 @@ const problemDDL = `CREATE TABLE IF NOT EXISTS problems (
     PRIMARY KEY (invocation_id, ordinal)
 )`
 
-// The invocations column list, written once and read by the DDL's readers,
-// the single-row read and the multi-row read.
+// The invocations column list, written once and read by the DDL's readers, the
+// single-row read and the multi-row read.
 var invocationColumns = []string{
 	"id", "ts", "skill", "harness", "session", "parent", "model", "repo",
 	"worktree", "project", "t3_thread", "machine", "fix", "resolved_at",
@@ -59,11 +59,10 @@ const (
 	readBusyTimeout  = 5000
 )
 
-// DefaultLimit is the number of rows a read returns when the caller does not
-// say: enough to see the recent shape of the log without filling a terminal.
+// DefaultLimit is the number of rows a read returns when the caller does not say:
+// enough to see the recent shape of the log without filling a terminal.
 const DefaultLimit = 20
 
-// Kind is one named refusal kind.
 type Kind int
 
 const (
@@ -71,8 +70,7 @@ const (
 	None Kind = iota
 	// Damaged means the file is not a usable SQLite database.
 	Damaged
-	// Foreign means the file is a SQLite database that is not a skill-log
-	// store.
+	// Foreign means the file is a SQLite database that is not a skill-log store.
 	Foreign
 	// Older means a store whose schema predates this one.
 	Older
@@ -82,20 +80,18 @@ const (
 	Locked
 )
 
-// Refusal is a store that was refused, and why. Found is the version a newer
-// store carries, and zero for every other kind.
+// Refusal is a store that was refused, and why. Found is the version a newer store
+// carries, and zero for every other kind.
 type Refusal struct {
 	Kind  Kind
 	Path  string
 	Found int
 }
 
-// Store is an open store. SQL never leaves this package.
 type Store struct {
 	db *sql.DB
 }
 
-// Close releases the connection.
 func (s *Store) Close() error {
 	if s == nil || s.db == nil {
 		return nil
@@ -103,7 +99,6 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
-// coder is the shape a SQLite driver error exposes.
 type coder interface {
 	Code() int
 }
@@ -142,9 +137,8 @@ func isCorruption(err error) bool {
 		strings.Contains(text, "file is encrypted")
 }
 
-// ClassifyError turns a SQLite failure into the refusal kind it means, or nil
-// when it is a generic operational failure. The caller renders the answer;
-// nothing else inspects a SQLite message.
+// ClassifyError turns a SQLite failure into the refusal kind it means, or nil when
+// it is a generic operational failure.
 func ClassifyError(err error) *Refusal {
 	if isCorruption(err) {
 		return &Refusal{Kind: Damaged}
@@ -159,12 +153,8 @@ func isFile(path string) bool {
 	return format.IsRegularFile(path)
 }
 
-// openRead opens an existing store for reading.
-//
-// A nil store with no refusal means the file does not exist: a read never
-// creates the state directory, the file, or an empty database. A file that
-// exists but is not a usable store is refused by name; nothing is written to
-// it, not even its journal mode.
+// openRead opens an existing store for reading. A nil store with no refusal means
+// the file does not exist: a read never creates the file or an empty database.
 func openRead(path string) (*Store, *Refusal, error) {
 	if !isFile(path) {
 		return nil, nil, nil
@@ -173,10 +163,8 @@ func openRead(path string) (*Store, *Refusal, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	// The busy timeout is connection state, not file state, so it comes
-	// before the schema check: a read that arrives while another process
-	// holds the write lock must wait for it, not fail with "database is
-	// locked" from the very first sqlite_master query.
+	// The busy timeout is connection state, not file state, so it comes before
+	// the schema check: a read must wait for the write lock.
 	if _, err := db.Exec(fmt.Sprintf("PRAGMA busy_timeout=%d", readBusyTimeout)); err != nil {
 		db.Close()
 		if isCorruption(err) {
@@ -202,8 +190,8 @@ func openRead(path string) (*Store, *Refusal, error) {
 		db.Close()
 		return nil, nil, err
 	}
-	// No statement on this connection may write: a read path that grew a
-	// write would fail loudly instead of changing the store.
+	// No statement on this connection may write: a read path that grew a write
+	// would fail loudly instead of changing the store.
 	if _, err := db.Exec("PRAGMA query_only=ON"); err != nil {
 		db.Close()
 		return nil, nil, err
@@ -211,12 +199,8 @@ func openRead(path string) (*Store, *Refusal, error) {
 	return store, nil, nil
 }
 
-// openWrite opens the store for writing, creating it when it does not exist.
-//
-// The state directory and the file are created here, and only here: a write
-// is the one thing that may bring a store into being. What this file is —
-// ours, older, foreign, damaged, newer — is decided before anything is
-// written to it.
+// openWrite opens the store for writing, creating it when it does not exist. The
+// state directory and the file are created here, and only here.
 func openWrite(path string) (*Store, *Refusal, error) {
 	existed := isFile(path)
 	if err := createStoreDirectory(path); err != nil {
@@ -253,8 +237,8 @@ func openWrite(path string) (*Store, *Refusal, error) {
 		return nil, nil, err
 	}
 	if !ours {
-		// Both tables, one transaction: a failure on the second statement
-		// must not leave a half-built store behind for good.
+		// Both tables, one transaction: a failure on the second statement must
+		// not leave a half-built store behind for good.
 		tx, err := db.Begin()
 		if err != nil {
 			db.Close()
@@ -283,8 +267,8 @@ func openWrite(path string) (*Store, *Refusal, error) {
 		db.Close()
 		return nil, nil, err
 	}
-	// Stamping the version is the first write to the file. Another writer
-	// holding the lock makes it fail, and a lock is a named refusal.
+	// Stamping the version is the first write to the file: another writer holding
+	// the lock makes it fail, and a lock is a named refusal.
 	if _, err := db.Exec(fmt.Sprintf("PRAGMA user_version=%d", SchemaVersion)); err != nil {
 		db.Close()
 		if isBusy(err) {
@@ -357,8 +341,8 @@ func (s *Store) schemaRefusal(existed bool) (*Refusal, error) {
 			return nil, err
 		}
 		if tables > 0 || version != 0 {
-			// A concurrent `add` may have committed the schema between those
-			// two queries. Ask once more before calling the file foreign.
+			// A concurrent `add` may have committed the schema between those two
+			// queries: ask once more before calling the file foreign.
 			ours, err = s.isOurs()
 			if err != nil {
 				return nil, err

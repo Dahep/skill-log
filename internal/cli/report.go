@@ -10,15 +10,15 @@ import (
 	"github.com/Dahep/skill-log/internal/store"
 )
 
-// The report directory, relative to the checkout's root. Its presence is
-// what puts a checkout in artifact mode; its absence is trailer mode.
+// The report directory, relative to the checkout's root. Its presence puts a
+// checkout in artifact mode; its absence is trailer mode.
 const reportDir = ".skill-log/reports"
 
 // The commit-body trailer a checkout without the report directory uses.
 const trailerKey = "Skill-log-Fix"
 
-// The longest file-name slug. A branch name can be long; a report name
-// does not need to be.
+// The longest file-name slug. A branch name can be long; a report name does not
+// need to be.
 const maxSlug = 80
 
 type reportOptions struct {
@@ -48,8 +48,7 @@ func reportVerb() Verb {
 			"skill-log report --skill create-skill --slug skill-fix",
 			"skill-log report --check",
 		},
-		// The flags that consume the next argument: the dispatcher reads this
-		// to tell `--run -h` from a help request.
+		// The dispatcher reads this to tell `--run -h` from a help request.
 		ValueFlags: reportFlags(&reportOptions{}).names(),
 		Notes: "The report is the transport: .skill-log/reports/<branch>.md,\n" +
 			"one machine#id per line, committed with the change. Markers are\n" +
@@ -118,13 +117,8 @@ func parseReportOptions(args []string) (reportOptions, error) {
 	return options, nil
 }
 
-// branchSlug is the report file's name for a branch: lowercase, safe,
-// truncated.
-//
-// A branch name may carry `/`, spaces or unicode; a file name may not
-// usefully. Every run of characters outside `[a-z0-9._-]` becomes one `-`,
-// leading and trailing `.`/`-` are dropped, and the result is cut to
-// maxSlug.
+// branchSlug is the report file's name for a branch: lowercase, safe, truncated.
+// Every run of characters outside `[a-z0-9._-]` becomes one `-`.
 func branchSlug(branch string) string {
 	lower := strings.ToLower(strings.TrimSpace(branch))
 	var out strings.Builder
@@ -149,7 +143,6 @@ func branchSlug(branch string) string {
 	return trimmed
 }
 
-// trimSlug is text without leading or trailing `.` and `-`.
 func trimSlug(text string) string {
 	start := 0
 	stop := len(text)
@@ -162,7 +155,6 @@ func trimSlug(text string) string {
 	return text[start:stop]
 }
 
-// containsInt reports whether value is in items.
 func containsInt(items []int64, value int64) bool {
 	for _, item := range items {
 		if item == value {
@@ -172,10 +164,8 @@ func containsInt(items []int64, value int64) bool {
 	return false
 }
 
-// addSorted is items plus value, sorted and without a duplicate.
-//
-// Insertion rather than a sort: these lists are tiny (one marker per
-// resolved row).
+// addSorted is items plus value, sorted and without a duplicate. Insertion rather
+// than a sort: these lists are tiny.
 func addSorted(items []string, value string) []string {
 	out := make([]string, 0, len(items)+1)
 	placed := false
@@ -194,7 +184,6 @@ func addSorted(items []string, value string) []string {
 	return out
 }
 
-// sortedUnique is items deduplicated and sorted.
 func sortedUnique(items []string) []string {
 	out := make([]string, 0, len(items))
 	for _, item := range items {
@@ -203,7 +192,6 @@ func sortedUnique(items []string) []string {
 	return out
 }
 
-// joinInts is the ids, comma-separated, for one diagnostic line.
 func joinInts(items []int64) string {
 	parts := make([]string, 0, len(items))
 	for _, item := range items {
@@ -212,7 +200,6 @@ func joinInts(items []int64) string {
 	return strings.Join(parts, ", ")
 }
 
-// problemsLine is the one failure line for a report with count bad lines.
 func problemsLine(count int) string {
 	if count == 1 {
 		return "report check failed: 1 line is not a marker"
@@ -220,7 +207,6 @@ func problemsLine(count int) string {
 	return "report check failed: " + formatInt(int64(count)) + " lines are not markers"
 }
 
-// markerCount is `1 marker` or `N markers`.
 func markerCount(count int) string {
 	if count == 1 {
 		return "1 marker"
@@ -228,7 +214,6 @@ func markerCount(count int) string {
 	return formatInt(int64(count)) + " markers"
 }
 
-// firstNine is the first nine bytes of a commit hash, or the whole short
 // hash.
 func firstNine(text string) string {
 	if len(text) <= 9 {
@@ -237,19 +222,14 @@ func firstNine(text string) string {
 	return text[:9]
 }
 
-// reportSelection is what the selectors found: markers to write, rows
-// already closed, and ids the store does not have.
-//
-// `missing` is a failure, not an empty selection: a caller who named an
-// id expects that row in the report, and silently writing four of five
-// markers is worse than refusing.
+// reportSelection is what the selectors found: markers to write, rows already
+// closed, and ids the store does not have. `missing` is a failure.
 type reportSelection struct {
 	pending  []string
 	resolved []string
 	missing  []int64
 }
 
-// recordReportRow sorts one row into the report (pending) or the skip
 // list (resolved).
 func recordReportRow(row store.Invocation, pending, resolved *[]string) {
 	text := marker.Format(row.Machine, row.ID)
@@ -260,14 +240,8 @@ func recordReportRow(row store.Invocation, pending, resolved *[]string) {
 	*pending = append(*pending, text)
 }
 
-// selectReportMarkers is the markers the selectors name, split into pending
-// and resolved.
-//
-// `--id` rows are looked up one by one, so a missing id is named even when
-// the other selectors would have excluded it. The other selectors then
-// narrow the named ids the same way they narrow a plain `--run` or `--skill`
-// cut. A query with no id list reads every matching row: a report is not a
-// preview.
+// selectReportMarkers is the markers the selectors name, split into pending and
+// resolved. A query with no id list reads every matching row.
 func selectReportMarkers(opened *store.Store, options reportOptions) (reportSelection, error) {
 	var selection reportSelection
 
@@ -303,8 +277,7 @@ func selectReportMarkers(opened *store.Store, options reportOptions) (reportSele
 	filters := store.Filters{
 		Skill: options.skill,
 		Run:   options.run,
-		// Zero means every matching row; the report must not cap a
-		// selection.
+		// Zero means every matching row; the report must not cap a selection.
 		Limit: 0,
 	}
 	rows, err := opened.Rows(filters)
@@ -317,19 +290,14 @@ func selectReportMarkers(opened *store.Store, options reportOptions) (reportSele
 	return selection, nil
 }
 
-// existingReport is what a report file already holds, and the lines it
 // cannot read.
 type existingReport struct {
 	markers []string
 	bad     []string
 }
 
-// parseReport is the markers in a report's text, plus any line that is not
-// one.
-//
-// A report is tool-owned: every non-blank line is a marker. A line that is
-// not one is reported with its position rather than dropped, because
-// rewriting the file would otherwise delete whatever a person wrote there.
+// parseReport is the markers in a report's text, plus any line that is not one.
+// A report is tool-owned, so such a line is reported with its position.
 func parseReport(text, relative string) existingReport {
 	var report existingReport
 	for i, line := range strings.Split(text, "\n") {
@@ -349,10 +317,8 @@ func parseReport(text, relative string) existingReport {
 	return report
 }
 
-// writeReportJSON is the write path's flat JSON object.
-//
-// `path` is empty and `trailer` carries the line in trailer mode; the
-// keys are the same in both modes, so a consumer reads one shape.
+// writeReportJSON is the write path's flat JSON object. `path` is empty and
+// `trailer` carries the line in trailer mode; the keys are the same.
 func writeReportJSON(path string, markers, resolved []string, already, dryRun bool, trailer string) string {
 	return format.Object(
 		format.Str("path", path),
@@ -364,7 +330,6 @@ func writeReportJSON(path string, markers, resolved []string, already, dryRun bo
 	)
 }
 
-// resolvedNotes is one stderr note per row a previous change already
 // closed.
 func resolvedNotes(resolved []string) string {
 	lines := make([]string, 0, len(resolved))
@@ -374,7 +339,6 @@ func resolvedNotes(resolved []string) string {
 	return prefixedNotes(lines)
 }
 
-// nothingOutcome is the answer when the selection produced no marker to
 // write at all.
 func nothingOutcome(options reportOptions, resolved []string, notes string) Outcome {
 	if options.json {
@@ -383,7 +347,6 @@ func nothingOutcome(options reportOptions, resolved []string, notes string) Outc
 	return OKNotes("nothing to report: the selected rows are already resolved", notes)
 }
 
-// trailerOutcome is trailer mode: print the line, write nothing.
 func trailerOutcome(pending, resolved []string, notes string, options reportOptions) Outcome {
 	if len(pending) == 0 {
 		return nothingOutcome(options, resolved, notes)
@@ -401,7 +364,6 @@ func trailerOutcome(pending, resolved []string, notes string, options reportOpti
 	return OKNotes(line, allNotes)
 }
 
-// checkResult is a report's markers, the lines that are not markers, and
 // warnings.
 type checkResult struct {
 	markers  []string
@@ -409,13 +371,8 @@ type checkResult struct {
 	warnings []string
 }
 
-// validateReport checks every line of a report against the marker grammar
-// and the store.
-//
-// A marker this store does not hold is a warning: it names a row on a
-// machine whose store has not been merged here, and that machine will
-// resolve it. An already-resolved row is a warning too. A line that is not
-// a marker is a problem — the merge cannot interpret it.
+// validateReport checks every line of a report against the marker grammar and the
+// store. A marker this store lacks is a warning; a line that is no marker is a problem.
 func validateReport(text, relative string, opened *store.Store, haveStore bool) (checkResult, error) {
 	var result checkResult
 	for i, line := range strings.Split(text, "\n") {
@@ -457,7 +414,6 @@ func validateReport(text, relative string, opened *store.Store, haveStore bool) 
 	return result, nil
 }
 
-// checkOutcome is the `--check` answer: validate, never write, exit 1 on a
 // problem.
 func checkOutcome(path, relative, storePath string, artifact, asJSON bool) Outcome {
 	if !artifact {
@@ -554,8 +510,7 @@ func handleReport(args []string) Outcome {
 	slugSource := options.slug
 	if slugSource == "" {
 		branch := settings.GitBranch(root)
-		// A detached HEAD is called `HEAD`, which is not a branch name; an empty
-		// answer is "not a repository", which cannot happen here.
+		// A detached HEAD is called `HEAD`, which is not a branch name.
 		if branch == "HEAD" || branch == "" {
 			return Fail(
 				"cannot name the report file (detached HEAD?); pass --slug",
@@ -591,8 +546,7 @@ func handleReport(args []string) Outcome {
 	defer opened.Close()
 
 	var selection reportSelection
-	// A store with no tables yet is an empty log: nothing matches, and
-	// every named id is a missing id.
+	// A store with no tables yet is an empty log: every named id is a missing id.
 	selection, err = selectReportMarkers(opened, options)
 	if err != nil {
 		failure := readFailure(storePath, err)
@@ -610,10 +564,8 @@ func handleReport(args []string) Outcome {
 	resolved := sortedUnique(selection.resolved)
 	notes := resolvedNotes(resolved)
 
-	// A report only carries markers that parse back to the same row.
-	// `add` refuses a machine that cannot appear in one, but a row can
-	// predate that check or come from another store; writing it would put a
-	// line in the file no resolver can read.
+	// A report only carries markers that parse back to the same row: an
+	// unparseable marker would put a line in the file no resolver can read.
 	for _, item := range pending {
 		parsed, ok := marker.Parse(item)
 		if !ok || parsed.Text() != item {

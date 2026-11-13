@@ -15,7 +15,8 @@ const (
 
 // The document states, in the order the spec's table lists them.
 const (
-	// StateOK means the fence hash matches the content and the content is the current render.
+	// StateOK means the fence hash matches the content and the content is the
+	// current render.
 	StateOK = "ok"
 	// StateMissing means no fenced block at all.
 	StateMissing = "missing"
@@ -34,7 +35,6 @@ const (
 	nameKey     = "name:"
 )
 
-// Block is one fenced usage-log block, as Parse found it.
 type Block struct {
 	Start        int
 	End          int
@@ -43,21 +43,18 @@ type Block struct {
 	ContentHash  string
 }
 
-// Parsed is a document split at its fence: before, the block, after.
 type Parsed struct {
 	Before string
 	Block  *Block
 	After  string
 }
 
-// Rendered is a rendered block: its full fenced text and the two hashes.
 type Rendered struct {
 	Text         string
 	TemplateHash string
 	ContentHash  string
 }
 
-// Render renders template for one skill into a fenced block.
 func Render(template, name, command string) Rendered {
 	content := Substitute(template, name, command)
 	templateHash := Hash(template)
@@ -73,15 +70,13 @@ func Render(template, name, command string) Rendered {
 	return Rendered{Text: text, TemplateHash: templateHash, ContentHash: contentHash}
 }
 
-// Substitute returns template with every `<name>` and `<command>` replaced.
-//
-// The replacements are literal, without escaping.
+// Substitute returns template with every `<name>` and `<command>` replaced, without
+// escaping.
 func Substitute(template, name, command string) string {
 	out := strings.ReplaceAll(template, "<name>", name)
 	return strings.ReplaceAll(out, "<command>", command)
 }
 
-// ValidateTemplate refuses a template whose placeholders are wrong, by name.
 func ValidateTemplate(name, template string) error {
 	switch name {
 	case "usage-log.md":
@@ -105,9 +100,7 @@ func ValidateTemplate(name, template string) error {
 	return nil
 }
 
-// Parse splits text at its fence.
-//
-// Only the first block is recognised: a second fenced block is left in the after-text.
+// Parse splits text at its fence. Only the first block is recognised.
 func Parse(text string) Parsed {
 	parsed := Parsed{}
 	openAt := findLine(text, FenceOpen)
@@ -135,7 +128,8 @@ func Parse(text string) Parsed {
 		closeEnd = closeEnd + 1
 	}
 	block := &Block{Start: openAt, End: closeEnd}
-	// The content is the bytes between the two fence lines, minus the one newline Render writes.
+	// The content is the bytes between the two fence lines, minus the one
+	// newline Render writes.
 	content := text[lineEnd+1 : closeAt]
 	if strings.HasSuffix(content, "\n") {
 		content = content[:len(content)-1]
@@ -149,9 +143,8 @@ func Parse(text string) Parsed {
 	return parsed
 }
 
-// fenceField returns the value of key in a fence header, or "" when absent.
-//
-// The value runs to the next space: the fence grammar has no quoting.
+// fenceField returns the value of key in a fence header, or "" when absent. The
+// value runs to the next space: the fence grammar has no quoting.
 func fenceField(header, key string) string {
 	at := strings.Index(header, key)
 	if at < 0 {
@@ -166,9 +159,8 @@ func fenceField(header, key string) string {
 	return strings.TrimSpace(rest[:cut])
 }
 
-// findLine returns the byte offset of the first line that starts with prefix, or -1.
-//
-// A fence in the middle of a line is not a fence.
+// findLine returns the byte offset of the first line that starts with prefix, or
+// -1. A fence in the middle of a line is not a fence.
 func findLine(text, prefix string) int {
 	at := 0
 	n := len(text)
@@ -185,7 +177,6 @@ func findLine(text, prefix string) int {
 	return -1
 }
 
-// findNewline returns the offset of the next '\n' at or after start, or -1.
 func findNewline(text string, start int) int {
 	at := strings.Index(text[start:], "\n")
 	if at < 0 {
@@ -194,9 +185,8 @@ func findNewline(text string, start int) int {
 	return start + at
 }
 
-// Append returns document with the fenced block appended at the end.
-//
-// A document whose last byte is not a newline gets one separator newline in front.
+// Append returns document with the fenced block appended at the end. A document
+// whose last byte is not a newline gets one separator newline.
 func Append(document, block string) string {
 	if document == "" || strings.HasSuffix(document, "\n") {
 		return document + block
@@ -204,9 +194,8 @@ func Append(document, block string) string {
 	return document + "\n" + block
 }
 
-// Rewrite returns document with its fenced block replaced by block.
-//
-// The bytes outside the fence are carried through untouched.
+// Rewrite returns document with its fenced block replaced by block. The bytes
+// outside the fence are carried through untouched.
 func Rewrite(document, block string) string {
 	parsed := Parse(document)
 	if parsed.Block == nil {
@@ -215,9 +204,8 @@ func Rewrite(document, block string) string {
 	return parsed.Before + block + parsed.After
 }
 
-// Classify returns the document's state, as one of the five names.
-//
-// The caller passes the *current* render's two hashes, so Classify never renders.
+// Classify returns the document's state, as one of the five names. The caller
+// passes the *current* render's two hashes.
 func Classify(document, currentTemplateHash, currentContentHash string, vendored bool) string {
 	if vendored {
 		return StateVendored
@@ -237,9 +225,8 @@ func Classify(document, currentTemplateHash, currentContentHash string, vendored
 	return StateStale
 }
 
-// IsVendored reports whether the document carries the vendor stamp.
-//
-// The stamp is a frontmatter `metadata:` block with a `source:` key.
+// IsVendored reports whether the document carries the vendor stamp: a frontmatter
+// `metadata:` block with a `source:` key.
 func IsVendored(document string) bool {
 	frontmatterLines, ok := frontmatterLines(document)
 	if !ok {
@@ -256,7 +243,6 @@ func IsVendored(document string) bool {
 	return false
 }
 
-// FrontmatterName returns the skill's name, from its frontmatter `name:` key, or "".
 func FrontmatterName(document string) string {
 	frontmatterLines, ok := frontmatterLines(document)
 	if !ok {
@@ -280,9 +266,8 @@ func FrontmatterName(document string) string {
 	return ""
 }
 
-// frontmatterLines returns the trimmed lines of the document's frontmatter, and whether it opens one.
-//
-// The frontmatter runs from the opening `---` to the next `---`, or to the end of the text.
+// frontmatterLines returns the trimmed lines of the document's frontmatter, and
+// whether it opens one: from the opening `---` to the next `---`.
 func frontmatterLines(document string) ([]string, bool) {
 	if !strings.HasPrefix(document, frontmatter) {
 		return nil, false

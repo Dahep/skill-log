@@ -8,11 +8,8 @@ import (
 	"strings"
 )
 
-// FileURI is the path as a `file:` URI.
-//
-// The path is escaped segment by segment, so a `?`, a `#` or a `%` in a name
-// cannot end the file name or start a query, and the separators stay
-// separators.
+// FileURI is the path as a `file:` URI. The path is escaped segment by segment,
+// so a `?`, `#` or `%` in a name cannot end the file name or start a query.
 func FileURI(path string) string {
 	absolute, err := filepath.Abs(path)
 	if err != nil {
@@ -29,8 +26,6 @@ func FileURI(path string) string {
 	return "file:" + strings.Join(segments, "/")
 }
 
-// ReadText returns the file's text, or an error naming what could not be
-// read.
 func ReadText(path string) (string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -39,16 +34,12 @@ func ReadText(path string) (string, error) {
 	return string(data), nil
 }
 
-// WriteText replaces path with text, atomically, at the report mode 0600.
 func WriteText(path, text string) error {
 	return WriteTextMode(path, text, 0o600)
 }
 
-// WriteTextMode replaces path with text, atomically, at exactly mode.
-//
-// The temporary lives beside the target and is created exclusively under an
-// unpredictable name, and the mode is set on the descriptor before the rename,
-// so the replacement is never visible at the wrong permissions.
+// WriteTextMode replaces path with text, atomically, at exactly mode. The
+// temporary is created exclusively under an unpredictable name.
 func WriteTextMode(path, text string, mode os.FileMode) error {
 	dir := filepath.Dir(path)
 	file, err := os.CreateTemp(dir, filepath.Base(path)+".tmp.*")
@@ -80,19 +71,16 @@ func WriteTextMode(path, text string, mode os.FileMode) error {
 	return nil
 }
 
-// IsRegularFile reports whether path is a regular file.
 func IsRegularFile(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.Mode().IsRegular()
 }
 
-// IsDir reports whether path is a directory.
 func IsDir(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.IsDir()
 }
 
-// IsExecutable reports whether path carries an execute bit for somebody.
 func IsExecutable(path string) bool {
 	info, err := os.Stat(path)
 	if err != nil {
@@ -101,8 +89,7 @@ func IsExecutable(path string) bool {
 	return info.Mode().Perm()&0o111 != 0
 }
 
-// SetExecutable gives path the execute bits, leaving its other permissions
-// alone.
+// SetExecutable gives path the execute bits, leaving its other permissions alone.
 func SetExecutable(path string) error {
 	info, err := os.Stat(path)
 	if err != nil {
@@ -114,7 +101,6 @@ func SetExecutable(path string) error {
 	return nil
 }
 
-// ResolvePath returns path as one absolute, symlink-resolved path, or "".
 func ResolvePath(path string) string {
 	absolute, err := filepath.Abs(path)
 	if err != nil {

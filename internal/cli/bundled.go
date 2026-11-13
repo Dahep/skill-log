@@ -22,15 +22,12 @@ const (
 	stampClose = " -->"
 )
 
-// stampLine is this build's version-stamp line, newline included.
 func stampLine() string {
 	return stampOpen + Version() + stampClose + "\n"
 }
 
-// stampVersion returns the version the stamp in document names, or "" when
-// there is no stamp line.
-//
-// The scan is line-based: prose that merely mentions the stamp is not a stamp.
+// stampVersion returns the version the stamp in document names, or "" when there
+// is no stamp line. The scan is line-based: prose is not a stamp.
 func stampVersion(document string) string {
 	n := len(document)
 	at := 0
@@ -52,8 +49,8 @@ func stampVersion(document string) string {
 	return ""
 }
 
-// skillLogDocument is the installed `skill-log` document: body, stamp,
-// usage-log block.
+// skillLogDocument is the installed `skill-log` document: body, stamp, usage-log
+// block.
 func skillLogDocument(usageTemplate, command string) string {
 	rendered := document.Render(usageTemplate, SkillLogSkill, command)
 	return document.Append(
@@ -62,9 +59,8 @@ func skillLogDocument(usageTemplate, command string) string {
 	)
 }
 
-// reviewDocument is the installed `skill-friction-review` document: the
-// review template rendered with the resolved binary path, followed by the
-// usage-log block rendered for `skill-friction-review`.
+// reviewDocument is the installed `skill-friction-review` document: the review
+// template rendered with the resolved binary path, plus its usage-log block.
 func reviewDocument(reviewTemplate, usageTemplate, command string) string {
 	body := document.Substitute(reviewTemplate, ReviewSkill, command)
 	rendered := document.Render(usageTemplate, ReviewSkill, command)

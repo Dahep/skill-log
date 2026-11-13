@@ -9,9 +9,8 @@ import (
 	"github.com/Dahep/skill-log/internal/format"
 )
 
-// Open returns the store at path. A nil store and a nil refusal mean the
-// file does not exist: the caller decides what that means for its verb.
-// Only create may bring a store into being.
+// Open returns the store at path. A nil store and a nil refusal mean the file
+// does not exist. Only create may bring a store into being.
 func Open(path string, create bool) (*Store, *Refusal, error) {
 	if create {
 		return openWrite(path)

@@ -6,24 +6,19 @@ import (
 	"strings"
 )
 
-// Marker is one parsed `machine#id` marker.
 type Marker struct {
 	Machine string
 	ID      int64
 }
 
-// Text is the canonical spelling: the machine, `#`, the id in decimal.
 func (m Marker) Text() string { return Format(m.Machine, m.ID) }
 
-// Format is the canonical spelling of a marker.
 func Format(machine string, id int64) string {
 	return machine + "#" + strconv.FormatInt(id, 10)
 }
 
-// Parse returns the marker value names, or false.
-//
-// The id is a positive decimal: an oversized id is refused rather than
-// wrapped, so nothing can parse into a valid-looking id that names nothing.
+// Parse returns the marker value names, or false. The id is a positive decimal:
+// an oversized id is refused rather than wrapped.
 func Parse(value string) (Marker, bool) {
 	text := strings.TrimSpace(value)
 	cut := strings.Index(text, "#")

@@ -8,7 +8,6 @@ import (
 	"strings"
 )
 
-// Result is what running a command produced.
 type Result struct {
 	Status int
 	Stdout string
@@ -16,8 +15,7 @@ type Result struct {
 }
 
 // Run executes name with args in dir and captures both streams. An empty dir
-// means the process's own working directory. A command that cannot start is
-// reported as status -1 with the error's text on stderr.
+// means the process's own working directory. A command that cannot start is -1.
 func Run(dir, name string, args ...string) Result {
 	cmd := exec.Command(name, args...)
 	if dir != "" {
@@ -44,7 +42,6 @@ func Run(dir, name string, args ...string) Result {
 	return result
 }
 
-// Cause is a git call's typed outcome.
 type Cause int
 
 const (
@@ -60,7 +57,6 @@ const (
 	GitFailed
 )
 
-// GitResult is one git call: its cause and its trimmed stdout.
 type GitResult struct {
 	Cause  Cause
 	Out    string
@@ -69,7 +65,7 @@ type GitResult struct {
 }
 
 // Git runs git with args in dir and classifies the outcome. The caller reads
-// Cause and Out; it never decodes Stderr to find out what happened.
+// Cause and Out; it never decodes Stderr.
 func Git(dir string, args ...string) GitResult {
 	result := Run(dir, "git", args...)
 	out := GitResult{

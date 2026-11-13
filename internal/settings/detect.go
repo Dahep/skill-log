@@ -7,26 +7,22 @@ import (
 	"github.com/Dahep/skill-log/internal/process"
 )
 
-// gitDir runs one constant git command in dir and returns its trimmed
-// stdout. An empty string means the command failed, printed nothing, or git
-// is missing: none of those is an error to the callers here, whose fields
-// degrade to "unknown".
+// gitDir runs one constant git command in dir and returns its trimmed stdout. An
+// empty string means the command failed, printed nothing, or git is missing.
 func gitDir(dir string, args ...string) string {
 	return process.Git(dir, args...).Out
 }
 
-// GitToplevel is the working-tree root of the current directory, or "".
 func GitToplevel() string {
 	return gitDir("", "rev-parse", "--show-toplevel")
 }
 
-// GitBranch is the current branch of the repository dir is in, or "".
-// A detached HEAD answers `HEAD`, which names no report file.
+// GitBranch is the current branch of the repository dir is in, or "". A detached
+// HEAD answers `HEAD`, which names no report file.
 func GitBranch(dir string) string {
 	return gitDir(dir, "rev-parse", "--abbrev-ref", "HEAD")
 }
 
-// GitToplevelOf is the working-tree root that contains dir, or "".
 func GitToplevelOf(dir string) string {
 	if dir == "" {
 		return ""
@@ -34,12 +30,8 @@ func GitToplevelOf(dir string) string {
 	return gitDir(dir, "rev-parse", "--show-toplevel")
 }
 
-// GitCommonDir is the repository's common git directory, or "".
-//
-// The common directory is the one every linked worktree shares, and it is
-// where the hooks directory belongs. Older git without --path-format answers
-// with a path relative to dir; it is joined back onto dir so the caller
-// always gets a path it can open.
+// GitCommonDir is the repository's common git directory, or "": the one every
+// linked worktree shares. Older git answers with a path relative to dir.
 func GitCommonDir(dir string) string {
 	out := gitDir(dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
 	if out != "" {
@@ -52,19 +44,12 @@ func GitCommonDir(dir string) string {
 	return filepath.Join(dir, out)
 }
 
-// GitOriginURL is the origin remote's URL of the repository dir is in, or "".
 func GitOriginURL(dir string) string {
 	return gitDir(dir, "remote", "get-url", "origin")
 }
 
-// StripUserinfo removes any credentials from a remote URL.
-//
-// `https://user:token@host/owner/repo.git` becomes `host/owner/repo.git`, and
-// `ssh://user@host/owner/repo.git` becomes `host/owner/repo.git`. A URL
-// without userinfo is returned unchanged, and so is one whose `@` sits after
-// the path's first `/` — that is a path segment, not a credential separator.
-// An scp-style remote (`git@host:owner/repo.git`) is returned unchanged: its
-// `git` is the login name in the host position, not a credential.
+// StripUserinfo removes any credentials from a remote URL. A URL whose `@` sits
+// after the path's first `/` is returned unchanged, and so is an scp-style remote.
 func StripUserinfo(url string) string {
 	if !strings.HasPrefix(url, "http://") &&
 		!strings.HasPrefix(url, "https://") &&
@@ -88,7 +73,6 @@ func StripUserinfo(url string) string {
 	return url[cut+1:]
 }
 
-// Basename is the last path segment of path. A trailing separator does not
 // produce an empty segment.
 func Basename(path string) string {
 	text := path
@@ -105,9 +89,8 @@ func Basename(path string) string {
 	return text[cut+1:]
 }
 
-// RepoName is the repository name an origin URL names: the last path
-// segment, without the `.git` suffix. An scp-style remote has no `/` in its
-// path part, so the colon is treated as the separator too.
+// RepoName is the repository name an origin URL names: the last path segment,
+// without the `.git` suffix. An scp-style remote separates on the colon.
 func RepoName(url string) string {
 	if url == "" {
 		return ""
@@ -127,10 +110,8 @@ func RepoName(url string) string {
 	return name
 }
 
-// DetectRepo is the repository the named worktree belongs to.
-//
-// The origin remote's basename is the name; the directory's own name is the
-// fallback. Empty when top is not a git working tree.
+// DetectRepo is the repository the named worktree belongs to: the origin
+// remote's basename, or the directory's own name as fallback.
 func DetectRepo(top string) string {
 	if top == "" {
 		return ""
@@ -144,7 +125,6 @@ func DetectRepo(top string) string {
 	return Basename(top)
 }
 
-// DetectWorktree is the working-tree root, or "" outside a repository.
 func DetectWorktree() string {
 	return GitToplevel()
 }
@@ -157,8 +137,7 @@ func t3Home() string {
 }
 
 // T3Project is the T3 project grouping of a worktree: the first path segment
-// under $T3CODE_HOME/worktrees/, or "". A worktree outside T3 has no project
-// grouping, and one is never invented.
+// under $T3CODE_HOME/worktrees/, or "". One is never invented.
 func T3Project(worktree string) string {
 	if worktree == "" {
 		return ""
