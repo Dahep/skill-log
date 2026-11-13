@@ -93,10 +93,8 @@ def report_dir_readme() -> String:
 
     It is the operator's one-page explanation of the transport, kept
     beside the format rules in this module so the two cannot disagree.
-    The wording follows the reference implementation's
-    `reference/report-dir-README.md`, with the file names and commands
-    the 1.0 contract uses (`report` and `<slug>.md`) in place of the
-    report era's (`fix` and `fixes/<slug>.txt`).
+    The wording is the 1.0 contract's — `report` and `<slug>.md`, the
+    report-era names retired.
     """
     return """\
 # .skill-log/reports

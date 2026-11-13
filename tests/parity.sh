@@ -5,10 +5,11 @@
 #   tests/parity.sh
 #
 # The reference implementation (the report-era Python CLI and its 25-case
-# bash harness) is kept verbatim under `reference/`. It is the parity
-# ground truth: this suite ports those 25 cases to `dist/skill-log`, with
+# bash harness) was kept verbatim under `reference/` during the port and
+# removed once this suite passed: history is in git, the cases below are
+# the record. This suite ports those 25 cases to `dist/skill-log`, with
 # the intentionally changed commands adapted and the case names kept
-# comparable, so a reader can hold the two side by side.
+# comparable.
 #
 # The adaptations, and only these:
 #

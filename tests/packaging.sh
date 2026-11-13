@@ -116,8 +116,8 @@ version="${version%-x86_64-unknown-linux-gnu.tar.gz}"
 
 # ------------------------------------------------------- the packed shape
 #
-# Exactly the executable and its four libraries. reference/ and tests/
-# are never shipped (§8), and the listing check proves it.
+# Exactly the executable and its four libraries. Nothing from the tree
+# the build read (§8) is shipped, and the listing check proves it.
 
 listing="$(tar -tzf "$ARCHIVE" | sort)"
 expected="$(printf '%s\n' \
@@ -130,10 +130,10 @@ expected="$(printf '%s\n' \
 
 check "archive: entries are exactly the binary and its four libraries" \
     "$listing" "$expected"
-check_absent "archive: no reference/ tree is shipped" "$listing" "reference/"
 check_absent "archive: no tests/ is shipped" "$listing" "tests/"
 check_absent "archive: no src/ is shipped" "$listing" "src/"
 check_absent "archive: no vendor/ is shipped" "$listing" "vendor/"
+check_absent "archive: no docs/ is shipped" "$listing" "docs/"
 
 # The digest the release uploads beside the archive. It is part of the
 # artifact pair, so its absence is a failure, not a skip.

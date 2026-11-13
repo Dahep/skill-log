@@ -26,7 +26,8 @@ under [Caveat](#caveat-the-unhandled-exception-is-a-mojo-diagnostic-not-our-line
 
 ## What was built
 
-A minimal program in `docs/spikes/rpath/`:
+A minimal program (the spike sources were removed with the 1.0 cleanup;
+this write-up and git history are the record):
 
 - `main.mojo` — `Database(":memory:")`, `CREATE TABLE`, one `INSERT`, a
   prepared `SELECT`, prints the row.
@@ -34,10 +35,10 @@ A minimal program in `docs/spikes/rpath/`:
   `sqlite/__init__.mojo` is trimmed by `package.sh` to drop the upstream
   `from .orm import ...`, because `orm.mojo` is not taken.
 
-The scripts in `docs/spikes/rpath/` reproduce everything below:
+The scripts that produced everything below were removed with the same
+cleanup. They ran from the spike's own directory:
 
 ```sh
-cd docs/spikes/rpath
 ./package.sh          # build + package into /tmp/opencode/rpath-spike/pkg
 ./sandbox.sh          # sqlite-free root, positive and negative runs
 ```

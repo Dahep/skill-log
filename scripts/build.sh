@@ -21,9 +21,7 @@
 # copy, which is the local gate's convenience and never the release's.
 #
 # Only src/ and vendor/ are built, and only the binary and its libraries
-# are staged. The reference/ area is the verbatim report-era implementation
-# kept as the parity ground truth: it is never built, never staged and
-# never shipped in the release archive.
+# are staged. Nothing else in the tree can reach the release archive.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

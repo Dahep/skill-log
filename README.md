@@ -6,9 +6,9 @@ a specific change.
 
 **Status:** build done, release plumbing in place. The specification is [SPEC.md](SPEC.md); the
 decisions behind it are in [docs/adr/](docs/adr/), and the vocabulary in
-[CONTEXT.md](CONTEXT.md). Until the first release, the Python implementation
-it replaces is archived verbatim in [`reference/`](reference/README.md): that
-tree is the parity ground truth for the port, not the shipped tool.
+[CONTEXT.md](CONTEXT.md). The Python implementation this replaces was the
+reference during the port; its 25 harness cases now run against the binary in
+[tests/parity.sh](tests/parity.sh), and the old tree is in git history only.
 
 ## What it is
 

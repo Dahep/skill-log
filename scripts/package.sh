@@ -10,7 +10,7 @@
 #   skill-log-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz.sha256
 #
 # The archive holds exactly `skill-log` and `lib/` (the three Mojo
-# runtime libraries and libsqlite3.so.0), never reference/ or tests/.
+# runtime libraries and libsqlite3.so.0), nothing else from the tree.
 #
 # The bundled SQLite is never taken from this machine. By default it is
 # fetched from the pinned Ubuntu 22.04 (jammy) libsqlite3-0 package — a
