@@ -214,6 +214,16 @@ BY_MODEL="$OUT"
 run stats --by-model --json
 check "--by-model is the model cut" "$OUT" "$BY_MODEL"
 
+# Repeated group options are resolved in argument order: the last form wins.
+run stats --by skill --by-model --json
+check "the last group option wins" \
+    "$(json_keys "$(printf '%s\n' "$OUT" | head -n1)")" \
+    "invocations model problems problems_per_invocation resolved with_problems"
+run stats --by-model --by harness --json
+check "a later explicit group wins over an alias" \
+    "$(json_keys "$(printf '%s\n' "$OUT" | head -n1)")" \
+    "harness invocations problems problems_per_invocation resolved with_problems"
+
 # ---------------------------------------------------------------- narrowing
 
 run stats --skill alpha --json

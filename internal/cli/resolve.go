@@ -4,7 +4,6 @@ import (
 	"strings"
 
 	"github.com/Dahep/skill-log/internal/format"
-	"github.com/Dahep/skill-log/internal/marker"
 	"github.com/Dahep/skill-log/internal/settings"
 	"github.com/Dahep/skill-log/internal/store"
 )
@@ -67,21 +66,8 @@ func resolveFlags(options *resolveOptions) *flagSet {
 func parseResolveOptions(args []string) (resolveOptions, error) {
 	var options resolveOptions
 	flags := resolveFlags(&options)
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		switch arg {
-		case "--dry-run":
-			options.dryRun = true
-		case "--json":
-			options.json = true
-		default:
-			if _, ok := flags.lookup(arg); ok {
-				i++
-				continue
-			}
-			return options, usageError{"unknown option: " + arg}
-		}
-	}
+	flags.switchFlag("--dry-run", func() error { options.dryRun = true; return nil })
+	flags.switchFlag("--json", func() error { options.json = true; return nil })
 	if err := flags.parse(args); err != nil {
 		return options, err
 	}
@@ -106,7 +92,7 @@ func parseResolveOptions(args []string) (resolveOptions, error) {
 func renderResolveJSON(options resolveOptions, row store.Resolved) string {
 	return format.Object(
 		format.Int("id", options.id),
-		format.Str("marker", marker.Format(row.Machine, options.id)),
+		format.Str("marker", rowMarker(row.Machine, options.id)),
 		format.Str("skill", row.Skill),
 		format.Str("fix", row.Fix),
 		format.Str("resolved_at", row.ResolvedAt),
@@ -144,7 +130,7 @@ func handleResolve(args []string) Outcome {
 		return OK(renderResolveJSON(options, row))
 	}
 
-	text := marker.Format(row.Machine, options.id)
+	text := rowMarker(row.Machine, options.id)
 	if !row.Changed {
 		return OK(text + " already resolved: " + options.fix)
 	}

@@ -128,7 +128,7 @@ func SetExecutable(path string) error {
 		return err
 	}
 	if err := os.Chmod(path, info.Mode().Perm()|0o111); err != nil {
-		return fmt.Errorf("cannot make %s executable", path)
+		return fmt.Errorf("cannot make %s executable: %w", path, err)
 	}
 	return nil
 }

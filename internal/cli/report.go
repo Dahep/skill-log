@@ -89,23 +89,9 @@ func reportFlags(options *reportOptions) *flagSet {
 func parseReportOptions(args []string) (reportOptions, error) {
 	var options reportOptions
 	flags := reportFlags(&options)
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		switch arg {
-		case "--check":
-			options.check = true
-		case "--dry-run":
-			options.dryRun = true
-		case "--json":
-			options.json = true
-		default:
-			if _, ok := flags.lookup(arg); ok {
-				i++
-				continue
-			}
-			return options, usageError{"unknown option: " + arg}
-		}
-	}
+	flags.switchFlag("--check", func() error { options.check = true; return nil })
+	flags.switchFlag("--dry-run", func() error { options.dryRun = true; return nil })
+	flags.switchFlag("--json", func() error { options.json = true; return nil })
 	if err := flags.parse(args); err != nil {
 		return options, err
 	}
@@ -387,7 +373,7 @@ func resolvedNotes(resolved []string) string {
 	for _, item := range resolved {
 		lines = append(lines, item+" already resolved; skipped")
 	}
-	return format.Prefixed(lines)
+	return prefixedNotes(lines)
 }
 
 // nothingOutcome is the answer when the selection produced no marker to
@@ -496,31 +482,22 @@ func checkOutcome(path, relative, storePath string, artifact, asJSON bool) Outco
 		return OK("no report file at " + relative)
 	}
 
-	var opened *store.Store
+	opened, absent, failure := openStore(storePath, store.PolicySyntax, "")
+	storeWarning := ""
+	if failure != nil {
+		storeWarning = "store unavailable: " + failure.Message
+	} else if absent == store.AbsentEmpty && opened == nil {
+		storeWarning = "store unavailable: no store at " + storePath
+	}
 	haveStore := false
-	var storeWarning []string
-	store, refusal, err := store.Read(storePath)
-	if err != nil {
-		storeWarning = append(storeWarning, "store unavailable: "+err.Error())
-	} else if refusal != nil {
-		storeWarning = append(storeWarning,
-			"store unavailable: "+refusalFailure(refusal).Message)
-	} else if store != nil {
-		opened = store
+	if opened != nil {
 		defer opened.Close()
-		// A store with no tables yet is an empty log: the marker lookup
-		// answers "no such row", which is the same answer a table-less store
-		// has always given here — the syntax is still checked.
 		haveStore = true
 	}
 
 	text, err := format.ReadText(path)
 	if err != nil {
-		// The store classifies the failure and this handler renders it:
-		// damage is damage, a lock is a lock, and nothing here inspects a
-		// SQLite message (SPEC §3).
-		failure := readFailure(storePath, err)
-		return Fail(failure.Message, failure.Code)
+		return Fail("cannot read the report: "+path+": "+err.Error(), ExitFailure)
 	}
 	result, err := validateReport(text, relative, opened, haveStore)
 	if err != nil {
@@ -528,8 +505,14 @@ func checkOutcome(path, relative, storePath string, artifact, asJSON bool) Outco
 		return Fail(failure.Message, failure.Code)
 	}
 
-	warnings := make([]string, 0, len(storeWarning)+len(result.warnings))
-	warnings = append(warnings, storeWarning...)
+	return reportCheckOutcome(relative, storeWarning, result, asJSON)
+}
+
+func reportCheckOutcome(relative, storeWarning string, result checkResult, asJSON bool) Outcome {
+	warnings := make([]string, 0, 1+len(result.warnings))
+	if storeWarning != "" {
+		warnings = append(warnings, storeWarning)
+	}
 	warnings = append(warnings, result.warnings...)
 
 	if asJSON {
@@ -547,9 +530,9 @@ func checkOutcome(path, relative, storePath string, artifact, asJSON bool) Outco
 		return OK(out)
 	}
 
-	notes := format.Prefixed(warnings)
+	notes := prefixedNotes(warnings)
 	if len(result.problems) > 0 {
-		allNotes := format.Prefixed(result.problems)
+		allNotes := prefixedNotes(result.problems)
 		if notes != "" {
 			allNotes += "\n" + notes
 		}
@@ -667,7 +650,7 @@ func handleReport(args []string) Outcome {
 	if len(existing.bad) > 0 {
 		return FailNotes(
 			relative+" is not a valid report", ExitFailure,
-			format.Prefixed(existing.bad),
+			prefixedNotes(existing.bad),
 		)
 	}
 

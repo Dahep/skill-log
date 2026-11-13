@@ -22,6 +22,9 @@ const (
 	PolicyCreate Policy = iota
 	// PolicyRead reads an absent store as an empty answer.
 	PolicyRead
+	// PolicySyntax validates syntax and treats an absent or unusable store
+	// as a warning rather than a failure.
+	PolicySyntax
 	// PolicyStrict refuses an absent store.
 	PolicyStrict
 	// PolicyWrite refuses an absent store.
@@ -31,25 +34,6 @@ const (
 	// PolicyVerify reports an absent store as drift.
 	PolicyVerify
 )
-
-// String is the policy's name, for a diagnostic that names it.
-func (p Policy) String() string {
-	switch p {
-	case PolicyCreate:
-		return "create"
-	case PolicyRead:
-		return "read"
-	case PolicyStrict:
-		return "strict"
-	case PolicyWrite:
-		return "write"
-	case PolicyOptional:
-		return "optional"
-	case PolicyVerify:
-		return "verify"
-	}
-	return "unknown"
-}
 
 // Absent is what the policy says an absent store means.
 //
@@ -81,20 +65,30 @@ const (
 // Open opens the store at path under the policy.
 //
 // It returns the store, the verdict on an absent store, a typed refusal,
-// and the error that stopped it. Exactly one of the store and the refusal
-// is set; absent is only set when there is no store and no refusal.
+// and the error that stopped it. A usable store returns a non-nil store with
+// no refusal; an absent or unusable store returns no store, with the policy's
+// absent verdict, a refusal, or an error as applicable.
 //
 // The shape is small on purpose: one call answers "may I use this store,
 // and what is it", so no caller re-derives the cascade.
 func Open(path string, policy Policy) (opened *Store, absent Absent, refusal *Refusal, err error) {
 	switch policy {
 	case PolicyCreate:
-		opened, refusal, err = Create(path)
+		opened, refusal, err = openWrite(path)
 		if err != nil || refusal != nil {
 			return nil, AbsentEmpty, refusal, err
 		}
 		return opened, AbsentEmpty, nil, nil
 	case PolicyRead:
+		opened, refusal, err = Read(path)
+		if err != nil || refusal != nil {
+			return nil, AbsentEmpty, refusal, err
+		}
+		if opened == nil {
+			return nil, AbsentEmpty, nil, nil
+		}
+		return opened, AbsentEmpty, nil, nil
+	case PolicySyntax:
 		opened, refusal, err = Read(path)
 		if err != nil || refusal != nil {
 			return nil, AbsentEmpty, refusal, err
@@ -142,14 +136,6 @@ func Open(path string, policy Policy) (opened *Store, absent Absent, refusal *Re
 // it, not even its journal mode.
 func Read(path string) (*Store, *Refusal, error) {
 	return openRead(path)
-}
-
-// Create opens the store for writing, creating it when it does not exist.
-//
-// The create policy, named for the caller that wants it. A refusal is the
-// store's answer about the file it found; the caller renders it.
-func Create(path string) (*Store, *Refusal, error) {
-	return openWrite(path)
 }
 
 // fileURI is the path as a `file:` URI.

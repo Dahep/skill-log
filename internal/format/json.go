@@ -17,14 +17,14 @@ var escapeRepl = map[rune]string{
 	'\f': `\f`,
 }
 
-// EscapeString renders one JSON string literal, quotes included.
+// escapeString renders one JSON string literal, quotes included.
 //
 // Every character the JSON grammar reserves is escaped; everything else is
 // copied through, so a problem's own words survive intact. The writer is
 // hand-rolled rather than encoding/json so it never HTML-escapes `<`, `>`
 // or `&` behind the caller's back: the text the user wrote is the text
 // that comes back out.
-func EscapeString(text string) string {
+func escapeString(text string) string {
 	var out strings.Builder
 	out.Grow(len(text) + 2)
 	out.WriteByte('"')
@@ -51,7 +51,7 @@ func JSONStrings(items []string) string {
 		if i > 0 {
 			out.WriteByte(',')
 		}
-		out.WriteString(EscapeString(item))
+		out.WriteString(escapeString(item))
 	}
 	out.WriteByte(']')
 	return out.String()
@@ -64,7 +64,7 @@ type Field struct {
 }
 
 // Str makes a string field.
-func Str(name, value string) Field { return Field{name: name, value: EscapeString(value)} }
+func Str(name, value string) Field { return Field{name: name, value: escapeString(value)} }
 
 // Int makes an integer field.
 func Int(name string, value int64) Field {
@@ -88,7 +88,7 @@ func Object(fields ...Field) string {
 		if i > 0 {
 			out.WriteByte(',')
 		}
-		out.WriteString(EscapeString(field.name))
+		out.WriteString(escapeString(field.name))
 		out.WriteByte(':')
 		out.WriteString(field.value)
 	}

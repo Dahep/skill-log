@@ -81,7 +81,7 @@ func WriteInvocation(path string, row *Invocation, problems []string) (WriteResu
 }
 
 func writeAttempt(path string, row *Invocation, problems []string) (WriteResult, *Refusal, error) {
-	opened, refusal, err := Create(path)
+	opened, refusal, err := openWrite(path)
 	if err != nil {
 		return WriteResult{}, nil, err
 	}
@@ -194,7 +194,7 @@ func ResolveRow(path string, id int64, fix string, dryRun bool) (Resolved, *Refu
 
 func stampAttempt(path string, id int64, fix string) (Resolved, *Refusal, error) {
 	var result Resolved
-	opened, refusal, err := Create(path)
+	opened, refusal, err := openWrite(path)
 	if err != nil {
 		return result, nil, err
 	}

@@ -51,17 +51,17 @@ type MergedResult struct {
 	Skipped   []MergedSkip
 }
 
-// ResolutionRow is the columns a merged scan needs from one invocation row.
+// resolutionRow is the columns a merged scan needs from one invocation row.
 // Logged is the row's timestamp in epoch seconds, read by SQLite so the
 // comparison against a commit time needs no second ISO parser.
-type ResolutionRow struct {
+type resolutionRow struct {
 	ID      int64
 	Machine string
 	Fix     string
 	Logged  int64
 }
 
-func mergedRowIndex(rows []ResolutionRow, machine string, id int64, localHost string) int {
+func mergedRowIndex(rows []resolutionRow, machine string, id int64, localHost string) int {
 	for i, row := range rows {
 		stored := row.Machine
 		if stored == "" {
@@ -76,14 +76,14 @@ func mergedRowIndex(rows []ResolutionRow, machine string, id int64, localHost st
 	return -1
 }
 
-// Plan decides each located marker: stamp, unchanged, or skip with a reason.
+// plan decides each located marker: stamp, unchanged, or skip with a reason.
 //
 // Pure: no git, no clock, no store. Every marker lands in exactly one of the
 // three lists. Newest wins because the scan walks commits newest first. A row
 // stamped with the same commit is unchanged; a row stamped with a different
 // commit is restamped, so an amended fix supersedes the earlier one. A marker
 // naming another machine is foreign and is never stamped.
-func Plan(located []Located, rows []ResolutionRow, localHost string) MergedResult {
+func plan(located []Located, rows []resolutionRow, localHost string) MergedResult {
 	var result MergedResult
 	for _, item := range located {
 		text := item.Text()
@@ -115,7 +115,7 @@ type querier interface {
 	Query(query string, args ...any) (*sql.Rows, error)
 }
 
-func readResolutionRows(q querier) ([]ResolutionRow, error) {
+func readresolutionRows(q querier) ([]resolutionRow, error) {
 	rows, err := q.Query(
 		"SELECT id, machine, fix," +
 			" COALESCE(CAST(strftime('%s', ts) AS INTEGER), 0)" +
@@ -125,9 +125,9 @@ func readResolutionRows(q querier) ([]ResolutionRow, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []ResolutionRow
+	var out []resolutionRow
 	for rows.Next() {
-		var item ResolutionRow
+		var item resolutionRow
 		if err := rows.Scan(&item.ID, &item.Machine, &item.Fix, &item.Logged); err != nil {
 			return nil, err
 		}
@@ -166,14 +166,14 @@ func ResolveMergedRows(path string, located []Located, localHost string, dryRun 
 	if err != nil {
 		return empty, nil, err
 	}
-	var rows []ResolutionRow
+	var rows []resolutionRow
 	if !emptyLog {
-		rows, err = readResolutionRows(opened.db)
+		rows, err = readresolutionRows(opened.db)
 		if err != nil {
 			return empty, nil, err
 		}
 	}
-	preview := Plan(located, rows, localHost)
+	preview := plan(located, rows, localHost)
 	if dryRun || len(preview.Stamped) == 0 {
 		return preview, nil, nil
 	}
@@ -192,7 +192,7 @@ func mergedWriteAttempt(path string, located []Located, localHost string) (Merge
 	if !isFile(path) {
 		return empty, nil, nil
 	}
-	opened, refusal, err := Create(path)
+	opened, refusal, err := openWrite(path)
 	if err != nil || refusal != nil {
 		return empty, refusal, err
 	}
@@ -210,11 +210,11 @@ func mergedWriteAttempt(path string, located []Located, localHost string) (Merge
 	}()
 
 	stamp := settings.LocalTimestamp()
-	rows, err := readResolutionRows(tx)
+	rows, err := readresolutionRows(tx)
 	if err != nil {
 		return empty, nil, err
 	}
-	resolved := Plan(located, rows, localHost)
+	resolved := plan(located, rows, localHost)
 	if len(resolved.Stamped) == 0 {
 		// A concurrent writer closed every row between the preview and here.
 		return resolved, nil, nil

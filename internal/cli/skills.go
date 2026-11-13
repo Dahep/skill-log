@@ -174,25 +174,23 @@ func parseSkillsOptions(args []string) (skillsOptions, error) {
 	var options skillsOptions
 	var positionals []string
 	flags := skillsFlags(&options)
+	flags.positional = true
+	flags.switchFlag("--json", func() error { options.json = true; return nil })
+	flags.switchFlag("--dry-run", func() error { options.dryRun = true; return nil })
+	flags.switchFlag("--force", func() error { options.force = true; return nil })
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
-		switch arg {
-		case "--json":
-			options.json = true
-		case "--dry-run":
-			options.dryRun = true
-		case "--force":
-			options.force = true
-		default:
-			if _, ok := flags.lookup(arg); ok {
-				i++
-				continue
-			}
-			if strings.HasPrefix(arg, "--") {
-				return options, usageError{"unknown option: " + arg}
-			}
-			positionals = append(positionals, arg)
+		if _, ok := flags.lookup(arg); ok {
+			i++
+			continue
 		}
+		if flags.switches[arg] != nil {
+			continue
+		}
+		if strings.HasPrefix(arg, "--") {
+			continue
+		}
+		positionals = append(positionals, arg)
 	}
 	if err := flags.parse(args); err != nil {
 		return options, err
@@ -585,10 +583,15 @@ func subcommandHelp(sub string) string {
 // subcommand is read from the first positional, so the help target is known
 // before flags are parsed.
 
+var skillsValueFlags = skillsFlags(&skillsOptions{}).names()
+
 func skillsFlagValue(arg string) bool {
-	flags := skillsFlags(&skillsOptions{})
-	_, ok := flags.lookup(arg)
-	return ok
+	for _, name := range skillsValueFlags {
+		if name == arg {
+			return true
+		}
+	}
+	return false
 }
 func handleSkills(args []string) Outcome {
 	// Find the subcommand and whether help was asked for, without parsing
@@ -676,7 +679,7 @@ func handleAudit(options skillsOptions) Outcome {
 	if err != nil {
 		return Fail(err.Error(), ExitFailure)
 	}
-	if err := templatepkg.Validate(assets.UsageLogName, template); err != nil {
+	if err := document.ValidateTemplate(assets.UsageLogName, template.Content); err != nil {
 		return Fail(err.Error(), ExitFailure)
 	}
 
@@ -750,7 +753,7 @@ func handleAdopt(options skillsOptions) Outcome {
 	if err != nil {
 		return Fail(err.Error(), ExitFailure)
 	}
-	if err := templatepkg.Validate(assets.UsageLogName, template); err != nil {
+	if err := document.ValidateTemplate(assets.UsageLogName, template.Content); err != nil {
 		return Fail(err.Error(), ExitFailure)
 	}
 
@@ -803,10 +806,10 @@ func handleTemplateShow(options skillsOptions) Outcome {
 	if err != nil {
 		return Fail(err.Error(), ExitFailure)
 	}
-	if err := templatepkg.Validate(assets.UsageLogName, usage); err != nil {
+	if err := document.ValidateTemplate(assets.UsageLogName, usage.Content); err != nil {
 		return Fail(err.Error(), ExitFailure)
 	}
-	if err := templatepkg.Validate(assets.ReviewName, review); err != nil {
+	if err := document.ValidateTemplate(assets.ReviewName, review.Content); err != nil {
 		return Fail(err.Error(), ExitFailure)
 	}
 
@@ -974,5 +977,3 @@ func handleTemplateReset(options skillsOptions) Outcome {
 	}
 	return OK(text)
 }
-
-// isFile reports whether path is a regular file.

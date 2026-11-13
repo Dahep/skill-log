@@ -6,16 +6,15 @@ import (
 	"unicode/utf8"
 )
 
-// Pad left-aligns text in width code points.
+// Column describes one table column and the cells it renders.
 //
-// Width is measured in code points, not bytes: a skill named `café` must not
-// shove the column to its right over by one space.
-func Pad(text string, width int) string {
-	missing := width - utf8.RuneCountInString(text)
-	if missing <= 0 {
-		return text
-	}
-	return text + strings.Repeat(" ", missing)
+// Under returns the sub-lines emitted immediately after the row's line. They
+// are not padded as table cells: they belong to the row but have their own
+// layout.
+type Column[T any] struct {
+	Name  string
+	Cell  func(T) string
+	Under func(T) []string
 }
 
 // JoinLines joins the lines with newlines and no trailing newline.
@@ -57,27 +56,51 @@ func ShortenHome(path string) string {
 //
 // Columns are padded to their widest value, separated by two spaces, and
 // trailing spaces are removed from every row. The last column is not padded,
-// so the right edge stays exactly where its content ends.
-func TableLines(headers []string, rows [][]string) []string {
-	widths := make([]int, len(headers))
-	for i, header := range headers {
-		widths[i] = utf8.RuneCountInString(header)
+// so the right edge stays exactly where its content ends. Sub-lines from a
+// column's Under function follow their row without table padding.
+func TableLines[T any](columns []Column[T], rows []T) []string {
+	widths := make([]int, len(columns))
+	for i, column := range columns {
+		widths[i] = utf8.RuneCountInString(column.Name)
 		for _, row := range rows {
-			if i >= len(row) {
-				continue
-			}
-			if width := utf8.RuneCountInString(row[i]); width > widths[i] {
+			if width := utf8.RuneCountInString(column.Cell(row)); width > widths[i] {
 				widths[i] = width
 			}
 		}
 	}
 
 	lines := make([]string, 0, len(rows)+1)
-	lines = append(lines, tableLine(headers, widths))
+	lines = append(lines, tableLine(columnNames(columns), widths))
 	for _, row := range rows {
-		lines = append(lines, strings.TrimRight(tableLine(row, widths), " "))
+		cells := make([]string, 0, len(columns))
+		for _, column := range columns {
+			cells = append(cells, column.Cell(row))
+		}
+		lines = append(lines, strings.TrimRight(tableLine(cells, widths), " "))
+		for _, column := range columns {
+			if column.Under == nil {
+				continue
+			}
+			lines = append(lines, column.Under(row)...)
+		}
 	}
 	return lines
+}
+
+func columnNames[T any](columns []Column[T]) []string {
+	names := make([]string, 0, len(columns))
+	for _, column := range columns {
+		names = append(names, column.Name)
+	}
+	return names
+}
+
+func pad(text string, width int) string {
+	missing := width - utf8.RuneCountInString(text)
+	if missing <= 0 {
+		return text
+	}
+	return text + strings.Repeat(" ", missing)
 }
 
 func tableLine(cells []string, widths []int) string {
@@ -89,7 +112,7 @@ func tableLine(cells []string, widths []int) string {
 		if i == len(cells)-1 {
 			line.WriteString(name)
 		} else {
-			line.WriteString(Pad(name, widths[i]))
+			line.WriteString(pad(name, widths[i]))
 		}
 	}
 	return line.String()

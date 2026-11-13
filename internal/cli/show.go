@@ -112,21 +112,8 @@ func showFlags(options *showOptions) *flagSet {
 func parseShowOptions(args []string) (showOptions, error) {
 	options := showOptions{last: store.DefaultLimit}
 	flags := showFlags(&options)
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		switch arg {
-		case "--unresolved":
-			options.unresolved = true
-		case "--json":
-			options.json = true
-		default:
-			if _, ok := flags.lookup(arg); ok {
-				i++
-				continue
-			}
-			return options, usageError{"unknown option: " + arg}
-		}
-	}
+	flags.switchFlag("--unresolved", func() error { options.unresolved = true; return nil })
+	flags.switchFlag("--json", func() error { options.json = true; return nil })
 	if err := flags.parse(args); err != nil {
 		return options, err
 	}
@@ -173,69 +160,36 @@ func showEmptyMessage(filters store.Filters) string {
 	return "no invocations match " + strings.Join(parts, " and ")
 }
 
-func showTableHeaders() []string {
-	return []string{
-		"inv", "ts", "machine", "harness", "session", "parent", "model", "repo",
-		"worktree", "project", "t3_thread", "skill", "fix", "resolved_at",
+func showTableColumns() []format.Column[store.Invocation] {
+	return []format.Column[store.Invocation]{
+		{Name: "inv", Cell: func(row store.Invocation) string { return formatInt(row.ID) }},
+		{Name: "ts", Cell: func(row store.Invocation) string { return format.Sanitize(row.TS) }},
+		{Name: "machine", Cell: func(row store.Invocation) string { return format.Sanitize(row.Machine) }},
+		{Name: "harness", Cell: func(row store.Invocation) string { return format.Sanitize(row.Harness) }},
+		{Name: "session", Cell: func(row store.Invocation) string { return format.Sanitize(row.Session) }},
+		{Name: "parent", Cell: func(row store.Invocation) string { return format.Sanitize(row.Parent) }},
+		{Name: "model", Cell: func(row store.Invocation) string { return format.Sanitize(row.Model) }},
+		{Name: "repo", Cell: func(row store.Invocation) string { return format.Sanitize(row.Repo) }},
+		{Name: "worktree", Cell: func(row store.Invocation) string { return format.ShortenHome(format.Sanitize(row.Worktree)) }},
+		{Name: "project", Cell: func(row store.Invocation) string { return format.Sanitize(row.Project) }},
+		{Name: "t3_thread", Cell: func(row store.Invocation) string { return format.Sanitize(row.T3Thread) }},
+		{Name: "skill", Cell: func(row store.Invocation) string { return format.Sanitize(row.Skill) }},
+		{Name: "fix", Cell: func(row store.Invocation) string { return format.Sanitize(row.Fix) }},
+		{Name: "resolved_at", Cell: func(row store.Invocation) string { return format.Sanitize(row.ResolvedAt) }},
+		{Name: "problems", Cell: func(row store.Invocation) string { return "" }, Under: showProblemLines},
 	}
 }
 
-func showCell(row store.Invocation, column string) string {
-	switch column {
-	case "inv":
-		return formatInt(row.ID)
-	case "ts":
-		return format.Sanitize(row.TS)
-	case "machine":
-		return format.Sanitize(row.Machine)
-	case "harness":
-		return format.Sanitize(row.Harness)
-	case "session":
-		return format.Sanitize(row.Session)
-	case "parent":
-		return format.Sanitize(row.Parent)
-	case "model":
-		return format.Sanitize(row.Model)
-	case "repo":
-		return format.Sanitize(row.Repo)
-	case "worktree":
-		return format.ShortenHome(format.Sanitize(row.Worktree))
-	case "project":
-		return format.Sanitize(row.Project)
-	case "t3_thread":
-		return format.Sanitize(row.T3Thread)
-	case "skill":
-		return format.Sanitize(row.Skill)
-	case "fix":
-		return format.Sanitize(row.Fix)
-	case "resolved_at":
-		return format.Sanitize(row.ResolvedAt)
+func showProblemLines(row store.Invocation) []string {
+	lines := make([]string, 0, len(row.Problems))
+	for i, problem := range row.Problems {
+		lines = append(lines, "    problem "+formatInt(int64(i+1))+": "+problem)
 	}
-	return ""
+	return lines
 }
 
 func renderShowTable(rows []store.Invocation) string {
-	headers := showTableHeaders()
-	tableRows := make([][]string, 0, len(rows))
-	problems := make([][]string, 0, len(rows))
-	for _, row := range rows {
-		cells := make([]string, 0, len(headers))
-		for _, header := range headers {
-			cells = append(cells, showCell(row, header))
-		}
-		tableRows = append(tableRows, cells)
-		problemLines := make([]string, 0, len(row.Problems))
-		for i, problem := range row.Problems {
-			problemLines = append(problemLines,
-				"    problem "+formatInt(int64(i+1))+": "+problem)
-		}
-		problems = append(problems, problemLines)
-	}
-	lines := format.TableLines(headers, tableRows)
-	for i := range lines[1:] {
-		lines = append(lines[:i+1], append(problems[i], lines[i+1:]...)...)
-	}
-	return format.JoinLines(lines)
+	return format.JoinLines(format.TableLines(showTableColumns(), rows))
 }
 
 func handleShow(args []string) Outcome {

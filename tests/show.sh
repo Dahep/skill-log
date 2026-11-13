@@ -161,11 +161,18 @@ check_contains "the table shows the parent" "$OUT" "ses-1"
 check_contains "the table shows the t3 thread" "$OUT" "thr-9"
 
 # The problems are indented under their invocation, one per line, in
-# order.
+# order. The whole block is pinned: presence alone would not prove that
+# the lines follow the right invocation.
 check "the first problem is indented" \
     "$(printf '%s\n' "$OUT" | grep -c '^    problem 1: first issue$')" "1"
 check "the second problem is indented" \
     "$(printf '%s\n' "$OUT" | grep -c '^    problem 2: second issue$')" "1"
+check "two problems follow their invocation in order" \
+    "$(printf '%s\n' "$OUT" | awk '/^3 /{seen=1; next} seen && /^    problem 1: first issue$/{one=1; next} seen && one && /^    problem 2: second issue$/{two=1} END{print (one && two) ? "yes" : "no"}')" \
+    "yes"
+check "one invocation's two problems are contiguous" \
+    "$(printf '%s\n' "$OUT" | awk '/^3 /{seen=1; next} seen && /^    problem 1: first issue$/{one=NR} seen && one && /^    problem 2: second issue$/{two=NR} END{print (one && two && two == one+1) ? "yes" : "no"}')" \
+    "yes"
 
 # The worktree under the home is shortened; one outside it is not.
 # The tilde is the literal output, not a path to expand.
@@ -361,6 +368,46 @@ check "the control character split nothing" \
 run show --db "$DEFAULT_DB" --skill control --json
 check "json sanitizes the control character too" \
     "$(printf '%s\n' "$OUT" | grep -c '"problems":\["bad char newline"\]')" "1"
+
+# A legacy row with an empty machine belongs to the machine reading it.
+LEGACY_DB="$SCRATCH/legacy.db"
+sqlite3 "$LEGACY_DB" <<'SQL'
+CREATE TABLE invocations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts TEXT NOT NULL,
+    skill TEXT NOT NULL,
+    harness TEXT NOT NULL DEFAULT '',
+    session TEXT NOT NULL DEFAULT '',
+    parent TEXT NOT NULL DEFAULT '',
+    model TEXT NOT NULL DEFAULT '',
+    repo TEXT NOT NULL DEFAULT '',
+    worktree TEXT NOT NULL DEFAULT '',
+    project TEXT NOT NULL DEFAULT '',
+    t3_thread TEXT NOT NULL DEFAULT '',
+    machine TEXT NOT NULL DEFAULT '',
+    fix TEXT NOT NULL DEFAULT '',
+    resolved_at TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE problems (
+    invocation_id INTEGER NOT NULL REFERENCES invocations(id) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL,
+    problem TEXT NOT NULL,
+    PRIMARY KEY (invocation_id, ordinal)
+);
+PRAGMA user_version=1;
+INSERT INTO invocations (id, ts, skill, machine)
+    VALUES (7, '2026-01-01T00:00:00+00:00', 'legacy', '');
+SQL
+HOST="$(hostname)"
+run show --db "$LEGACY_DB" --json
+check "an empty-machine row uses this machine in json" \
+    "$(json_field "$OUT" marker)" "$HOST#7"
+run resolve --id 7 --fix abc123 --db "$LEGACY_DB" --json
+check "an empty-machine row uses this machine in resolve" \
+    "$(json_field "$OUT" marker)" "$HOST#7"
+run resolve --id 7 --fix def456 --db "$LEGACY_DB"
+check "an empty-machine row prints this machine in resolve" \
+    "$OUT" "$HOST#7 resolved: def456"
 
 # ---------------------------------------------------------------- refusals
 

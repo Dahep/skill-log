@@ -433,6 +433,31 @@ check "a table-less store still checks report syntax" "$STATUS" "0"
 check "a table-less store check is valid" "$OUT" \
     ".skill-log/reports/tableless-check.md is valid (1 marker)"
 
+# The syntax policy treats an absent or unusable store as a warning, and
+# still validates the report itself.
+run report --check --slug tableless-check --db "$SCRATCH/no-store.db"
+check "an absent store warns but the report still validates" "$STATUS" "0"
+check_contains "the absent store is a warning" "$ERR" "store unavailable"
+check "the absent store does not invalidate the report" "$OUT" \
+    ".skill-log/reports/tableless-check.md is valid (1 marker)"
+run report --check --slug broken --db "$SCRATCH/no-store.db"
+check "an absent store does not hide a malformed report" "$STATUS" "1"
+check_contains "the malformed report is still named" "$ERR" \
+    "not a marker (machine#id)"
+
+# A report file that cannot be read is attributed to the report, not the
+# store.
+printf 'boxA#1\n' >"$REPO/.skill-log/reports/unreadable.md"
+chmod 000 "$REPO/.skill-log/reports/unreadable.md"
+run report --check --slug unreadable
+if [ "$(id -u)" -eq 0 ]; then
+    pass "the unreadable-report case is skipped for root"
+else
+    check "an unreadable report is attributed to the report" "$ERR" \
+        "skill-log: cannot read the report: $REPO/.skill-log/reports/unreadable.md: open $REPO/.skill-log/reports/unreadable.md: permission denied"
+fi
+chmod 644 "$REPO/.skill-log/reports/unreadable.md"
+
 run report --id 1 --db "$SCRATCH/none.db"
 check "a missing store exits 1" "$STATUS" "1"
 check "a missing store says to add first" "$ERR" \

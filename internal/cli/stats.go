@@ -79,21 +79,12 @@ func statsFlags(options *statsOptions) *flagSet {
 func parseStatsOptions(args []string) (statsOptions, error) {
 	options := statsOptions{by: "skill"}
 	flags := statsFlags(&options)
-	for i := 0; i < len(args); i++ {
-		switch args[i] {
-		case "--by-model":
-			// The rotation alias, kept so an existing call keeps working.
-			options.by = "model"
-		case "--json":
-			options.json = true
-		default:
-			if _, ok := flags.lookup(args[i]); ok {
-				i++
-				continue
-			}
-			return options, usageError{"unknown option: " + args[i]}
-		}
-	}
+	flags.switchFlag("--by-model", func() error {
+		// The rotation alias, kept so an existing call keeps working.
+		options.by = "model"
+		return nil
+	})
+	flags.switchFlag("--json", func() error { options.json = true; return nil })
 	if err := flags.parse(args); err != nil {
 		return options, err
 	}
@@ -124,41 +115,24 @@ func statsEmptyMessage(skill string) string {
 	return "no invocations logged yet"
 }
 
-func statsHeaders(column string) []string {
-	return []string{column, "invocations", "with_problems", "problems", "resolved", "problems/invocation"}
-}
-
-func statsCell(group store.GroupCount, column string, at int) string {
-	switch at {
-	case 0:
-		if column == "worktree" {
-			return format.ShortenHome(format.Sanitize(group.Key))
-		}
-		return format.Sanitize(group.Key)
-	case 1:
-		return formatInt(group.Invocations)
-	case 2:
-		return formatInt(group.WithProblems)
-	case 3:
-		return formatInt(group.Problems)
-	case 4:
-		return formatInt(group.Resolved)
-	default:
-		return ratioText(group.Problems, group.Invocations)
+func statsTableColumns(column string) []format.Column[store.GroupCount] {
+	return []format.Column[store.GroupCount]{
+		{Name: column, Cell: func(group store.GroupCount) string {
+			if column == "worktree" {
+				return format.ShortenHome(format.Sanitize(group.Key))
+			}
+			return format.Sanitize(group.Key)
+		}},
+		{Name: "invocations", Cell: func(group store.GroupCount) string { return formatInt(group.Invocations) }},
+		{Name: "with_problems", Cell: func(group store.GroupCount) string { return formatInt(group.WithProblems) }},
+		{Name: "problems", Cell: func(group store.GroupCount) string { return formatInt(group.Problems) }},
+		{Name: "resolved", Cell: func(group store.GroupCount) string { return formatInt(group.Resolved) }},
+		{Name: "problems/invocation", Cell: func(group store.GroupCount) string { return ratioText(group.Problems, group.Invocations) }},
 	}
 }
 
 func renderStatsTable(groups []store.GroupCount, column string) string {
-	headers := statsHeaders(column)
-	rows := make([][]string, 0, len(groups))
-	for _, group := range groups {
-		cells := make([]string, 0, len(headers))
-		for c := range headers {
-			cells = append(cells, statsCell(group, column, c))
-		}
-		rows = append(rows, cells)
-	}
-	return format.JoinLines(format.TableLines(headers, rows))
+	return format.JoinLines(format.TableLines(statsTableColumns(column), groups))
 }
 
 func renderStatsJSON(groups []store.GroupCount, column string) string {

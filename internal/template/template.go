@@ -14,8 +14,8 @@ import (
 	"github.com/Dahep/skill-log/internal/settings"
 )
 
-// SeededDirName is the state-directory entry holding seeded-from hashes.
-const SeededDirName = "seeded-from"
+// seededDirName is the state-directory entry holding seeded-from hashes.
+const seededDirName = "seeded-from"
 
 // Template is one effective template: its bytes, source, hash and provenance.
 type Template struct {
@@ -61,7 +61,7 @@ func Load(name, templateDir string) (Template, error) {
 	}
 	out.Hash = document.Hash(out.Content)
 	if out.Source != "shipped" {
-		seeded := ReadSeeded(name)
+		seeded := readSeeded(name)
 		if seeded != "" {
 			shipped, err := assets.Shipped(name)
 			if err != nil {
@@ -73,18 +73,13 @@ func Load(name, templateDir string) (Template, error) {
 	return out, nil
 }
 
-// Validate refuses a template whose placeholders are wrong.
-func Validate(name string, value Template) error {
-	return document.ValidateTemplate(name, value.Content)
-}
-
 // SeededPath is where the seeded-from record for name lives.
 func SeededPath(name string) string {
-	return joinPath(joinPath(settings.StateDir(), SeededDirName), name)
+	return joinPath(joinPath(settings.StateDir(), seededDirName), name)
 }
 
-// ReadSeeded returns the seeded-from hash of name's user copy, or "".
-func ReadSeeded(name string) string {
+// readSeeded returns the seeded-from hash of name's user copy, or "".
+func readSeeded(name string) string {
 	path := SeededPath(name)
 	if !format.IsRegularFile(path) {
 		return ""
@@ -98,7 +93,7 @@ func ReadSeeded(name string) string {
 
 // WriteSeeded records the seeded-from hash for name.
 func WriteSeeded(name, hashValue string) error {
-	dir := joinPath(settings.StateDir(), SeededDirName)
+	dir := joinPath(settings.StateDir(), seededDirName)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
@@ -131,7 +126,7 @@ func findInPath(program string) string {
 			continue
 		}
 		candidate := entry + "/" + program
-		if format.IsRegularFile(candidate) {
+		if format.IsExecutable(candidate) {
 			return candidate
 		}
 	}
