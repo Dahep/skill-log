@@ -679,6 +679,14 @@ check_contains "the body teaches the non-idempotency of add" \
     "$(cat "$LOG_DOC")" "not idempotent"
 check_contains "the body says a reader never calls add" \
     "$(cat "$LOG_DOC")" "reader never calls"
+check_contains "the body says existing markers are kept" \
+    "$(cat "$LOG_DOC")" "No existing marker is removed"
+check_contains "the body names the foreign-marker rule" \
+    "$(cat "$LOG_DOC")" "marker naming another machine"
+check_contains "the body says the report is sorted" \
+    "$(cat "$LOG_DOC")" "one marker per line, sorted"
+check_absent "the body does not promise byte-for-byte preservation" \
+    "$(cat "$LOG_DOC")" "preserved byte-for-byte"
 
 # The version stamp is the copied skill's only provenance, and it names
 # this build.

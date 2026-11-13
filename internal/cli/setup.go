@@ -182,31 +182,13 @@ func setupFlags(options *setupOptions) *flagSet {
 func parseSetupOptions(args []string) (setupOptions, error) {
 	var options setupOptions
 	flags := setupFlags(&options)
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		switch arg {
-		case "--json":
-			options.json = true
-		case "--dry-run":
-			options.dryRun = true
-		case "--check":
-			options.check = true
-		case "--force":
-			options.force = true
-		case "--remove-hook":
-			options.removeHook = true
-		case "--no-hook":
-			options.noHook = true
-		case "--no-report-dir":
-			options.noReportDir = true
-		default:
-			if _, ok := flags.lookup(arg); ok {
-				i++
-				continue
-			}
-			return options, usageError{"unknown option: " + arg}
-		}
-	}
+	flags.switchFlag("--json", func() error { options.json = true; return nil })
+	flags.switchFlag("--dry-run", func() error { options.dryRun = true; return nil })
+	flags.switchFlag("--check", func() error { options.check = true; return nil })
+	flags.switchFlag("--force", func() error { options.force = true; return nil })
+	flags.switchFlag("--remove-hook", func() error { options.removeHook = true; return nil })
+	flags.switchFlag("--no-hook", func() error { options.noHook = true; return nil })
+	flags.switchFlag("--no-report-dir", func() error { options.noReportDir = true; return nil })
 	if err := flags.parse(args); err != nil {
 		return options, err
 	}
@@ -570,10 +552,10 @@ func skillsVerdict(skillsDir string, options setupOptions) verdict {
 	if err != nil {
 		return verdict{artifactSkills, statusDrift, err.Error()}
 	}
-	if err := templatepkg.Validate(assets.UsageLogName, usage); err != nil {
+	if err := document.ValidateTemplate(assets.UsageLogName, usage.Content); err != nil {
 		return verdict{artifactSkills, statusDrift, err.Error()}
 	}
-	if err := templatepkg.Validate(assets.ReviewName, review); err != nil {
+	if err := document.ValidateTemplate(assets.ReviewName, review.Content); err != nil {
 		return verdict{artifactSkills, statusDrift, err.Error()}
 	}
 	command := templatepkg.ResolvedCommand()

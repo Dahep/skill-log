@@ -58,9 +58,10 @@ in a report file committed with it:
 That writes `.skill-log/reports/<slug>.md`, named for the branch
 (`--slug` overrides): one `machine#id` per line and nothing else — no
 problem text, no project details. New markers are unioned with the
-file's current contents, and existing lines are preserved byte-for-byte,
-including a marker naming another machine: the tool never adds a
-foreign marker and never removes one a previous report carried.
+file's current marker lines. No existing marker is removed, including a
+marker naming another machine: the tool never adds a foreign marker and
+never removes one a previous report carried. The file is rewritten with
+one marker per line, sorted.
 `skill-log report --check` validates the branch's report without a
 selector; `--dry-run` writes nothing and `--json` carries the path and
 the markers. The ids come from the rows — `--id` is a local invocation

@@ -96,21 +96,8 @@ func addFlags(options *addOptions) *flagSet {
 func parseAddOptions(args []string) (addOptions, error) {
 	var options addOptions
 	flags := addFlags(&options)
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		switch arg {
-		case "--dry-run":
-			options.dryRun = true
-		case "--json":
-			options.json = true
-		default:
-			if _, ok := flags.lookup(arg); ok {
-				i++
-				continue
-			}
-			return options, usageError{"unknown option: " + arg}
-		}
-	}
+	flags.switchFlag("--dry-run", func() error { options.dryRun = true; return nil })
+	flags.switchFlag("--json", func() error { options.json = true; return nil })
 	if err := flags.parse(args); err != nil {
 		return options, err
 	}

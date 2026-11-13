@@ -22,21 +22,38 @@ func usageOutcome(err error) Outcome {
 	return Fail(err.Error(), ExitFailure)
 }
 
-// flagDescriptor describes one value-taking flag.
+// flagDescriptor describes one option.
+//
+// Value flags consume the next argument. Switches do not. Both are assigned
+// while the arguments are walked, so a repeated option or alias is resolved in
+// argument order and the last form wins.
 type flagDescriptor struct {
 	name string
 	what string
 	set  func(string) error
+	eq   bool
 }
 
-// flagSet is one verb's flags: the descriptors are the single source for the
-// parser, the value-flag list, the parent help scan and the assignment.
 type flagSet struct {
 	descriptors []flagDescriptor
+	switches    map[string]func() error
+	positional  bool
 }
 
 func (s *flagSet) value(name, what string, set func(string) error) {
 	s.descriptors = append(s.descriptors, flagDescriptor{name: name, what: what, set: set})
+}
+
+// valueEquals accepts both `--name value` and `--name=value` for one flag.
+func (s *flagSet) valueEquals(name, what string, set func(string) error) {
+	s.descriptors = append(s.descriptors, flagDescriptor{name: name, what: what, set: set, eq: true})
+}
+
+func (s *flagSet) switchFlag(name string, set func() error) {
+	if s.switches == nil {
+		s.switches = make(map[string]func() error)
+	}
+	s.switches[name] = set
 }
 
 // names returns the value-taking flag names in declaration order.
@@ -48,14 +65,33 @@ func (s *flagSet) names() []string {
 	return names
 }
 
-// parse reads value flags from args. Boolean flags are handled by the verb's
-// own switch because their presence, rather than their value, is the input.
+// parse walks args once. A value flag steps over its value, a switch
+// dispatches, and every other option is the usage error.
 func (s *flagSet) parse(args []string) error {
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
+		if set, ok := s.switches[arg]; ok {
+			if err := set(); err != nil {
+				return err
+			}
+			continue
+		}
 		descriptor, ok := s.lookup(arg)
 		if !ok {
-			continue
+			descriptor, ok = s.lookupPrefix(arg)
+			if ok {
+				value := strings.TrimPrefix(arg, descriptor.name+"=")
+				if err := descriptor.set(value); err != nil {
+					return err
+				}
+				continue
+			}
+		}
+		if !ok {
+			if s.positional && !strings.HasPrefix(arg, "-") {
+				continue
+			}
+			return usageError{"unknown option: " + arg}
 		}
 		value, err := takeValue(args, i, descriptor.name, descriptor.what)
 		if err != nil {
@@ -72,6 +108,15 @@ func (s *flagSet) parse(args []string) error {
 func (s *flagSet) lookup(arg string) (flagDescriptor, bool) {
 	for _, descriptor := range s.descriptors {
 		if descriptor.name == arg {
+			return descriptor, true
+		}
+	}
+	return flagDescriptor{}, false
+}
+
+func (s *flagSet) lookupPrefix(arg string) (flagDescriptor, bool) {
+	for _, descriptor := range s.descriptors {
+		if descriptor.eq && strings.HasPrefix(arg, descriptor.name+"=") {
 			return descriptor, true
 		}
 	}

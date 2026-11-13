@@ -222,11 +222,11 @@ the Go ones.
 
 | § | Module | Go package | Holds |
 |---|---|---|---|
-| 1 | Store | `internal/store` | `store.go`, `read.go`, `write.go`, `plan.go` — the schema, the refusal taxonomy, the reads, the write and the resolution plan |
+| 1 | Store | `internal/store` | `store.go`, `read.go`, `write.go`, `plan.go`, `policy.go` — the schema, the refusal taxonomy, the policy cascade, the reads, the write and the resolution plan |
 | 2 | Marker | `internal/marker` | `marker.go` — the `machine#id` grammar and its parse/format |
 | 3 | Process | `internal/process` | `process.go` — `Run` and `Git` with typed causes |
 | 4 | Settings | `internal/settings` | `paths.go`, `detect.go`, `clock.go`, `adapters.go` — store path, clock, machine, git detection, the opt-in adapters |
-| 5 | Resolution | `internal/store` | `plan.go` — `Plan`, the pure decision; `cli/resolve.go` applies it |
+| 5 | Resolution | `internal/store` | `plan.go` — the pure decision and `ResolveMergedRows`, which applies it to the store; manual `cli/resolve.go` has its own write path and shares only the stamp/idempotency rule |
 | 6 | Document | `internal/document` | `document.go`, `hash.go` — parse, classify, render, rewrite around the fence |
 | 7 | Output | `internal/format` | `json.go`, `text.go`, `table.go`, `files.go` — the ordered JSON object writer, the sanitizer, the shared table renderer, atomic file writes |
 | — | CLI boundary | `internal/cli` | `main.go`, `cli.go`, `flags.go`, `help.go`, `render.go` and one file per verb |
@@ -255,11 +255,15 @@ but `cli.Main()`.
   touching a byte outside the fence.
 - **The CLI is the only seam.** Every suite runs the installed binary as a
   process, and `SKILL_LOG_NOW` is the only clock injection.
-- **The process seam exists.** `internal/process` offers `Run(dir, name,
-  args...)` returning a status and both streams, and `Git(dir, args...)`
-  returning a typed cause (`GitOk`, `GitNotARepository`, `GitNoCommits`,
-  `GitMissing`, `GitFailed`). No caller decodes an error string to find out
-  what happened. §3's promise is kept.
+- **The process seam exists, with one detection degradation.** `internal/process`
+  offers `Run(dir, name, args...)` returning a status and both streams, and
+  `Git(dir, args...)` returning a typed cause (`GitOk`, `GitNotARepository`,
+  `GitNoCommits`, `GitMissing`, `GitFailed`). The merged scanner calls
+  `process.Run` directly and treats every non-zero status as empty output.
+  The settings helpers use the typed causes, but `gitDir` collapses every
+  cause to an empty field, so a missing repository, no commits, and a failed
+  git command are not distinguished in the fields derived there. No caller
+  decodes an error string.
 - **One help renderer for the verbs.** `cli.RenderVerb` renders every verb's
   usage block, and `cli.TopLevelHelp` renders the top-level one; both read
   the same `Verb` row the dispatcher holds.

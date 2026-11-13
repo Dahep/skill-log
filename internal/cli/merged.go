@@ -74,7 +74,7 @@ func init() { register(resolveMergedVerb()) }
 // error, raised as a `usage` marker the caller turns into exit 2.
 func mergedFlags(options *mergedOptions) *flagSet {
 	flags := &flagSet{}
-	flags.value("--since", "a revision", func(value string) error { options.since = value; return nil })
+	flags.valueEquals("--since", "a revision", func(value string) error { options.since = value; return nil })
 	flags.value("--db", "a path", func(value string) error { options.db = value; return nil })
 	return flags
 }
@@ -82,25 +82,9 @@ func mergedFlags(options *mergedOptions) *flagSet {
 func parseMergedOptions(args []string) (mergedOptions, error) {
 	var options mergedOptions
 	flags := mergedFlags(&options)
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		switch {
-		case strings.HasPrefix(arg, "--since="):
-			options.since = strings.TrimPrefix(arg, "--since=")
-		case arg == "--quiet":
-			options.quiet = true
-		case arg == "--dry-run":
-			options.dryRun = true
-		case arg == "--json":
-			options.json = true
-		default:
-			if _, ok := flags.lookup(arg); ok {
-				i++
-				continue
-			}
-			return options, usageError{"unknown option: " + arg}
-		}
-	}
+	flags.switchFlag("--quiet", func() error { options.quiet = true; return nil })
+	flags.switchFlag("--dry-run", func() error { options.dryRun = true; return nil })
+	flags.switchFlag("--json", func() error { options.json = true; return nil })
 	if err := flags.parse(args); err != nil {
 		return options, err
 	}
@@ -600,7 +584,7 @@ func mergedNotes(outcome mergedOutcome, result store.MergedResult, quiet bool) s
 	for _, item := range result.Skipped {
 		lines = append(lines, item.Row+" skipped: "+item.Reason)
 	}
-	return format.Prefixed(lines)
+	return prefixedNotes(lines)
 }
 
 // localHostname is this machine's hostname, or empty when it cannot be read.

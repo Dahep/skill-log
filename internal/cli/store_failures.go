@@ -101,11 +101,17 @@ func openStore(path string, policy store.Policy, absentMessage string) (*store.S
 		return nil, absent, &failure
 	}
 	switch absent {
+	case store.AbsentEmpty:
+		return opened, absent, nil
 	case store.AbsentRefused:
 		failure := Failure{Message: absentMessage, Code: ExitFailure}
 		return nil, absent, &failure
 	case store.AbsentNothing:
 		return nil, absent, nil
+	case store.AbsentDrift:
+		return nil, absent, nil
+	default:
+		failure := Failure{Message: "cannot use the store: " + path, Code: ExitFailure}
+		return nil, absent, &failure
 	}
-	return opened, absent, nil
 }
