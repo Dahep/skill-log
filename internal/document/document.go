@@ -119,11 +119,6 @@ func Substitute(template, name, command string) string {
 	return strings.ReplaceAll(out, "<command>", command)
 }
 
-// HasPlaceholder reports whether placeholder occurs in text.
-func HasPlaceholder(text, placeholder string) bool {
-	return strings.Contains(text, placeholder)
-}
-
 // ValidateTemplate refuses a template whose placeholders are wrong, by name.
 //
 // `usage-log.md` needs `<name>` and an invocation of `<command> add` — a typo
@@ -137,18 +132,18 @@ func HasPlaceholder(text, placeholder string) bool {
 func ValidateTemplate(name, template string) error {
 	switch name {
 	case "usage-log.md":
-		if !HasPlaceholder(template, "<name>") {
+		if !strings.Contains(template, "<name>") {
 			return fmt.Errorf(
 				"usage-log.md has no <name> placeholder (nothing would name the skill)",
 			)
 		}
-		if !HasPlaceholder(template, "<command> add") {
+		if !strings.Contains(template, "<command> add") {
 			return fmt.Errorf(
 				"usage-log.md has no <command> add invocation (nothing would log)",
 			)
 		}
 	case "skill-friction-review.md":
-		if !HasPlaceholder(template, "<command>") {
+		if !strings.Contains(template, "<command>") {
 			return fmt.Errorf(
 				"skill-friction-review.md has no <command> placeholder (nothing would name the binary)",
 			)

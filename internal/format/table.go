@@ -52,3 +52,45 @@ func ShortenHome(path string) string {
 	}
 	return path
 }
+
+// TableLines renders one table's header and rows.
+//
+// Columns are padded to their widest value, separated by two spaces, and
+// trailing spaces are removed from every row. The last column is not padded,
+// so the right edge stays exactly where its content ends.
+func TableLines(headers []string, rows [][]string) []string {
+	widths := make([]int, len(headers))
+	for i, header := range headers {
+		widths[i] = utf8.RuneCountInString(header)
+		for _, row := range rows {
+			if i >= len(row) {
+				continue
+			}
+			if width := utf8.RuneCountInString(row[i]); width > widths[i] {
+				widths[i] = width
+			}
+		}
+	}
+
+	lines := make([]string, 0, len(rows)+1)
+	lines = append(lines, tableLine(headers, widths))
+	for _, row := range rows {
+		lines = append(lines, strings.TrimRight(tableLine(row, widths), " "))
+	}
+	return lines
+}
+
+func tableLine(cells []string, widths []int) string {
+	var line strings.Builder
+	for i, name := range cells {
+		if i > 0 {
+			line.WriteString("  ")
+		}
+		if i == len(cells)-1 {
+			line.WriteString(name)
+		} else {
+			line.WriteString(Pad(name, widths[i]))
+		}
+	}
+	return line.String()
+}

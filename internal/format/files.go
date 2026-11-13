@@ -65,7 +65,7 @@ func WriteTextMode(path, text string, mode os.FileMode) error {
 	dir := filepath.Dir(path)
 	file, err := os.CreateTemp(dir, filepath.Base(path)+".tmp.*")
 	if err != nil {
-		return fmt.Errorf("cannot create a temporary file beside %s", path)
+		return fmt.Errorf("cannot create a temporary file beside %s: %w", path, err)
 	}
 	temp := file.Name()
 	defer func() {
@@ -76,17 +76,17 @@ func WriteTextMode(path, text string, mode os.FileMode) error {
 
 	if _, err := file.WriteString(text); err != nil {
 		_ = file.Close()
-		return fmt.Errorf("cannot write %s", path)
+		return fmt.Errorf("cannot write %s: %w", path, err)
 	}
 	if err := file.Chmod(mode); err != nil {
 		_ = file.Close()
-		return fmt.Errorf("cannot set the permissions on %s", path)
+		return fmt.Errorf("cannot set the permissions on %s: %w", path, err)
 	}
 	if err := file.Close(); err != nil {
-		return fmt.Errorf("cannot write %s", path)
+		return fmt.Errorf("cannot write %s: %w", path, err)
 	}
 	if err := os.Rename(temp, path); err != nil {
-		return fmt.Errorf("cannot replace %s", path)
+		return fmt.Errorf("cannot replace %s: %w", path, err)
 	}
 	temp = ""
 	return nil

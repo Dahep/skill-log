@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"errors"
 	"path/filepath"
 	"strings"
 
@@ -51,7 +50,7 @@ func reportVerb() Verb {
 		},
 		// The flags that consume the next argument. The dispatcher reads this
 		// to tell `--run -h` (a run spelled `-h`) from a help request.
-		ValueFlags: []string{"--id", "--run", "--skill", "--slug", "--db"},
+		ValueFlags: reportFlags(&reportOptions{}).names(),
 		Notes: "The report is the transport: .skill-log/reports/<branch>.md,\n" +
 			"one machine#id per line, committed with the change. Markers are\n" +
 			"unioned with what the file already holds, and never carry problem\n" +
@@ -70,40 +69,29 @@ func reportVerb() Verb {
 
 func init() { register(reportVerb()) }
 
+func reportFlags(options *reportOptions) *flagSet {
+	flags := &flagSet{}
+	flags.value("--id", "an id", func(value string) error {
+		id, err := parsePositive(value, "--id takes a positive integer")
+		if err != nil {
+			return err
+		}
+		options.ids = append(options.ids, id)
+		return nil
+	})
+	flags.value("--run", "an id", func(value string) error { options.run = value; options.givenRun = true; return nil })
+	flags.value("--skill", "a name", func(value string) error { options.skill = value; options.givenSkill = true; return nil })
+	flags.value("--slug", "a name", func(value string) error { options.slug = value; options.givenSlug = true; return nil })
+	flags.value("--db", "a path", func(value string) error { options.db = value; return nil })
+	return flags
+}
+
 func parseReportOptions(args []string) (reportOptions, error) {
 	var options reportOptions
+	flags := reportFlags(&options)
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		switch arg {
-		case "--id", "--run", "--skill", "--slug", "--db":
-			what := map[string]string{
-				"--id": "an id", "--run": "an id", "--skill": "a name",
-				"--slug": "a name", "--db": "a path",
-			}[arg]
-			value, err := takeValue(args, i, arg, what)
-			if err != nil {
-				return options, err
-			}
-			switch arg {
-			case "--id":
-				id, err := parsePositive(value, "--id takes a positive integer")
-				if err != nil {
-					return options, err
-				}
-				options.ids = append(options.ids, id)
-			case "--run":
-				options.run = value
-				options.givenRun = true
-			case "--skill":
-				options.skill = value
-				options.givenSkill = true
-			case "--slug":
-				options.slug = value
-				options.givenSlug = true
-			case "--db":
-				options.db = value
-			}
-			i++
 		case "--check":
 			options.check = true
 		case "--dry-run":
@@ -111,8 +99,15 @@ func parseReportOptions(args []string) (reportOptions, error) {
 		case "--json":
 			options.json = true
 		default:
+			if _, ok := flags.lookup(arg); ok {
+				i++
+				continue
+			}
 			return options, usageError{"unknown option: " + arg}
 		}
+	}
+	if err := flags.parse(args); err != nil {
+		return options, err
 	}
 	if options.givenRun && strings.TrimSpace(options.run) == "" {
 		return options, usageError{"--run needs an id"}
@@ -375,21 +370,14 @@ func parseReport(text, relative string) existingReport {
 // `path` is empty and `trailer` carries the line in trailer mode; the
 // keys are the same in both modes, so a consumer reads one shape.
 func writeReportJSON(path string, markers, resolved []string, already, dryRun bool, trailer string) string {
-	var out []byte
-	out = append(out, `{"path":`...)
-	out = append(out, format.JSONString(path)...)
-	out = append(out, `,"markers":`...)
-	out = append(out, format.JSONStrings(markers)...)
-	out = append(out, `,"already_resolved":`...)
-	out = append(out, format.JSONStrings(resolved)...)
-	out = append(out, `,"already_reported":`...)
-	out = append(out, format.JSONBool(already)...)
-	out = append(out, `,"dry_run":`...)
-	out = append(out, format.JSONBool(dryRun)...)
-	out = append(out, `,"trailer":`...)
-	out = append(out, format.JSONString(trailer)...)
-	out = append(out, '}')
-	return string(out)
+	return format.Object(
+		format.Str("path", path),
+		format.Raw("markers", format.JSONStrings(markers)),
+		format.Raw("already_resolved", format.JSONStrings(resolved)),
+		format.Bool("already_reported", already),
+		format.Bool("dry_run", dryRun),
+		format.Str("trailer", trailer),
+	)
 }
 
 // resolvedNotes is one stderr note per row a previous change already
@@ -494,7 +482,7 @@ func validateReport(text, relative string, opened *store.Store, haveStore bool) 
 func checkOutcome(path, relative, storePath string, artifact, asJSON bool) Outcome {
 	if !artifact {
 		if asJSON {
-			return OK(`{"path":"","markers":[],"problems":[],"warnings":[]}`)
+			return OK(format.Object(format.Str("path", ""), format.Raw("markers", "[]"), format.Raw("problems", "[]"), format.Raw("warnings", "[]")))
 		}
 		return OK("no " + reportDir +
 			"/ here: this checkout resolves from the " +
@@ -503,8 +491,7 @@ func checkOutcome(path, relative, storePath string, artifact, asJSON bool) Outco
 
 	if !format.IsRegularFile(path) {
 		if asJSON {
-			return OK(`{"path":` + format.JSONString(relative) +
-				`,"markers":[],"problems":[],"warnings":[]}`)
+			return OK(format.Object(format.Str("path", relative), format.Raw("markers", "[]"), format.Raw("problems", "[]"), format.Raw("warnings", "[]")))
 		}
 		return OK("no report file at " + relative)
 	}
@@ -546,22 +533,18 @@ func checkOutcome(path, relative, storePath string, artifact, asJSON bool) Outco
 	warnings = append(warnings, result.warnings...)
 
 	if asJSON {
-		var out []byte
-		out = append(out, `{"path":`...)
-		out = append(out, format.JSONString(relative)...)
-		out = append(out, `,"markers":`...)
-		out = append(out, format.JSONStrings(result.markers)...)
-		out = append(out, `,"problems":`...)
-		out = append(out, format.JSONStrings(result.problems)...)
-		out = append(out, `,"warnings":`...)
-		out = append(out, format.JSONStrings(warnings)...)
-		out = append(out, '}')
+		out := format.Object(
+			format.Str("path", relative),
+			format.Raw("markers", format.JSONStrings(result.markers)),
+			format.Raw("problems", format.JSONStrings(result.problems)),
+			format.Raw("warnings", format.JSONStrings(warnings)),
+		)
 		if len(result.problems) > 0 {
 			failed := FailNotes(problemsLine(len(result.problems)), ExitFailure, "")
-			failed.Text = string(out)
+			failed.Text = out
 			return failed
 		}
-		return OK(string(out))
+		return OK(out)
 	}
 
 	notes := format.Prefixed(warnings)
@@ -578,11 +561,7 @@ func checkOutcome(path, relative, storePath string, artifact, asJSON bool) Outco
 func handleReport(args []string) Outcome {
 	options, err := parseReportOptions(args)
 	if err != nil {
-		var usage usageError
-		if errors.As(err, &usage) {
-			return Fail(usage.Error()[len("usage: "):], ExitUsage)
-		}
-		return Fail(err.Error(), ExitFailure)
+		return usageOutcome(err)
 	}
 
 	root := settings.GitToplevel()

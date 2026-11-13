@@ -530,6 +530,67 @@ git -C "$REPO6" commit -q -m "a manual report"
 check "a full scan reads every report file" \
     "$(json_array "$(cat "$SCRATCH/manual.json")" resolved)" "$H#4"
 
+# The report directory's README is documentation, not a marker report.
+REPO_README="$(new_repo report-readme)"
+mkdir -p "$REPO_README/.skill-log/reports"
+printf '# Reports\n\nThis directory holds machine#id marker files.\n' >"$REPO_README/.skill-log/reports/README.md"
+: >"$REPO_README/.skill-log/reports/.gitkeep"
+git -C "$REPO_README" add -A
+git -C "$REPO_README" commit -q -m "add report directory"
+DB_README="$SCRATCH/report-readme.db"
+"$BIN" add --skill readme-only --machine "$H" --db "$DB_README" >/dev/null
+(
+    cd "$REPO_README" || exit 1
+    "$BIN" resolve-merged --db "$DB_README" --json >"$SCRATCH/report-readme.json" 2>"$SCRATCH/report-readme.err"
+)
+check "the report directory README is not a malformed marker" \
+    "$(json_array "$(cat "$SCRATCH/report-readme.json")" ignored)" ""
+
+# A full artifact scan reads the committed tree, not the working tree.
+REPO_COMMITTED="$(new_repo report-committed)"
+mkdir -p "$REPO_COMMITTED/.skill-log/reports"
+printf '# Reports\n' >"$REPO_COMMITTED/.skill-log/reports/README.md"
+: >"$REPO_COMMITTED/.skill-log/reports/.gitkeep"
+git -C "$REPO_COMMITTED" add -A
+git -C "$REPO_COMMITTED" commit -q -m "add report directory"
+DB_COMMITTED="$SCRATCH/report-committed.db"
+"$BIN" add --skill committed-only --machine "$H" --db "$DB_COMMITTED" >/dev/null
+printf "%s#1\n" "$H" >"$REPO_COMMITTED/.skill-log/reports/fix.md"
+git -C "$REPO_COMMITTED" add -A
+git -C "$REPO_COMMITTED" commit -q -m "commit the report"
+COMMITTED_FIX="$(git -C "$REPO_COMMITTED" rev-parse HEAD)"
+rm "$REPO_COMMITTED/.skill-log/reports/fix.md"
+(
+    cd "$REPO_COMMITTED" || exit 1
+    "$BIN" resolve-merged --db "$DB_COMMITTED" --json >"$SCRATCH/report-committed.json"
+)
+check "a committed report is read despite a working-tree deletion" \
+    "$(sqlite3 "$DB_COMMITTED" 'select fix from invocations where id = 1')" "$COMMITTED_FIX"
+
+# Equal commit seconds use history order, so the newer commit wins.
+REPO_TIE="$(new_repo equal-seconds)"
+DB_TIE="$SCRATCH/equal-seconds.db"
+SKILL_LOG_NOW='2025-12-31T23:00:00Z' \
+    "$BIN" add --skill tied-row --machine "$H" --db "$DB_TIE" >/dev/null
+printf older >"$REPO_TIE/file"
+git -C "$REPO_TIE" add file
+GIT_AUTHOR_DATE='2026-01-01T00:00:00Z' GIT_COMMITTER_DATE='2026-01-01T00:00:00Z' \
+    git -C "$REPO_TIE" commit -q -m older -m "Skill-log-Fix: $H#1"
+OLDER_TIE="$(git -C "$REPO_TIE" rev-parse HEAD)"
+printf newer >"$REPO_TIE/file"
+git -C "$REPO_TIE" add file
+GIT_AUTHOR_DATE='2026-01-01T00:00:00Z' GIT_COMMITTER_DATE='2026-01-01T00:00:00Z' \
+    git -C "$REPO_TIE" commit -q -m newer -m "Skill-log-Fix: $H#1"
+NEWER_TIE="$(git -C "$REPO_TIE" rev-parse HEAD)"
+(
+    cd "$REPO_TIE" || exit 1
+    "$BIN" resolve-merged --db "$DB_TIE" --json >"$SCRATCH/equal-seconds.json"
+)
+check "equal commit seconds still stamp the newer commit" \
+    "$(sqlite3 "$DB_TIE" 'select fix from invocations where id = 1')" "$NEWER_TIE"
+check "the older same-second commit does not win" \
+    "$(sqlite3 "$DB_TIE" "select fix <> '$OLDER_TIE' from invocations where id = 1")" "1"
+
 # -------------------------------------------------------------- refusals
 
 printf 'not a database' >"$SCRATCH/damaged.db"

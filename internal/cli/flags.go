@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"strconv"
 	"strings"
 )
@@ -11,6 +12,71 @@ type usageError struct {
 }
 
 func (e usageError) Error() string { return "usage: " + e.message }
+
+// usageOutcome turns a parser failure into the CLI's usage outcome.
+func usageOutcome(err error) Outcome {
+	var usage usageError
+	if errors.As(err, &usage) {
+		return Fail(usage.Error()[len("usage: "):], ExitUsage)
+	}
+	return Fail(err.Error(), ExitFailure)
+}
+
+// flagDescriptor describes one value-taking flag.
+type flagDescriptor struct {
+	name string
+	what string
+	set  func(string) error
+}
+
+// flagSet is one verb's flags: the descriptors are the single source for the
+// parser, the value-flag list, the parent help scan and the assignment.
+type flagSet struct {
+	descriptors []flagDescriptor
+}
+
+func (s *flagSet) value(name, what string, set func(string) error) {
+	s.descriptors = append(s.descriptors, flagDescriptor{name: name, what: what, set: set})
+}
+
+// names returns the value-taking flag names in declaration order.
+func (s *flagSet) names() []string {
+	names := make([]string, 0, len(s.descriptors))
+	for _, descriptor := range s.descriptors {
+		names = append(names, descriptor.name)
+	}
+	return names
+}
+
+// parse reads value flags from args. Boolean flags are handled by the verb's
+// own switch because their presence, rather than their value, is the input.
+func (s *flagSet) parse(args []string) error {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		descriptor, ok := s.lookup(arg)
+		if !ok {
+			continue
+		}
+		value, err := takeValue(args, i, descriptor.name, descriptor.what)
+		if err != nil {
+			return err
+		}
+		if err := descriptor.set(value); err != nil {
+			return err
+		}
+		i++
+	}
+	return nil
+}
+
+func (s *flagSet) lookup(arg string) (flagDescriptor, bool) {
+	for _, descriptor := range s.descriptors {
+		if descriptor.name == arg {
+			return descriptor, true
+		}
+	}
+	return flagDescriptor{}, false
+}
 
 // takeValue returns the value of flag, which sits at at+1. A missing value is
 // a usage error naming the flag.

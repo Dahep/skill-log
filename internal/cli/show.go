@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"errors"
 	"strings"
 
 	"github.com/Dahep/skill-log/internal/format"
@@ -45,9 +44,7 @@ func showVerb() Verb {
 			"skill-log show --skill diagnosing-bugs --last 5",
 			"skill-log show --unresolved --json",
 		},
-		ValueFlags: []string{
-			"--skill", "--machine", "--harness", "--repo", "--run", "--last", "--db",
-		},
+		ValueFlags: showFlags(&showOptions{}).names(),
 		Notes: "Rows come back newest first. The table indents each problem\n" +
 			"under the invocation it belongs to, and shortens a worktree\n" +
 			"under your home directory to ~/.\n" +
@@ -93,54 +90,45 @@ func parseLast(text string) (int, error) {
 	return value, nil
 }
 
+func showFlags(options *showOptions) *flagSet {
+	flags := &flagSet{}
+	flags.value("--skill", "a name", func(value string) error { options.skill = value; options.givenSkill = true; return nil })
+	flags.value("--machine", "a name", func(value string) error { options.machine = value; options.givenMachine = true; return nil })
+	flags.value("--harness", "a name", func(value string) error { options.harness = value; options.givenHarness = true; return nil })
+	flags.value("--repo", "a name", func(value string) error { options.repo = value; options.givenRepo = true; return nil })
+	flags.value("--run", "an id", func(value string) error { options.run = value; options.givenRun = true; return nil })
+	flags.value("--db", "a path", func(value string) error { options.db = value; return nil })
+	flags.value("--last", "a number", func(value string) error {
+		last, err := parseLast(value)
+		if err != nil {
+			return err
+		}
+		options.last = last
+		return nil
+	})
+	return flags
+}
+
 func parseShowOptions(args []string) (showOptions, error) {
 	options := showOptions{last: store.DefaultLimit}
+	flags := showFlags(&options)
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		switch arg {
-		case "--skill", "--machine", "--harness", "--repo", "--run", "--db", "--last":
-			what := map[string]string{
-				"--skill": "a name", "--machine": "a name", "--harness": "a name",
-				"--repo": "a name", "--run": "an id", "--db": "a path",
-				"--last": "a number",
-			}[arg]
-			value, err := takeValue(args, i, arg, what)
-			if err != nil {
-				return options, err
-			}
-			switch arg {
-			case "--skill":
-				options.skill = value
-				options.givenSkill = true
-			case "--machine":
-				options.machine = value
-				options.givenMachine = true
-			case "--harness":
-				options.harness = value
-				options.givenHarness = true
-			case "--repo":
-				options.repo = value
-				options.givenRepo = true
-			case "--run":
-				options.run = value
-				options.givenRun = true
-			case "--db":
-				options.db = value
-			case "--last":
-				last, err := parseLast(value)
-				if err != nil {
-					return options, err
-				}
-				options.last = last
-			}
-			i++
 		case "--unresolved":
 			options.unresolved = true
 		case "--json":
 			options.json = true
 		default:
+			if _, ok := flags.lookup(arg); ok {
+				i++
+				continue
+			}
 			return options, usageError{"unknown option: " + arg}
 		}
+	}
+	if err := flags.parse(args); err != nil {
+		return options, err
 	}
 	// An empty filter value selects nothing, which is never what the caller
 	// meant: it is a usage error rather than a silently empty result.
@@ -228,48 +216,24 @@ func showCell(row store.Invocation, column string) string {
 
 func renderShowTable(rows []store.Invocation) string {
 	headers := showTableHeaders()
-	widths := make([]int, len(headers))
-	for i, header := range headers {
-		widths[i] = len([]rune(header))
-	}
+	tableRows := make([][]string, 0, len(rows))
+	problems := make([][]string, 0, len(rows))
 	for _, row := range rows {
-		for c, header := range headers {
-			if width := len([]rune(showCell(row, header))); width > widths[c] {
-				widths[c] = width
-			}
+		cells := make([]string, 0, len(headers))
+		for _, header := range headers {
+			cells = append(cells, showCell(row, header))
 		}
-	}
-	var lines []string
-	var header strings.Builder
-	for c, name := range headers {
-		if c > 0 {
-			header.WriteString("  ")
-		}
-		if c == len(headers)-1 {
-			header.WriteString(name)
-		} else {
-			header.WriteString(format.Pad(name, widths[c]))
-		}
-	}
-	lines = append(lines, header.String())
-	for _, row := range rows {
-		var line strings.Builder
-		for c, name := range headers {
-			if c > 0 {
-				line.WriteString("  ")
-			}
-			if c == len(headers)-1 {
-				line.WriteString(showCell(row, name))
-			} else {
-				line.WriteString(format.Pad(showCell(row, name), widths[c]))
-			}
-		}
-		// Empty columns in the middle still pad, so the right edge is
-		// trimmed: trailing spaces are noise no reader needs.
-		lines = append(lines, strings.TrimRight(line.String(), " "))
+		tableRows = append(tableRows, cells)
+		problemLines := make([]string, 0, len(row.Problems))
 		for i, problem := range row.Problems {
-			lines = append(lines, "    problem "+formatInt(int64(i+1))+": "+problem)
+			problemLines = append(problemLines,
+				"    problem "+formatInt(int64(i+1))+": "+problem)
 		}
+		problems = append(problems, problemLines)
+	}
+	lines := format.TableLines(headers, tableRows)
+	for i := range lines[1:] {
+		lines = append(lines[:i+1], append(problems[i], lines[i+1:]...)...)
 	}
 	return format.JoinLines(lines)
 }
@@ -277,11 +241,7 @@ func renderShowTable(rows []store.Invocation) string {
 func handleShow(args []string) Outcome {
 	options, err := parseShowOptions(args)
 	if err != nil {
-		var usage usageError
-		if errors.As(err, &usage) {
-			return Fail(usage.Error()[len("usage: "):], ExitUsage)
-		}
-		return Fail(err.Error(), ExitFailure)
+		return usageOutcome(err)
 	}
 	path := settings.ResolveDB(options.db)
 	filters := store.Filters{

@@ -1,8 +1,6 @@
 package cli
 
 import (
-	"errors"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -50,7 +48,7 @@ func resolveMergedVerb() Verb {
 		},
 		// The flags that consume the next argument. The dispatcher reads this
 		// to tell `--since -h` (a revision spelled `-h`) from a help request.
-		ValueFlags: []string{"--since", "--db"},
+		ValueFlags: mergedFlags(&mergedOptions{}).names(),
 		Notes: "A checkout with .skill-log/reports/ resolves from the report files\n" +
 			"the range added or changed; elsewhere the last trailer block of\n" +
 			"each commit is the report. A later trailer block hides an\n" +
@@ -74,27 +72,21 @@ func init() { register(resolveMergedVerb()) }
 //
 // An unknown flag, a missing value or an option-shaped `--since` is a usage
 // error, raised as a `usage` marker the caller turns into exit 2.
+func mergedFlags(options *mergedOptions) *flagSet {
+	flags := &flagSet{}
+	flags.value("--since", "a revision", func(value string) error { options.since = value; return nil })
+	flags.value("--db", "a path", func(value string) error { options.db = value; return nil })
+	return flags
+}
+
 func parseMergedOptions(args []string) (mergedOptions, error) {
 	var options mergedOptions
+	flags := mergedFlags(&options)
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		switch {
-		case arg == "--since":
-			value, err := takeValue(args, i, "--since", "a revision")
-			if err != nil {
-				return options, err
-			}
-			options.since = value
-			i++
 		case strings.HasPrefix(arg, "--since="):
 			options.since = strings.TrimPrefix(arg, "--since=")
-		case arg == "--db":
-			value, err := takeValue(args, i, "--db", "a path")
-			if err != nil {
-				return options, err
-			}
-			options.db = value
-			i++
 		case arg == "--quiet":
 			options.quiet = true
 		case arg == "--dry-run":
@@ -102,10 +94,16 @@ func parseMergedOptions(args []string) (mergedOptions, error) {
 		case arg == "--json":
 			options.json = true
 		default:
+			if _, ok := flags.lookup(arg); ok {
+				i++
+				continue
+			}
 			return options, usageError{"unknown option: " + arg}
 		}
 	}
-
+	if err := flags.parse(args); err != nil {
+		return options, err
+	}
 	since := strings.TrimSpace(options.since)
 	if since != "" {
 		// A revision reaches a git command and git's option parser. An
@@ -337,6 +335,7 @@ type reportFile struct {
 	path   string
 	commit string
 	epoch  int64
+	order  int
 }
 
 // latestReportCommit is the newest commit in `revision` that touched one
@@ -376,7 +375,8 @@ func newestFirst(files []reportFile) []reportFile {
 			if taken[i] {
 				continue
 			}
-			if best == -1 || file.epoch > files[best].epoch {
+			if best == -1 || file.epoch > files[best].epoch ||
+				(file.epoch == files[best].epoch && file.order < files[best].order) {
 				best = i
 			}
 		}
@@ -403,48 +403,48 @@ func reportFiles(root, since string) []reportFile {
 		return nil
 	}
 
-	var files []reportFile
-	if since == "" {
-		entries, err := os.ReadDir(directory)
-		if err != nil {
-			return nil
-		}
-		for _, entry := range entries {
-			name := entry.Name()
-			if !strings.HasSuffix(name, ".md") {
-				continue
-			}
-			relative := reportDir + "/" + name
-			if !format.IsRegularFile(filepath.Join(root, filepath.FromSlash(relative))) {
-				continue
-			}
-			file := latestReportCommit(root, relative, "HEAD")
-			if file.commit != "" {
-				files = append(files, file)
-			}
-		}
-		return newestFirst(files)
+	span := "HEAD"
+	if since != "" {
+		span = since + "..HEAD"
 	}
-
-	listing := gitOutput(
-		root, "diff", "--name-only", "--diff-filter=AM",
-		since+"..HEAD", "--", reportDir,
-	)
+	// The committed tree at the scanned tip is the inventory. Working-tree
+	// presence cannot hide or add a report from the pull.
+	listing := gitOutput(root, "ls-tree", "-r", "--name-only", "HEAD", "--", reportDir)
 	prefix := reportDir + "/"
+	history := commitHistory(root, span)
+	var files []reportFile
 	for _, line := range strings.Split(listing, "\n") {
 		relative := strings.TrimSpace(line)
 		if relative == "" || !strings.HasPrefix(relative, prefix) {
 			continue
 		}
-		if !strings.HasSuffix(relative, ".md") {
+		name := strings.TrimPrefix(relative, prefix)
+		if name == "README.md" || name == ".gitkeep" {
 			continue
 		}
-		file := latestReportCommit(root, relative, since+"..HEAD")
+		if !strings.HasSuffix(name, ".md") {
+			continue
+		}
+		file := latestReportCommit(root, relative, span)
 		if file.commit != "" {
+			file.order = history[file.commit]
 			files = append(files, file)
 		}
 	}
 	return newestFirst(files)
+}
+
+// commitHistory maps each commit in span to its newest-first history position.
+func commitHistory(root, span string) map[string]int {
+	out := gitOutput(root, "log", "--format=%H", span)
+	history := make(map[string]int)
+	for i, line := range strings.Split(out, "\n") {
+		commit := strings.TrimSpace(line)
+		if commit != "" {
+			history[commit] = i
+		}
+	}
+	return history
 }
 
 // scanReports is the markers from the report files this scan reads.
@@ -479,20 +479,14 @@ func scanReports(root, since string) mergedScan {
 
 // skippedJSON is the skipped rows as an array of `{row, reason}` objects.
 func skippedJSON(items []store.MergedSkip) string {
-	var out strings.Builder
-	out.WriteByte('[')
-	for i, item := range items {
-		if i > 0 {
-			out.WriteByte(',')
-		}
-		out.WriteString(`{"row":`)
-		out.WriteString(format.JSONString(item.Row))
-		out.WriteString(`,"reason":`)
-		out.WriteString(format.JSONString(item.Reason))
-		out.WriteByte('}')
+	values := make([]string, 0, len(items))
+	for _, item := range items {
+		values = append(values, format.Object(
+			format.Str("row", item.Row),
+			format.Str("reason", item.Reason),
+		))
 	}
-	out.WriteByte(']')
-	return out.String()
+	return "[" + strings.Join(values, ",") + "]"
 }
 
 // ignoredMarkers is every marker the scan did not act on, hidden and
@@ -529,19 +523,13 @@ func stampedMarkers(result store.MergedResult) []string {
 // renderMergedJSON is one shape for every path, so a `--json` caller never
 // guesses keys.
 func renderMergedJSON(result store.MergedResult, ignored []string, dryRun bool) string {
-	var out strings.Builder
-	out.WriteString(`{"resolved":`)
-	out.WriteString(format.JSONStrings(stampedMarkers(result)))
-	out.WriteString(`,"unchanged":`)
-	out.WriteString(format.JSONStrings(result.Unchanged))
-	out.WriteString(`,"skipped":`)
-	out.WriteString(skippedJSON(result.Skipped))
-	out.WriteString(`,"ignored":`)
-	out.WriteString(format.JSONStrings(ignored))
-	out.WriteString(`,"dry_run":`)
-	out.WriteString(format.JSONBool(dryRun))
-	out.WriteByte('}')
-	return out.String()
+	return format.Object(
+		format.Raw("resolved", format.JSONStrings(stampedMarkers(result))),
+		format.Raw("unchanged", format.JSONStrings(result.Unchanged)),
+		format.Raw("skipped", skippedJSON(result.Skipped)),
+		format.Raw("ignored", format.JSONStrings(ignored)),
+		format.Bool("dry_run", dryRun),
+	)
 }
 
 // mergedSummary is the one stdout line a non-JSON scan prints when it
@@ -631,11 +619,7 @@ func localHostname() string {
 func handleResolveMerged(args []string) Outcome {
 	options, err := parseMergedOptions(args)
 	if err != nil {
-		var usage usageError
-		if errors.As(err, &usage) {
-			return Fail(usage.Error()[len("usage: "):], ExitUsage)
-		}
-		return Fail(err.Error(), ExitFailure)
+		return usageOutcome(err)
 	}
 
 	root := settings.GitToplevel()
