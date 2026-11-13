@@ -3,10 +3,9 @@
 #
 #   tests/report.sh
 #
-# It exercises both modes against the built artifact in sandboxed homes
-# and repositories: artifact mode writes `.skill-log/reports/<slug>.md`,
-# one marker per line, atomically and only after validation; trailer mode
-# prints the `Skill-log-Fix:` line and writes nothing.
+# Artifact mode writes `.skill-log/reports/<slug>.md`, one marker per
+# line, atomically and only after validation; trailer mode prints the
+# `Skill-log-Fix:` line and writes nothing.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

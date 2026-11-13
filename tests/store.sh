@@ -3,11 +3,8 @@
 #
 #   tests/store.sh
 #
-# It exercises the seam the contract is written against — the installed
-# binary as a process — with a temporary HOME, a temporary XDG state
-# directory, and no real store anywhere near it. The CLI is the only
-# writer; the store file is inspected with the sqlite3 CLI where a case
-# needs to see what was written.
+# The CLI is the only writer; the store file is inspected with the sqlite3
+# CLI where a case needs to see what was written.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

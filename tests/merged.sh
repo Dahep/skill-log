@@ -3,9 +3,7 @@
 #
 #   tests/merged.sh
 #
-# The hook's entry point, exercised as a process: commit trailers, a
-# report directory, a bounded range, a reused id, a hidden marker, and
-# the failures that must stay failures.
+# The hook's entry point, exercised as a process.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

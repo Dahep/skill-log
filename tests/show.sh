@@ -3,10 +3,8 @@
 #
 #   tests/show.sh
 #
-# It exercises the read half of the CLI against the built artifact, with
-# a temporary HOME and a temporary store, so nothing reaches the real
-# log. The CLI is the only writer; the sqlite3 CLI is used to look at
-# what a write left behind, never to change it.
+# The CLI is the only writer; the sqlite3 CLI is used to look at what a
+# write left behind, never to change it.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

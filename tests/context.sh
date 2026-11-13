@@ -3,17 +3,9 @@
 #
 #   tests/context.sh
 #
-# It exercises the precedence chain against the built artifact: the
-# explicit flag, then the field's SKILL_LOG_* variable, then an enabled
-# adapter, then the built-in detection — one field at a time.
-#
-# Everything runs in a sandbox: a temporary HOME, a temporary store, and
-# temporary git repositories. The detection reads the working tree the row
-# names, so the cases run from inside the repository they created, and the
-# cases that care about a *named* worktree pass one.
-#
-# The opencode adapter's session store is a fake one, built with the
-# sqlite3 CLI, so the test never touches the real opencode database.
+# The precedence chain, one field at a time: the explicit flag, then the
+# field's SKILL_LOG_* variable, then an enabled adapter, then the built-in
+# detection.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

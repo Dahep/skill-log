@@ -3,18 +3,13 @@
 #
 #   tests/smoke.sh
 #
-# It runs the built dist/ artifact in two environments:
-#
-#   1. plain — the artifact as staged, on this machine
-#   2. sandbox — a bubblewrap root with no system SQLite anywhere, so the
-#      bundled copy in dist/lib/ is the only possible source
+# Two environments: the artifact as staged on this machine, and a
+# bubblewrap root with no system SQLite anywhere, so the bundled copy in
+# dist/lib/ is the only possible source.
 #
 # The sandbox is the decisive one: without it, removing the bundled
 # libsqlite3.so.0 would fall through to the loader cache and find the
 # distro copy, and the failure path would never run.
-#
-# bwrap is used rather than a container: no daemon, no cgroup namespace,
-# no privileges. When bwrap is missing the sandbox checks are skipped.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

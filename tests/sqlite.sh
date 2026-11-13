@@ -8,9 +8,8 @@
 # against the machine's own copy, which is newer. So the gate can be green
 # while the released artifact cannot write a row.
 #
-# This suite builds the artifact against the pinned library when it is
-# available, and runs the store's write path against it. Without the pinned
-# library the case prints a skip rather than pretending it ran.
+# Without the pinned library the case prints a skip rather than pretending
+# it ran.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

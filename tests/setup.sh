@@ -3,11 +3,9 @@
 #
 #   tests/setup.sh
 #
-# It exercises the seam the contract is written against — the installed
-# binary as a process — with a temporary HOME, a temporary XDG state
-# directory, and temporary git repositories (one linked as a worktree, to
-# prove the common hooks directory is used). No real store and no real
-# hook is anywhere near it.
+# A temporary HOME, a temporary XDG state directory, and temporary git
+# repositories (one linked as a worktree, to prove the common hooks
+# directory is used).
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

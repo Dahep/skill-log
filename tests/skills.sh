@@ -4,14 +4,8 @@
 #
 #   tests/skills.sh
 #
-# It exercises the two shipped templates, their resolution chain and
-# placeholder validation, `skills template show|seed|reset`, `skills audit`
-# over the five document states, and `skills adopt`'s
-# append/rewrite/refuse/skip actions with their byte-exactness and
-# idempotency.
-#
-# Fence fixtures are built through the CLI where a render exists; hashes are
-# hardcoded only to prove an `edited`/tampered block.
+# Fence fixtures are built through the CLI where a render exists; hashes
+# are hardcoded only to prove an `edited`/tampered block.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -66,7 +60,6 @@ count_examples() {
 }
 
 # ------------------------------------------- a hostile name is quoted
-#
 HOSTILE="$SCRATCH/hostile"
 rm -rf "$HOSTILE"
 mkdir -p "$HOSTILE/skill"
@@ -381,7 +374,6 @@ check_contains "the refusal names the review's <command>" "$ERR" \
     "skill-log: skill-friction-review.md has no <command> placeholder"
 
 # ------------------------------------------------- a quoted placeholder
-#
 mkdir -p "$SCRATCH/quoted"
 printf '    <command> add --skill "<name>"\n' > "$SCRATCH/quoted/usage-log.md"
 run skills template show --template-dir "$SCRATCH/quoted"
@@ -548,7 +540,6 @@ render_block ok "$EXPECTED_CMD" "$USAGE_TEMPLATE" > "$SCRATCH/block.txt"
 cat "$SCRATCH/block.txt" >> "$SKILLS/ok/SKILL.md"
 
 # --------------------------------------------- the mirror is the oracle
-#
 TOKEN_NAME='skill<command>evil'
 TOKEN_DIR="$SCRATCH/token-name"
 rm -rf "$TOKEN_DIR"

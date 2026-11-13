@@ -3,10 +3,9 @@
 #
 #   tests/resolve.sh
 #
-# It exercises the escape hatch: one row, one commit, one timestamp. The
-# cases are the four promises — the stamp lands, the same call changes
-# nothing, a dry run writes nothing, and an unknown id or a missing store
-# is named.
+# One row, one commit, one timestamp: the stamp lands, the same call
+# changes nothing, a dry run writes nothing, and an unknown id or a
+# missing store is named.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

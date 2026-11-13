@@ -15,8 +15,6 @@
 # fetched from the pinned Ubuntu 22.04 (jammy) libsqlite3-0 package — a
 # glibc 2.35 floor — verified against the sha256 Ubuntu's signed archive
 # index records for it, then verified again as the extracted file.
-# `--sqlite <path>` substitutes a locally built copy, checked the same
-# way.
 #
 # This rebuilds dist/ from scratch (scripts/build.sh clears it), so the
 # gate order is: build.sh, test.sh, package.sh, then tests/packaging.sh.

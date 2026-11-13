@@ -3,9 +3,9 @@
 #
 #   tests/stats.sh
 #
-# It exercises the read that answers "which skills need attention": the
-# four distinct counts, the rate, every `--by` key, the `--skill` narrow,
-# the flat JSON line, the empty answer, and the refusals.
+# The read that answers "which skills need attention": the four distinct
+# counts, the rate, every `--by` key, the `--skill` narrow, the flat JSON
+# line, the empty answer, and the refusals.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

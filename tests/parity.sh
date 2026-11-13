@@ -3,7 +3,6 @@
 # binary.
 #
 #   tests/parity.sh
-#
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -339,7 +338,6 @@ check "case 9: the read-only older store prints no rows" "$OUT" ""
 chmod 644 "$C9"
 
 # --- case 10: a busy write is retried, not lost ---------------------------
-#
 say "parity: case 10 — a write survives a real second writer holding the lock"
 C10="$DBT/c10.db"
 "$BIN" add --skill lock-holder --db "$C10" >/dev/null

@@ -3,11 +3,10 @@
 #
 #   tests/release.sh
 #
-# The workflow is the one place where a version read from a git tag reaches
-# a shell. A tag is a name a machine's owner chose, and a name that reaches
-# `run:` as shell source is executed: a tag named `v$(id)` runs a command.
-# So the version must reach the shell through the environment, never
-# through the interpolated text of a `run:` block.
+# A version read from a git tag reaches a shell here, and a tag is a name
+# a machine's owner chose: a name that reaches `run:` as shell source is
+# executed. So the version reaches the shell through the environment,
+# never through the interpolated text of a `run:` block.
 #
 # The third-party actions are pinned to commit SHAs for the same reason: a
 # tag is a name somebody else can move.

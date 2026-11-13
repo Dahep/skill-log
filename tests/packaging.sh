@@ -6,22 +6,11 @@
 #   tests/packaging.sh --archive dist/skill-log-v1.0.0-x86_64-unknown-linux-gnu.tar.gz
 #   tests/packaging.sh --image ubuntu:22.04
 #
-# The archive is unpacked into a container that has no toolchain and no
-# system SQLite. There `--version` and `setup --dry-run` run against a
-# scratch repo, the loader trace shows the archive's own
-# lib/libsqlite3.so.0 being the one loaded, and removing that file makes
-# the binary fail with one named line — so the bundled copy is proven to
-# be the only source, not merely present.
+# The container has no toolchain and no system SQLite, so the archive's own
+# lib/libsqlite3.so.0 is the only possible source.
 #
-# The default image is debian:bookworm-slim: no toolchain, no system
-# SQLite, glibc 2.36 above the artifact's 2.35 floor. Override the image
-# with --image or SKILL_LOG_PACKAGING_IMAGE.
-#
-# The image carries no git, so `setup --dry-run`'s repo-scoped artifacts
-# are asserted through the named skip.
-#
-# This is not part of scripts/test.sh: it needs docker, so the default
-# gate stays offline and fast.
+# Not part of scripts/test.sh: it needs docker, so the default gate stays
+# offline and fast.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
