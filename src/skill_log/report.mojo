@@ -313,7 +313,7 @@ def parse_options(args: List[String]) raises -> Options:
 
 
 struct Selection(Movable):
-    """What the selectors found: markers to write, rows already closed,"""
+    """What the selectors found: markers to write, rows already closed, and ids the store does not have."""
 
     var pending: List[String]
     var resolved: List[String]

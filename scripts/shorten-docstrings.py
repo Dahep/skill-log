@@ -20,6 +20,14 @@ SRC = ROOT / "src" / "skill_log"
 
 QUOTE = '"' * 3
 
+# The characters a sentence can end with.
+TERMINAL = ".!?\"`)"
+
+
+def _is_sentence(text: str) -> bool:
+    """True when the text ends like a finished sentence."""
+    return bool(text) and text[-1] in TERMINAL
+
 
 def keep_map() -> dict[tuple[str, str], str]:
     """The docstrings that keep their extra paragraph, and its text.
@@ -334,9 +342,27 @@ def shorten(text: str, module: str, keep: dict[tuple[str, str], str]) -> str:
                 out.append(f"{indent}{QUOTE}{block[0]}")
                 for l in block[1:-1]:
                     out.append(indent + l if l else "")
-                out.append(f"{indent}{block[-1]}{QUOTE}")
+                # The closing delimiter goes on its own line, the way the
+                # tree's other multi-line docstrings do.
+                out.append(f"{indent}{block[-1]}")
+                out.append(f"{indent}{QUOTE}")
             else:
-                out.append(f"{indent}{QUOTE}{body}{QUOTE}")
+                # A first line that is a sentence fragment needs the
+                # line that completes it: the sentence is the docstring.
+                text = body
+                k = i + 1
+                while k <= j and not _is_sentence(text):
+                    nxt = lines[k].strip()
+                    if nxt.endswith(QUOTE):
+                        nxt = nxt[: -len(QUOTE)].strip()
+                    if not nxt:
+                        k += 1
+                        continue
+                    text = text + " " + nxt
+                    k += 1
+                if not _is_sentence(text):
+                    text = body
+                out.append(f"{indent}{QUOTE}{text}{QUOTE}")
             i = j + 1
             continue
         out.append(lines[i])

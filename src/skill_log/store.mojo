@@ -69,7 +69,7 @@ def invocation_columns() -> List[ColumnDef]:
 
 
 def invocation_ddl() -> String:
-    """The `CREATE TABLE` for the invocations table, built from the"""
+    """The `CREATE TABLE` for the invocations table, built from the column list."""
     var columns = invocation_columns()
     var body = String("")
     for i in range(len(columns)):

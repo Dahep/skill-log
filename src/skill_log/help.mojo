@@ -4,7 +4,7 @@ from skill_log.verb import Verb
 
 
 def render_verb(verb: Verb) -> String:
-    """The usage block for one verb: its summary, its usage line, its"""
+    """The usage block for one verb: its summary, its usage line, its notes, and two to four real invocations."""
     var text = verb.path + " — " + verb.summary + "\n"
     text += "\nusage:\n  " + verb.usage + "\n"
     if verb.notes != "":
@@ -24,7 +24,7 @@ def render_verb_list(verbs: List[Verb]) -> String:
 
 
 def top_level_help(verbs: List[Verb]) -> String:
-    """The top-level usage: what the tool is, how to call it, and the"""
+    """The top-level usage: what the tool is, how to call it, and the verbs it knows."""
     var text = "skill-log — record agent-skill invocations and the friction they produced\n"
     text += "\nusage:\n"
     text += "  skill-log <verb> [options]\n"

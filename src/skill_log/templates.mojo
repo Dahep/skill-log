@@ -52,7 +52,7 @@ the skill's work outranks its own reporting."""
 
 
 def shipped_review() -> String:
-    """The shipped `skill-friction-review.md`, as it is embedded in the"""
+    """The shipped `skill-friction-review.md`, as it is embedded in the binary."""
     return """\
 # Skill friction review
 

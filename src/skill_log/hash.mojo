@@ -2,7 +2,7 @@
 
 
 def fnv1a64_hex(text: String) -> String:
-    """The FNV-1a 64-bit hash of `text`'s bytes, as 16 lowercase hex"""
+    """The FNV-1a 64-bit hash of `text`'s bytes, as 16 lowercase hex digits."""
     var h: UInt64 = 0xcbf29ce484222325
     var base = text.unsafe_ptr()
     var n = text.byte_length()

@@ -58,7 +58,7 @@ comptime TEMPLATE_ACTION_ABSENT = "absent"
 
 
 def seeded_path(name: String) -> String:
-    """Where the seeded-from record for template `name` lives (XDG"""
+    """Where the seeded-from record for template `name` lives (XDG state)."""
     return xdg_state_dir() + "/" + SEEDED_DIR + "/" + name
 
 
@@ -738,7 +738,7 @@ def handle_skills(args: List[String]) raises -> Outcome:
 
 
 def handle_audit(options: SkillsOptions) raises -> Outcome:
-    """`skills audit`: one line per skill, exit 1 on anything but"""
+    """`skills audit`: one line per skill, exit 1 on anything but ok/vendored, and writes nothing."""
     if String(options.dir.strip()) == "":
         return Outcome.fail("usage: skills audit needs --dir <dir>", EXIT_USAGE())
     var dir = String(options.dir.strip())
@@ -855,7 +855,7 @@ def handle_adopt(options: SkillsOptions) raises -> Outcome:
 
 
 def handle_template_show(options: SkillsOptions) raises -> Outcome:
-    """`skills template show`: both effective templates, their source,"""
+    """`skills template show`: both effective templates, their source, hashes, and whether the shipped default has moved."""
     var template_dir = resolve_template_dir(options.template_dir)
     var usage: Template
     var review: Template
@@ -895,7 +895,7 @@ def handle_template_show(options: SkillsOptions) raises -> Outcome:
 
 
 def handle_template_seed(options: SkillsOptions) raises -> Outcome:
-    """`skills template seed`: copy the shipped defaults into the user"""
+    """`skills template seed`: copy the shipped defaults into the user directory, refusing an existing copy without `--force`."""
     var dir = default_template_dir()
     var names = template_names()
     var actions = List[TemplateAction]()
@@ -946,7 +946,7 @@ def handle_template_seed(options: SkillsOptions) raises -> Outcome:
 
 
 def handle_template_reset(options: SkillsOptions) raises -> Outcome:
-    """`skills template reset`: delete the user copies back to the"""
+    """`skills template reset`: delete the user copies back to the shipped defaults, refusing while copies exist without `--force`."""
     var dir = default_template_dir()
     var names = template_names()
     var actions = List[TemplateAction]()

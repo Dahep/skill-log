@@ -41,7 +41,7 @@ struct Block(Movable):
 
 
 struct Parsed(Movable):
-    """A document split at its fence: what is before, the block, what is"""
+    """A document split at its fence: what is before, the block, what is after."""
 
     var before: String
     var block: Optional[Block]
@@ -274,7 +274,7 @@ def fence_field(header: String, key: String) -> String:
 
 
 def find_line(text: String, prefix: String) -> Int:
-    """The byte offset of the first line that starts with `prefix`, or"""
+    """The byte offset of the first line that starts with `prefix`, or -1."""
     var at = 0
     var n = text.byte_length()
     while at <= n:

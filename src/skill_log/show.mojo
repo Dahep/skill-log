@@ -291,7 +291,7 @@ def table_widths(rows: List[Invocation]) -> List[Int]:
 
 
 def render_table(rows: List[Invocation]) -> String:
-    """The table for a person: a header row, one line per invocation, and"""
+    """The table for a person: a header row, one line per invocation, and each problem indented under its invocation."""
     var headers = table_headers()
     var widths = table_widths(rows)
     var lines = List[String]()

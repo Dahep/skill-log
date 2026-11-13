@@ -128,7 +128,7 @@ def stamp_line() -> String:
 
 
 def stamp_version(document: String) -> String:
-    """The version the stamp in `document` names, or "" when there is"""
+    """The version the stamp in `document` names, or "" when there is no stamp line."""
     var n = document.byte_length()
     var at = 0
     while at <= n:
@@ -154,7 +154,7 @@ def skill_log_document(usage_template: String, command: String) raises -> String
 def review_document(
     review_template: String, usage_template: String, command: String
 ) raises -> String:
-    """The installed `skill-friction-review` document: the review"""
+    """The installed `skill-friction-review` document: the review template rendered with the resolved binary path, followed by the usage-log block rendered for `skill-friction-review`."""
     var body = substitute(review_template, REVIEW_SKILL, command)
     var rendered = render(usage_template, REVIEW_SKILL, command)
     return append(body, rendered.text)
