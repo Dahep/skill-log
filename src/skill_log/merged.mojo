@@ -44,12 +44,12 @@ shape in every mode.
 """
 
 from std.pathlib import Path
-from std.subprocess import run
 
 from skill_log.context import hostname
-from skill_log.detect import git_toplevel, shell_quote
+from skill_log.detect import shell_quote
 from skill_log.errors import EXIT_FAILURE, EXIT_USAGE, Outcome
 from skill_log.flags import take_value
+from skill_log.git import git_commit, git_output, git_toplevel
 from skill_log.json import JsonObject
 from skill_log.markers import parse_marker
 from skill_log.report import REPORT_DIR, TRAILER_KEY
@@ -217,32 +217,6 @@ def add_marker(
         return
     var marker = Located(machine, id, commit, epoch)
     located.append(marker^)
-
-
-def git_output(dir: String, args: String) -> String:
-    """Run one git command in `dir` and return its exact stdout.
-
-    The command string is built from constants and shell-quoted values;
-    stderr is discarded so a range git cannot read is a quiet empty
-    answer rather than noise on a pull.
-    """
-    var command = "git -C " + shell_quote(dir) + " " + args + " 2>/dev/null"
-    try:
-        var out = run(command)
-        return String(out)
-    except:
-        return ""
-
-
-def git_commit(root: String, revision: String) -> String:
-    """The commit `revision` names, or an empty string.
-
-    This is the bound check: a reflog position that does not exist is
-    not an error here, it is a missing bound, and the caller falls back
-    to a full scan.
-    """
-    var args = "rev-parse --verify " + shell_quote(revision + "^{commit}")
-    return String(git_output(root, args).strip())
 
 
 def body_trailer_values(body: String) -> List[String]:
@@ -733,7 +707,7 @@ def handle_resolve_merged(args: List[String]) raises -> Outcome:
             return Outcome.fail(String(message[byte=7:]), EXIT_USAGE())
         raise
 
-    var root = git_toplevel()
+    var root = git_toplevel("")
     if root == "":
         return Outcome.fail(
             "resolve-merged runs inside a git checkout", EXIT_FAILURE()

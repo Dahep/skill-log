@@ -59,7 +59,7 @@ from std.pathlib import Path
 
 from sqlite.db import Database
 
-from skill_log.detect import git_branch, git_toplevel
+from skill_log.git import git_branch, git_toplevel
 from skill_log.errors import EXIT_FAILURE, EXIT_USAGE, Outcome
 from skill_log.files import read_text, write_text
 from skill_log.flags import parse_positive, take_value
@@ -773,7 +773,7 @@ def handle_report(args: List[String]) raises -> Outcome:
             return Outcome.fail(String(message[byte=7:]), EXIT_USAGE())
         raise
 
-    var root = git_toplevel()
+    var root = git_toplevel("")
     if root == "":
         return Outcome.fail(
             "report runs inside a git checkout (the report lives there)",

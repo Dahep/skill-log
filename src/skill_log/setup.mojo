@@ -63,7 +63,7 @@ from skill_log.bundled import (
     stamp_version,
 )
 from skill_log.context import hostname
-from skill_log.detect import git_common_dir, git_toplevel, git_toplevel_of
+from skill_log.git import git_common_dir, git_toplevel
 from skill_log.document import is_vendored
 from skill_log.errors import EXIT_FAILURE, EXIT_USAGE, Outcome
 from skill_log.files import (
@@ -857,8 +857,8 @@ def resolve_repo(flag: String) -> String:
     reason rather than failing.
     """
     if String(flag.strip()) != "":
-        return git_toplevel_of(expand_home(String(flag.strip())))
-    return git_toplevel()
+        return git_toplevel(expand_home(String(flag.strip())))
+    return git_toplevel("")
 
 
 def handle_setup(args: List[String]) raises -> Outcome:
