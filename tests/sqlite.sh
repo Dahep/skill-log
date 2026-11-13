@@ -18,7 +18,14 @@ set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 
-SCRATCH="${SCRATCH:-/tmp/opencode/skill-log-sqlite}"
+SCRATCH_GIVEN="${SCRATCH:-}"
+SCRATCH="${SCRATCH:-$(mktemp -d /tmp/opencode/skill-log-sqlite-XXXXXX)}"
+# The suite owns a scratch directory only when it made one: a
+# caller's SCRATCH is theirs to clean up. A fixed path would let two
+# runs on one machine clobber each other's stores.
+if [ -z "$SCRATCH_GIVEN" ]; then
+    trap 'rm -rf "$SCRATCH"' EXIT
+fi
 
 # shellcheck shell=bash
 # shellcheck disable=SC1091  # the harness sits beside the suite, not on PATH
