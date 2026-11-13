@@ -6,14 +6,12 @@ import (
 	"strings"
 )
 
-// usageError is a usage-shaped failure a parser raises.
 type usageError struct {
 	message string
 }
 
 func (e usageError) Error() string { return "usage: " + e.message }
 
-// usageOutcome turns a parser failure into the CLI's usage outcome.
 func usageOutcome(err error) Outcome {
 	var usage usageError
 	if errors.As(err, &usage) {
@@ -22,11 +20,6 @@ func usageOutcome(err error) Outcome {
 	return Fail(err.Error(), ExitFailure)
 }
 
-// flagDescriptor describes one option.
-//
-// Value flags consume the next argument. Switches do not. Both are assigned
-// while the arguments are walked, so a repeated option or alias is resolved in
-// argument order and the last form wins.
 type flagDescriptor struct {
 	name string
 	what string
@@ -44,7 +37,6 @@ func (s *flagSet) value(name, what string, set func(string) error) {
 	s.descriptors = append(s.descriptors, flagDescriptor{name: name, what: what, set: set})
 }
 
-// valueEquals accepts both `--name value` and `--name=value` for one flag.
 func (s *flagSet) valueEquals(name, what string, set func(string) error) {
 	s.descriptors = append(s.descriptors, flagDescriptor{name: name, what: what, set: set, eq: true})
 }
@@ -56,7 +48,6 @@ func (s *flagSet) switchFlag(name string, set func() error) {
 	s.switches[name] = set
 }
 
-// names returns the value-taking flag names in declaration order.
 func (s *flagSet) names() []string {
 	names := make([]string, 0, len(s.descriptors))
 	for _, descriptor := range s.descriptors {
@@ -65,8 +56,6 @@ func (s *flagSet) names() []string {
 	return names
 }
 
-// parse walks args once. A value flag steps over its value, a switch
-// dispatches, and every other option is the usage error.
 func (s *flagSet) parse(args []string) error {
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
@@ -123,8 +112,6 @@ func (s *flagSet) lookupPrefix(arg string) (flagDescriptor, bool) {
 	return flagDescriptor{}, false
 }
 
-// takeValue returns the value of flag, which sits at at+1. A missing value is
-// a usage error naming the flag.
 func takeValue(args []string, at int, flag, what string) (string, error) {
 	next := at + 1
 	if next >= len(args) {
@@ -133,10 +120,6 @@ func takeValue(args []string, at int, flag, what string) (string, error) {
 	return args[next], nil
 }
 
-// parsePositive reads a positive decimal number, or returns a usage error
-// carrying message. Digits only: a sign, a space or a fraction is not an
-// invocation id. The cap is checked while the digits are consumed, so an
-// oversized number cannot wrap into the valid range.
 func parsePositive(value, message string) (int64, error) {
 	text := strings.TrimSpace(value)
 	if text == "" {

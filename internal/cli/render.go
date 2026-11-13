@@ -7,14 +7,6 @@ import (
 	"github.com/Dahep/skill-log/internal/store"
 )
 
-// RenderRowJSON renders one invocation row as one flat JSON object.
-//
-// Every column of the row, in the schema's own order, then the marker and the
-// problems. An id of zero means the row has not been written yet, and it is
-// rendered as null so a --dry-run preview does not claim a row that does not
-// exist.
-// rowMarker names a row for this machine. A legacy row with no stored
-// machine belongs to the machine reading it.
 func rowMarker(machine string, id int64) string {
 	if id <= 0 {
 		return ""
@@ -29,6 +21,7 @@ func rowMarker(machine string, id int64) string {
 	return marker.Format(machine, id)
 }
 
+// RenderRowJSON renders one invocation as a flat JSON object.
 func RenderRowJSON(row store.Invocation) string {
 	id := format.Raw("id", "null")
 	if row.ID > 0 {

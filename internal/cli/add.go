@@ -43,8 +43,6 @@ func addVerb() Verb {
 			"skill-log add --skill create-skill --problem - < notes.txt",
 			"skill-log add --skill create-skill --dry-run --json",
 		},
-		// The flags that consume the next argument. The dispatcher reads this
-		// to tell `--problem -h` (a problem spelled `-h`) from a help request.
 		ValueFlags: addFlags(&addOptions{}).names(),
 		Notes: "A clean run still writes a row: the invocation count is the\n" +
 			"denominator of the problems-per-invocation rate.\n" +
@@ -104,8 +102,6 @@ func parseAddOptions(args []string) (addOptions, error) {
 	if strings.TrimSpace(options.skill) == "" {
 		return options, usageError{"--skill needs a name"}
 	}
-	// A blank problem carries no friction; it is ignored rather than written
-	// as an empty row.
 	var kept []string
 	for _, problem := range options.problems {
 		if strings.TrimSpace(problem) != "" {
@@ -116,9 +112,6 @@ func parseAddOptions(args []string) (addOptions, error) {
 	return options, nil
 }
 
-// resolveField is one field of the row, by the precedence chain: the explicit
-// flag, then the field's SKILL_LOG_* variable, then the enabled adapter's
-// value, then the built-in detection.
 func resolveField(flag, variable, adapterValue, detected string) string {
 	if strings.TrimSpace(flag) != "" {
 		return strings.TrimSpace(flag)
@@ -138,8 +131,6 @@ func handleAdd(args []string) Outcome {
 		return usageOutcome(err)
 	}
 
-	// --problem - reads the text from stdin. On a terminal there is nothing
-	// to read and the command would hang, so it refuses instead.
 	var problems []string
 	for _, text := range options.problems {
 		if text == "-" {
@@ -154,9 +145,6 @@ func handleAdd(args []string) Outcome {
 	}
 
 	path := settings.ResolveDB(options.db)
-
-	// The worktree comes first: the t3 adapter needs it to find the project,
-	// and the adapter's value sits below the flag and the variable.
 	detectedWorktree := settings.DetectWorktree()
 	worktree := resolveField(
 		options.worktree,
@@ -165,14 +153,6 @@ func handleAdd(args []string) Outcome {
 		detectedWorktree,
 	)
 
-	// The session resolves before the adapter runs: the model is the model
-	// of the session the row carries, so the adapter must be asked about
-	// that session and not about the one the environment happens to name
-	// (SPEC §4).
-	//
-	// The adapter's own session value is the harness's, and it is only
-	// consulted when the adapter runs: an adapter that is not enabled fills
-	// nothing.
 	adapters := settings.EnabledAdapters(options.adapters)
 	adapterSession := ""
 	if settings.HasAdapter(adapters, "opencode") {
@@ -191,18 +171,14 @@ func handleAdd(args []string) Outcome {
 	row.Skill = strings.TrimSpace(options.skill)
 	row.Harness = resolveField(options.harness, settings.EnvOrEmpty("SKILL_LOG_HARNESS"), adapter.Harness, "")
 	row.Session = session
-	// An adapter may not set the parent: it names a run this tool did not
-	// spawn, and no adapter can know it.
 	row.Parent = resolveField(options.parent, settings.EnvOrEmpty("SKILL_LOG_PARENT"), "", "")
 	row.Model = resolveField(options.model, settings.EnvOrEmpty("SKILL_LOG_MODEL"), adapter.Model, "")
-	// The repository is detected from the worktree the row carries.
 	row.Repo = resolveField(
 		options.repo, settings.EnvOrEmpty("SKILL_LOG_REPO"), "", settings.DetectRepo(worktree),
 	)
 	row.Worktree = worktree
 	row.Project = resolveField(options.project, settings.EnvOrEmpty("SKILL_LOG_PROJECT"), adapter.Project, "")
 	row.T3Thread = resolveField(options.t3Thread, settings.EnvOrEmpty("SKILL_LOG_T3_THREAD"), "", "")
-	// The machine is always detected: there is no SKILL_LOG_MACHINE.
 	if strings.TrimSpace(options.machine) != "" {
 		row.Machine = strings.TrimSpace(options.machine)
 	} else {
@@ -213,9 +189,6 @@ func handleAdd(args []string) Outcome {
 		row.Machine = name
 	}
 
-	// The machine namespaces every marker. A `#` or a control character would
-	// make the row unnameable — and a newline would split a report line — so
-	// an explicit value that carries one is refused at the boundary.
 	if strings.Contains(row.Machine, "#") {
 		return Fail("usage: --machine names a marker; it cannot contain '#' or a control character", ExitUsage)
 	}
@@ -223,7 +196,6 @@ func handleAdd(args []string) Outcome {
 		return Fail("usage: --machine names a marker; it cannot contain '#' or a control character", ExitUsage)
 	}
 
-	// The problems are sanitized on the way in as well as on the way out.
 	clean := make([]string, 0, len(problems))
 	for _, problem := range problems {
 		clean = append(clean, format.Sanitize(problem))
