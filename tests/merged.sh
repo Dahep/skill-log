@@ -242,6 +242,32 @@ check "the JSON names the hidden marker's text" \
 check "--quiet hides the ignored marker" \
     "$(cat "$SCRATCH/hq.out")$(cat "$SCRATCH/hq.err")" ""
 
+# ------------------------------------------------- a record separator byte
+#
+# The scan reads every commit in one `git log` call, and its records cannot
+# be separated by 0x1e: a commit body may carry that byte, which splits the
+# record in the wrong place and loses every marker after it. A body with a
+# literal 0x1e before its marker must still name the marker.
+REPO_RS="$(new_repo record-separator)"
+DB_RS="$SCRATCH/record-separator.db"
+"$BIN" add --skill after-the-separator --machine "$H" --db "$DB_RS" >/dev/null
+printf x >"$REPO_RS/file"
+git -C "$REPO_RS" add file
+printf 'skills: name a row after a record separator\n\036Skill-log-Fix: %s#1\n' \
+    "$H" >"$SCRATCH/rs-body.txt"
+git -C "$REPO_RS" commit -q -F "$SCRATCH/rs-body.txt"
+(
+    cd "$REPO_RS" || exit 1
+    "$BIN" resolve-merged --db "$DB_RS" --json >"$SCRATCH/rs.json" 2>"$SCRATCH/rs.err"
+)
+check "a marker after a 0x1e is found" \
+    "$(json_array "$(cat "$SCRATCH/rs.json")" ignored | grep -c "$H#1")" "1"
+check_contains "a marker after a 0x1e is reported" \
+    "$(cat "$SCRATCH/rs.err")" "$H#1"
+check_one_line "a marker after a 0x1e is one line" "$(cat "$SCRATCH/rs.err")"
+check "a marker after a 0x1e stamped nothing" \
+    "$(sqlite3 "$DB_RS" 'select fix from invocations where id = 1')" ""
+
 # --------------------------------------------------- partially buried markers
 REPO_PB="$(new_repo partial-burial)"
 DB_PB="$SCRATCH/partial-burial.db"

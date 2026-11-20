@@ -81,12 +81,12 @@ func parseMergedOptions(args []string) (mergedOptions, error) {
 	return options, nil
 }
 
-// The field and record separators of one `git log` call: NUL cannot appear in a
-// commit message or an object name.
-const (
-	mergedField  = "\x00"
-	mergedRecord = "\x1e"
-)
+// The separator of one `git log` call: NUL cannot appear in a commit message or
+// an object name, and git refuses to write one into a message at all, so it
+// cannot be confused with data. The field and the record separator are the same
+// byte: every record is four NUL-separated fields — the commit, its epoch, the
+// trailer values and the body — and the body is last, so it keeps its newlines.
+const mergedField = "\x00"
 
 type mergedScan struct {
 	located   []store.Located
@@ -143,7 +143,9 @@ func bodyTrailerValues(body string) []string {
 	var values []string
 	key := strings.ToLower(trailerKey)
 	for _, line := range strings.Split(body, "\n") {
-		text := strings.TrimSpace(line)
+		// A stray control byte before the key — the record separator the
+		// scan no longer uses, for one — is not part of the line's text.
+		text := strings.TrimSpace(format.Sanitize(line))
 		if !strings.HasPrefix(strings.ToLower(text), key) {
 			continue
 		}
@@ -204,28 +206,21 @@ func scanTrailers(root, since string) mergedScan {
 		span = since + "..HEAD"
 	}
 	logFormat := "--format=%H%x00%ct%x00%(trailers:key=" +
-		trailerKey + ",valueonly)%x00%B%x1e"
+		trailerKey + ",valueonly)%x00%B%x00"
 	out := gitOutput(root, "log", logFormat, span)
 
-	for _, raw := range strings.Split(out, mergedRecord) {
-		record := strings.TrimSpace(raw)
-		if record == "" {
-			continue
-		}
-		fields := strings.Split(record, mergedField)
-		if len(fields) < 4 {
-			continue
-		}
-		commit := strings.TrimSpace(fields[0])
+	fields := strings.Split(out, mergedField)
+	for at := 0; at+4 <= len(fields); at += 4 {
+		commit := strings.TrimSpace(fields[at])
 		if commit == "" {
 			continue
 		}
-		epoch, err := strconv.ParseInt(strings.TrimSpace(fields[1]), 10, 64)
+		epoch, err := strconv.ParseInt(strings.TrimSpace(fields[at+1]), 10, 64)
 		if err != nil {
 			continue
 		}
-		values := fields[2]
-		body := fields[3]
+		values := fields[at+2]
+		body := fields[at+3]
 
 		// A value the trailer parser did not return is buried — a later
 		// trailer block hid it, so the scan names it instead of losing it.
