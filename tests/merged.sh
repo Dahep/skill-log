@@ -212,6 +212,42 @@ check "the foreign marker stamped nothing" \
 check "the foreign marker is not in the resolved answer" \
     "$(json_array "$(cat "$SCRATCH/foreignrow.json")" resolved)" ""
 
+# ------------------------------ a row without a machine is this machine's
+#
+# A row written before `add` always filled `machine` has an empty one. The
+# marker grammar needs a name, and the only honest owner is the machine
+# reading the row: a marker naming this host stamps it.
+REPO_EM="$(new_repo empty-machine)"
+DB_EM="$SCRATCH/empty-machine.db"
+"$BIN" add --skill pre-machine --machine placeholder --db "$DB_EM" >/dev/null
+sqlite3 "$DB_EM" "update invocations set machine = ''"
+commit_file "$REPO_EM" "Skill-log-Fix: $H#1"
+(
+    cd "$REPO_EM" || exit 1
+    "$BIN" resolve-merged --db "$DB_EM" --json >"$SCRATCH/empty-machine.json"
+)
+check "this host's marker names a row with no machine" \
+    "$(sqlite3 "$DB_EM" 'select length(fix) > 0 from invocations where id = 1')" "1"
+check "the empty-machine row is reported resolved" \
+    "$(json_array "$(cat "$SCRATCH/empty-machine.json")" resolved)" "$H#1"
+
+# A marker naming another host still does not: the row is this machine's,
+# not anybody's.
+REPO_EM2="$(new_repo empty-machine-foreign)"
+DB_EM2="$SCRATCH/empty-machine-foreign.db"
+"$BIN" add --skill pre-machine --machine placeholder --db "$DB_EM2" >/dev/null
+sqlite3 "$DB_EM2" "update invocations set machine = ''"
+commit_file "$REPO_EM2" "Skill-log-Fix: otherbox#1"
+(
+    cd "$REPO_EM2" || exit 1
+    "$BIN" resolve-merged --db "$DB_EM2" --json \
+        >"$SCRATCH/empty-machine-foreign.json" 2>"$SCRATCH/empty-machine-foreign.err"
+)
+check_contains "a foreign marker does not name an empty-machine row" \
+    "$(cat "$SCRATCH/empty-machine-foreign.err")" "otherbox#1 skipped: foreign"
+check "the foreign marker left the empty-machine row unresolved" \
+    "$(sqlite3 "$DB_EM2" 'select fix from invocations where id = 1')" ""
+
 "$BIN" add --skill hidden --machine "$H" --db "$DB" >/dev/null
 n="$(date +%s%N)"
 printf '%s' "$n" >"$REPO/file"
