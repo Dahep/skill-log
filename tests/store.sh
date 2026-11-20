@@ -474,6 +474,77 @@ check "the read created no sidecar" "$SIDECARS" "0"
 chmod 0755 "$RODIR"
 chmod 0644 "$RO_DB"
 
+# ------------------------------------ a write names a read-only store
+
+# A read of a read-only file succeeds; a write has its own class. The
+# store exists but cannot be written, and that is named as one — never as
+# damaged, older or the engine's own text with a numeric code.
+WRO="$SCRATCH/write-readonly"
+rm -rf "$WRO"
+mkdir -p "$WRO"
+WRO_DB="$WRO/skills.db"
+run add --skill seed --db "$WRO_DB"
+check "the read-only fixture store was written" "$STATUS" "0"
+chmod 0444 "$WRO_DB"
+
+run add --skill blocked --db "$WRO_DB"
+check "a write to a read-only store exits 1" "$STATUS" "1"
+check "a write to a read-only store is named" "$ERR" \
+    "skill-log: read-only store: $WRO_DB cannot be written to"
+check_one_line "a read-only store is one line" "$ERR"
+check_absent "the read-only refusal carries no engine code" "$ERR" "(8)"
+check "a read-only store is not rewritten" \
+    "$(sqlite3 "$WRO_DB" 'select count(*) from invocations')" "1"
+
+run resolve --id 1 --fix abc1234 --db "$WRO_DB"
+check "resolve names the read-only store" "$ERR" \
+    "skill-log: read-only store: $WRO_DB cannot be written to"
+check "resolve exits 1 on a read-only store" "$STATUS" "1"
+
+WRO_REPO="$SCRATCH/wro-repo"
+rm -rf "$WRO_REPO"
+git init -q -b main "$WRO_REPO"
+git -C "$WRO_REPO" config user.email test@example.com
+git -C "$WRO_REPO" config user.name test
+run setup --repo "$WRO_REPO" --db "$WRO_DB"
+check "setup names the read-only store" "$ERR" \
+    "skill-log: read-only store: $WRO_DB cannot be written to"
+check "setup exits 1 on a read-only store" "$STATUS" "1"
+
+# A path that cannot be opened at all — a directory where the file should
+# be — is unusable, not absent and not a raw engine error.
+UNUSABLE="$SCRATCH/unusable"
+rm -rf "$UNUSABLE"
+mkdir -p "$UNUSABLE"
+run add --skill blocked --db "$UNUSABLE"
+check "a directory store path exits 1" "$STATUS" "1"
+check "a directory store path is unusable" "$ERR" \
+    "skill-log: unusable store path: $UNUSABLE cannot be opened"
+check_one_line "an unusable store path is one line" "$ERR"
+run show --db "$UNUSABLE"
+check "a read of a directory store path is unusable" "$STATUS" "1"
+check "the read names the unusable path" "$ERR" \
+    "skill-log: unusable store path: $UNUSABLE cannot be opened"
+
+# The caller's path does not choose the class: a damaged file under a
+# path that says "locked" is still damaged, and a read-only one under a
+# path that says "older" is still read-only.
+LOCKED_PATH="$SCRATCH/locked/skills.db"
+mkdir -p "$SCRATCH/locked"
+printf 'not a database' >"$LOCKED_PATH"
+run add --skill blocked --db "$LOCKED_PATH"
+check "a path word does not make a damaged store locked" "$ERR" \
+    "skill-log: damaged store: $LOCKED_PATH is not a skill-log database"
+OLDER_PATH="$SCRATCH/older/skills.db"
+mkdir -p "$SCRATCH/older"
+run add --skill seed --db "$OLDER_PATH"
+chmod 0444 "$OLDER_PATH"
+run add --skill blocked --db "$OLDER_PATH"
+check "a path word does not make a read-only store older" "$ERR" \
+    "skill-log: read-only store: $OLDER_PATH cannot be written to"
+
+chmod 0644 "$WRO_DB" "$OLDER_PATH"
+
 # A read of a store that is not there creates nothing: not the file,
 # not the directory, not an empty database.
 ABSENT="$SCRATCH/absent/db/skills.db"

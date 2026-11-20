@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/Dahep/skill-log/internal/format"
@@ -78,6 +79,10 @@ const (
 	Newer
 	// Locked means another writer is holding the store.
 	Locked
+	// ReadOnly means the store exists but cannot be written.
+	ReadOnly
+	// Unusable means the path cannot be opened as a store at all.
+	Unusable
 )
 
 // Refusal is a store that was refused, and why. Found is the version a newer store
@@ -111,7 +116,25 @@ func errorCode(err error) int {
 	return 0
 }
 
-func isBusy(err error) bool {
+// stripPath removes the store's own path from a message, in either spelling the
+// driver may use, so a path that carries a word of the taxonomy cannot choose the
+// answer.
+func stripPath(message, path string) string {
+	if path == "" {
+		return message
+	}
+	message = strings.ReplaceAll(message, format.FileURI(path), "")
+	return strings.ReplaceAll(message, path, "")
+}
+
+func errorText(err error, path string) string {
+	if err == nil {
+		return ""
+	}
+	return stripPath(err.Error(), path)
+}
+
+func isBusy(err error, text string) bool {
 	if err == nil {
 		return false
 	}
@@ -119,11 +142,13 @@ func isBusy(err error) bool {
 	case 5, 6:
 		return true
 	}
-	text := strings.ToLower(err.Error())
-	return strings.Contains(text, "locked") || strings.Contains(text, "busy")
+	text = strings.ToLower(text)
+	return strings.Contains(text, "database is locked") ||
+		strings.Contains(text, "database table is locked") ||
+		strings.Contains(text, "database schema is locked")
 }
 
-func isCorruption(err error) bool {
+func isCorruption(err error, text string) bool {
 	if err == nil {
 		return false
 	}
@@ -131,20 +156,69 @@ func isCorruption(err error) bool {
 	case 11, 26:
 		return true
 	}
-	text := strings.ToLower(err.Error())
+	text = strings.ToLower(text)
 	return strings.Contains(text, "not a database") ||
 		strings.Contains(text, "malformed") ||
 		strings.Contains(text, "file is encrypted")
 }
 
-// ClassifyError turns a SQLite failure into the refusal kind it means, or nil when
-// it is a generic operational failure.
-func ClassifyError(err error) *Refusal {
-	if isCorruption(err) {
-		return &Refusal{Kind: Damaged}
+// isReadOnly reports a store that exists but cannot be written: the file, or the
+// directory that holds it, carries no write permission.
+func isReadOnly(err error, text string) bool {
+	if err == nil {
+		return false
 	}
-	if isBusy(err) {
+	if errorCode(err)&0xff == 8 {
+		return true
+	}
+	text = strings.ToLower(text)
+	return strings.Contains(text, "readonly database") ||
+		strings.Contains(text, "read-only database") ||
+		strings.Contains(text, "attempt to write a readonly") ||
+		strings.Contains(text, "attempt to write a read-only")
+}
+
+// isUnusable reports a path that cannot be opened as a store at all, such as a
+// directory where the file should be.
+func isUnusable(err error, text string) bool {
+	if err == nil {
+		return false
+	}
+	if errorCode(err)&0xff == 14 {
+		return true
+	}
+	return strings.Contains(strings.ToLower(text), "unable to open database file")
+}
+
+// ClassifyError turns a SQLite failure into the refusal kind it means, or nil when
+// it is a generic operational failure. The classification reads the engine's own
+// wording only: the caller's path is stripped first.
+func ClassifyError(err error, path string) *Refusal {
+	text := errorText(err, path)
+	switch {
+	case isCorruption(err, text):
+		return &Refusal{Kind: Damaged}
+	case isBusy(err, text):
 		return &Refusal{Kind: Locked}
+	case isReadOnly(err, text):
+		return &Refusal{Kind: ReadOnly}
+	case isUnusable(err, text):
+		return &Refusal{Kind: Unusable}
+	}
+	return nil
+}
+
+// CheckWritable reports a store file that does not accept a write descriptor, so
+// a verb that only reads can still say the loop's writes will fail. It opens
+// nothing: no PRAGMA, no transaction, no change to the file.
+func CheckWritable(path string) *Refusal {
+	file, err := os.OpenFile(path, os.O_WRONLY, 0)
+	if err == nil {
+		file.Close()
+		return nil
+	}
+	if os.IsPermission(err) {
+		return &Refusal{Kind: ReadOnly, Path: path}
 	}
 	return nil
 }
@@ -157,6 +231,9 @@ func isFile(path string) bool {
 // the file does not exist: a read never creates the file or an empty database.
 func openRead(path string) (*Store, *Refusal, error) {
 	if !isFile(path) {
+		if _, statErr := os.Stat(path); statErr == nil {
+			return nil, &Refusal{Kind: Unusable, Path: path}, nil
+		}
 		return nil, nil, nil
 	}
 	db, err := openURI(path, "?mode=ro")
@@ -167,7 +244,7 @@ func openRead(path string) (*Store, *Refusal, error) {
 	// the schema check: a read must wait for the write lock.
 	if _, err := db.Exec(fmt.Sprintf("PRAGMA busy_timeout=%d", readBusyTimeout)); err != nil {
 		db.Close()
-		if isCorruption(err) {
+		if isCorruption(err, errorText(err, path)) {
 			return nil, &Refusal{Kind: Damaged, Path: path}, nil
 		}
 		return nil, nil, err
@@ -212,7 +289,7 @@ func openWrite(path string) (*Store, *Refusal, error) {
 	}
 	if _, err := db.Exec(fmt.Sprintf("PRAGMA busy_timeout=%d", writeBusyTimeout)); err != nil {
 		db.Close()
-		if isCorruption(err) {
+		if isCorruption(err, errorText(err, path)) {
 			return nil, &Refusal{Kind: Damaged, Path: path}, nil
 		}
 		return nil, nil, err
@@ -271,7 +348,7 @@ func openWrite(path string) (*Store, *Refusal, error) {
 	// the lock makes it fail, and a lock is a named refusal.
 	if _, err := db.Exec(fmt.Sprintf("PRAGMA user_version=%d", SchemaVersion)); err != nil {
 		db.Close()
-		if isBusy(err) {
+		if isBusy(err, errorText(err, path)) {
 			return nil, &Refusal{Kind: Locked, Path: path}, nil
 		}
 		return nil, nil, err
@@ -310,7 +387,7 @@ func (s *Store) isOlder() (bool, error) {
 func (s *Store) schemaRefusal(existed bool) (*Refusal, error) {
 	older, err := s.isOlder()
 	if err != nil {
-		if isCorruption(err) {
+		if isCorruption(err, err.Error()) {
 			return &Refusal{Kind: Damaged}, nil
 		}
 		return nil, err
@@ -320,7 +397,7 @@ func (s *Store) schemaRefusal(existed bool) (*Refusal, error) {
 	}
 	ours, err := s.isOurs()
 	if err != nil {
-		if isCorruption(err) {
+		if isCorruption(err, err.Error()) {
 			return &Refusal{Kind: Damaged}, nil
 		}
 		return nil, err
@@ -328,14 +405,14 @@ func (s *Store) schemaRefusal(existed bool) (*Refusal, error) {
 	if !ours && existed {
 		tables, err := s.userTableCount()
 		if err != nil {
-			if isCorruption(err) {
+			if isCorruption(err, err.Error()) {
 				return &Refusal{Kind: Damaged}, nil
 			}
 			return nil, err
 		}
 		version, err := s.userVersion()
 		if err != nil {
-			if isCorruption(err) {
+			if isCorruption(err, err.Error()) {
 				return &Refusal{Kind: Damaged}, nil
 			}
 			return nil, err

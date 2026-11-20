@@ -34,7 +34,7 @@ func withRetry[T any](attempt func() (T, *Refusal, error)) (T, *Refusal, error) 
 			}
 		case err == nil:
 			return result, nil, nil
-		case !isBusy(err):
+		case !isBusy(err, err.Error()):
 			return result, nil, err
 		}
 		remaining := time.Until(deadline)

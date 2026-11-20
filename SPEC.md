@@ -160,8 +160,16 @@ marker this store does not own is a warning, not a failure.
 The store classifies and returns a typed refusal. The CLI boundary renders the
 one-line message and maps the exit code; no handler inspects a SQLite error or
 a store's absence on its own. The store classifies a SQLite failure the same
-way: damage is damage, a lock is a lock, and anything else is the generic
-operational failure.
+way on both paths: damage is damage, a lock is a lock, a file that cannot be
+written is read-only ("read-only store: <path> cannot be written to"), a store
+path that cannot be opened at all is unusable ("unusable store path: <path>
+cannot be opened"), and anything else is the generic operational failure.
+
+The classification never reads the caller's path: the path is stripped from
+the message first, because a path can carry any word in the vocabulary and
+must not choose the answer. A store named `locked` therefore cannot turn a
+write refusal into a lock, and one named `older` cannot turn a read-only file
+into an older schema.
 
 ### Location and overrides
 

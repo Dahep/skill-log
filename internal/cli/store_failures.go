@@ -28,13 +28,17 @@ func refusalFailure(refusal *store.Refusal) Failure {
 		}
 	case store.Locked:
 		return Failure{Message: "locked store: " + path + " is held by another writer", Code: ExitFailure}
+	case store.ReadOnly:
+		return Failure{Message: "read-only store: " + path + " cannot be written to", Code: ExitFailure}
+	case store.Unusable:
+		return Failure{Message: "unusable store path: " + path + " cannot be opened", Code: ExitFailure}
 	default:
 		return Failure{Message: "cannot use the store: " + path, Code: ExitFailure}
 	}
 }
 
 func readFailure(path string, err error) Failure {
-	if classified := store.ClassifyError(err); classified != nil {
+	if classified := store.ClassifyError(err, path); classified != nil {
 		classified.Path = path
 		return refusalFailure(classified)
 	}
@@ -42,7 +46,7 @@ func readFailure(path string, err error) Failure {
 }
 
 func writeFailure(path string, err error) Failure {
-	if classified := store.ClassifyError(err); classified != nil {
+	if classified := store.ClassifyError(err, path); classified != nil {
 		classified.Path = path
 		return refusalFailure(classified)
 	}

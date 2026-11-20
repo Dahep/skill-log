@@ -8,6 +8,7 @@ import (
 	"github.com/Dahep/skill-log/internal/document"
 	"github.com/Dahep/skill-log/internal/format"
 	"github.com/Dahep/skill-log/internal/settings"
+	"github.com/Dahep/skill-log/internal/store"
 	templatepkg "github.com/Dahep/skill-log/internal/template"
 )
 
@@ -218,6 +219,12 @@ func storeVerdict(path string, check, dryRun bool) verdict {
 	}
 	if opened != nil {
 		opened.Close()
+		// A store that can be read is not necessarily writable: the loop's
+		// writes fail on a read-only file, and setup is where an operator
+		// sees that before a pull does.
+		if refusal := store.CheckWritable(path); refusal != nil {
+			return verdict{artifactStore, statusDrift, refusalFailure(refusal).Message}
+		}
 		return verdict{artifactStore, statusUnchanged, path}
 	}
 	if check {
