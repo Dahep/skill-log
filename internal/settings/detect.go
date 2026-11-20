@@ -129,6 +129,20 @@ func DetectWorktree() string {
 	return GitToplevel()
 }
 
+// DetectCheckout resolves the working-tree root and the repository it belongs
+// to in one pass: one `rev-parse` answers both, and the origin lookup runs only
+// inside a checkout. Outside a checkout both are empty.
+func DetectCheckout() (repo, worktree string) {
+	top := GitToplevel()
+	if top == "" {
+		return "", ""
+	}
+	if name := RepoName(StripUserinfo(GitOriginURL(top))); name != "" {
+		return name, top
+	}
+	return Basename(top), top
+}
+
 func t3Home() string {
 	if home := EnvOrEmpty("T3CODE_HOME"); home != "" {
 		return home

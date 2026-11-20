@@ -145,13 +145,21 @@ func handleAdd(args []string) Outcome {
 	}
 
 	path := settings.ResolveDB(options.db)
-	detectedWorktree := settings.DetectWorktree()
+	// One pass answers both: the toplevel is the worktree, and the repo is
+	// the name that checkout belongs to.
+	detectedRepo, detectedWorktree := settings.DetectCheckout()
 	worktree := resolveField(
 		options.worktree,
 		settings.EnvOrEmpty("SKILL_LOG_WORKTREE"),
 		"",
 		detectedWorktree,
 	)
+	detectedWorktreeRepo := detectedRepo
+	if worktree != detectedWorktree {
+		// A worktree the caller named may be another checkout: it carries
+		// its own toplevel and its own origin.
+		detectedWorktreeRepo = settings.DetectRepo(worktree)
+	}
 
 	adapters := settings.EnabledAdapters(options.adapters)
 	adapterSession := ""
@@ -174,7 +182,7 @@ func handleAdd(args []string) Outcome {
 	row.Parent = resolveField(options.parent, settings.EnvOrEmpty("SKILL_LOG_PARENT"), "", "")
 	row.Model = resolveField(options.model, settings.EnvOrEmpty("SKILL_LOG_MODEL"), adapter.Model, "")
 	row.Repo = resolveField(
-		options.repo, settings.EnvOrEmpty("SKILL_LOG_REPO"), "", settings.DetectRepo(worktree),
+		options.repo, settings.EnvOrEmpty("SKILL_LOG_REPO"), "", detectedWorktreeRepo,
 	)
 	row.Worktree = worktree
 	row.Project = resolveField(options.project, settings.EnvOrEmpty("SKILL_LOG_PROJECT"), adapter.Project, "")

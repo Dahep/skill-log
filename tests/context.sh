@@ -87,6 +87,44 @@ run add --skill detect --dry-run --json
 check "outside a repository the repo is empty" "$(json_field "$OUT" repo)" ""
 check "outside a repository the worktree is empty" "$(json_field "$OUT" worktree)" ""
 
+# ------------------------------------------------------- one git pass
+
+# `repo` and `worktree` describe the same checkout, so one `rev-parse`
+# answers both. The shim counts what the tool actually spawns: inside a
+# repository the toplevel and the origin, outside one call.
+REAL_GIT="$(command -v git)"
+SHIM="$SCRATCH/git-shim"
+rm -rf "$SHIM"
+mkdir -p "$SHIM"
+cat >"$SHIM/git" <<EOF
+#!/bin/sh
+printf '%s\\n' "\$*" >>"\$GITLOG"
+exec "$REAL_GIT" "\$@"
+EOF
+chmod +x "$SHIM/git"
+GITLOG="$SCRATCH/git-calls"
+
+cd "$REPO" || exit 1
+: >"$GITLOG"
+OUT="$(GITLOG="$GITLOG" PATH="$SHIM:$PATH" "$BIN" add --skill one-pass --dry-run --json)"
+check "inside a checkout the tool asks for the toplevel and the origin" \
+    "$(cat "$GITLOG")" "$(printf 'rev-parse --show-toplevel\nremote get-url origin')"
+check "inside a checkout the toplevel is asked for once" \
+    "$(grep -c 'rev-parse --show-toplevel' "$GITLOG")" "1"
+check "the one-pass row still carries the repo" "$(json_field "$OUT" repo)" "thing"
+check "the one-pass row still carries the worktree" \
+    "$(json_field "$OUT" worktree)" "$REPO"
+
+cd "$OUTSIDE" || exit 1
+: >"$GITLOG"
+OUT="$(GITLOG="$GITLOG" PATH="$SHIM:$PATH" "$BIN" add --skill one-pass --dry-run --json)"
+check "outside a checkout the tool asks git once" \
+    "$(wc -l <"$GITLOG" | tr -d ' ')" "1"
+check "outside a checkout the one call is the toplevel" \
+    "$(cat "$GITLOG")" "rev-parse --show-toplevel"
+check "outside a checkout both fields stay empty" \
+    "$(json_field "$OUT" repo)$(json_field "$OUT" worktree)" ""
+
 # A repository without an origin remote falls back to the toplevel
 # directory's name.
 NO_REMOTE="$SCRATCH/no-remote"
