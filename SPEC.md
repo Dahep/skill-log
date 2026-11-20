@@ -505,7 +505,19 @@ directory, then the defaults shipped in the binary.
 Placeholders: `<name>` (the skill's name) and `<command>` (the resolved binary
 path). `usage-log.md` requires both, and `audit` rejects a template that lacks
 `<name>` or an invocation of `<command> add` — a typo there would silently stop
-every skill from logging. The review template requires `<command>`.
+every skill from logging. The review template requires `<command>`. A
+placeholder may not sit next to a quote character: the tool quotes a
+placeholder's value itself, and a template that quoted the placeholder would
+nest the two, so the value would reach the shell where a shell expands it.
+
+The rendered block is shell source: the reader copies a command line out of
+it and runs it. So a substituted value is shell-quoted on every command line
+— single quotes, with an embedded quote closed, escaped and reopened — and
+left plain in prose. A command line is one that starts a command: the
+placeholder is the first thing on the line after the indentation, or it
+follows a markdown list item's label and colon. A skill named
+`alpha; touch /tmp/pwned` therefore renders a command line that runs the
+skill and nothing else.
 
 The default template is expected to change between releases. The default moving
 never touches a user copy: the state directory records the hash of the shipped

@@ -344,9 +344,33 @@ USAGE_TEMPLATE="$(printf '%s' "$TEMPLATE_JSON" | python3 -c 'import json,sys; pr
 
 render_block() {
     python3 - "$1" "$2" "$3" <<'PY'
-import sys
+import re, sys
 name, command, template = sys.argv[1], sys.argv[2], sys.argv[3]
-content = template.replace("<name>", name).replace("<command>", command)
+
+def shell_quote(text):
+    return "'" + text.replace("'", "'\\''") + "'"
+
+def is_command_line(line):
+    text = line.strip()
+    if not text:
+        return False
+    if text.startswith("<name>") or text.startswith("<command>"):
+        return True
+    if not text.startswith(("- ", "* ", "+ ")):
+        return False
+    if ":" not in text:
+        return False
+    rest = text.split(":", 1)[1].strip()
+    return rest.startswith("<name>") or rest.startswith("<command>")
+
+def substitute_line(line):
+    quoted = is_command_line(line)
+    def one(match):
+        value = name if match.group(1) == "name" else command
+        return shell_quote(value) if quoted else value
+    return re.sub(r"<(name|command)>", one, line)
+
+content = "\n".join(substitute_line(line) for line in template.split("\n"))
 def fnv1a64(s):
     h = 0xcbf29ce484222325
     for b in s.encode():
@@ -525,9 +549,9 @@ check_contains "adopt reports the unchanged skill" "$OUT" "unchanged  ok  ok  $S
 check "the missing skill got exactly one block appended" \
     "$(grep -c '^<!-- skill-log:usage-log' "$SKILLS/missing/SKILL.md")" "1"
 check_contains "the appended block names the skill" \
-    "$(cat "$SKILLS/missing/SKILL.md")" "add --skill missing"
+    "$(cat "$SKILLS/missing/SKILL.md")" "add --skill 'missing'"
 check_contains "the appended block names the resolved binary" \
-    "$(cat "$SKILLS/missing/SKILL.md")" "$EXPECTED_CMD add --skill missing"
+    "$(cat "$SKILLS/missing/SKILL.md")" "'$EXPECTED_CMD' add --skill 'missing'"
 {
     cat "$SCRATCH/skills.orig/missing/SKILL.md"
     render_block missing "$EXPECTED_CMD" "$USAGE_TEMPLATE"
@@ -553,9 +577,9 @@ printf -- '---\nname: frontname\ndescription: a fixture\n---\n\n# Fixture\n' \
 run skills adopt --dir "$FRONT"
 check "adopt renders a skill with frontmatter" "$STATUS" "0"
 check_contains "the block names the frontmatter name" \
-    "$(cat "$FRONT/dirname/SKILL.md")" "add --skill frontname"
+    "$(cat "$FRONT/dirname/SKILL.md")" "add --skill 'frontname'"
 check_absent "the block does not fall back to the directory name" \
-    "$(cat "$FRONT/dirname/SKILL.md")" "add --skill dirname"
+    "$(cat "$FRONT/dirname/SKILL.md")" "add --skill 'dirname'"
 
 # stale: the block is rewritten inside its fence and the file is exactly
 # the original outside of it. The expected file is the untouched prefix
@@ -571,7 +595,7 @@ check "the rewrite changed no byte outside the fence" \
     "$(strip_block "$SKILLS/stale/SKILL.md" | md5sum)" \
     "$(strip_block "$SCRATCH/skills.orig/stale/SKILL.md" | md5sum)"
 check_contains "the rewritten block carries the current render" \
-    "$(cat "$SKILLS/stale/SKILL.md")" "add --skill stale"
+    "$(cat "$SKILLS/stale/SKILL.md")" "add --skill 'stale'"
 
 # edited: left untouched without --force, rewritten with it.
 check "the edited skill is untouched without --force" \
@@ -671,7 +695,7 @@ check "a renamed skill audits stale" \
 run skills adopt --dir "$RENAME" --json
 check "adopt rewrites the renamed skill's block" "$STATUS" "0"
 check_contains "the rewritten block names the new skill" \
-    "$(cat "$RENAME/after/SKILL.md")" "add --skill after"
+    "$(cat "$RENAME/after/SKILL.md")" "add --skill 'after'"
 
 
 # A file with no trailing newline still gets its block on its own line;
@@ -734,6 +758,61 @@ check "the rewritten block is idempotent" \
 # Back to the shipped defaults for whatever runs next.
 run skills template reset --force
 check "reset returns to the shipped defaults" "$STATUS" "0"
+
+# ------------------------------- a rendered command line is shell source
+
+# The block is copied out of a skill and run, so a substituted value is
+# one shell word. A skill named with a command separator must stay a
+# name: running the rendered line creates no file.
+INJECT="$SCRATCH/injected"
+rm -rf "$INJECT"
+mkdir -p "$INJECT/evil"
+printf -- "---\nname: alpha; touch $SCRATCH/pwned\n---\n\nbody\n" \
+    > "$INJECT/evil/SKILL.md"
+run skills adopt --dir "$INJECT"
+check "adopt renders a name with a command separator" "$STATUS" "0"
+check_contains "the injected name is quoted" \
+    "$(cat "$INJECT/evil/SKILL.md")" "'alpha; touch $SCRATCH/pwned'"
+INJECTED_LINE="$(grep -m1 " add --skill " "$INJECT/evil/SKILL.md")"
+rm -f "$SCRATCH/pwned"
+OUT="$(sh -c "$INJECTED_LINE" 2>"$SCRATCH/stderr")"
+STATUS=$?
+check "running the rendered line exits 0" "$STATUS" "0"
+check "running the rendered line creates no file" \
+    "$(test -e "$SCRATCH/pwned" && echo created || echo none)" "none"
+
+# A binary path carrying a space is one word too.
+SPACED="$SCRATCH/spaced dir"
+rm -rf "$SPACED"
+mkdir -p "$SPACED"
+cp "$BIN" "$SPACED/skill-log"
+SPACED_CMD="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$SPACED/skill-log")"
+SPACED_SKILLS="$SCRATCH/spaced-skills"
+rm -rf "$SPACED_SKILLS"
+mkdir -p "$SPACED_SKILLS/x"
+printf 'name: x\n' > "$SPACED_SKILLS/x/SKILL.md"
+OUT="$("$SPACED/skill-log" skills adopt --dir "$SPACED_SKILLS" 2>"$SCRATCH/stderr")"
+STATUS=$?
+check "a binary path with a space renders its own block" "$STATUS" "0"
+check_contains "the spaced binary is quoted" \
+    "$(cat "$SPACED_SKILLS/x/SKILL.md")" "'$SPACED_CMD' add --skill 'x'"
+SPACED_LINE="$(grep -m1 " add --skill " "$SPACED_SKILLS/x/SKILL.md")"
+OUT="$(sh -c "$SPACED_LINE" 2>"$SCRATCH/stderr")"
+STATUS=$?
+check "the spaced binary's command line exits 0" "$STATUS" "0"
+
+# Prose is read, not run: the placeholder stays plain there.
+check_contains "a prose placeholder stays unquoted" \
+    "$(cat "$SKILLS/ok/SKILL.md")" "run $EXPECTED_CMD once"
+
+# A template that quotes the placeholder itself is refused: the tool
+# quotes the value, and nesting the two hands it back to the shell.
+printf 'run "<command>" add --skill <name>\n' > "$SCRATCH/broken/usage-log.md"
+run skills template show --template-dir "$SCRATCH/broken"
+check "a quoted placeholder is refused" "$STATUS" "1"
+check_contains "the refusal names the quoting rule" "$ERR" \
+    "quotes <command>"
+printf 'run <command> add --skill <name>\n' > "$SCRATCH/broken/usage-log.md"
 
 # ---------------------------------------------------- usage errors
 

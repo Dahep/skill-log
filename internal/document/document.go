@@ -3,6 +3,8 @@ package document
 import (
 	"fmt"
 	"strings"
+
+	"github.com/Dahep/skill-log/internal/format"
 )
 
 // The fence, spelled once.
@@ -70,14 +72,114 @@ func Render(template, name, command string) Rendered {
 	return Rendered{Text: text, TemplateHash: templateHash, ContentHash: contentHash}
 }
 
-// Substitute returns template with every `<name>` and `<command>` replaced, without
-// escaping.
+// Substitute returns template with every `<name>` and `<command>` replaced. A
+// command line's values are shell-quoted; a prose line's are left plain, because
+// the reader copies a command line and runs it, while prose is read.
 func Substitute(template, name, command string) string {
-	out := strings.ReplaceAll(template, "<name>", name)
-	return strings.ReplaceAll(out, "<command>", command)
+	lines := strings.Split(template, "\n")
+	for i, line := range lines {
+		lines[i] = substituteLine(line, name, command)
+	}
+	return strings.Join(lines, "\n")
 }
 
+func substituteLine(line, name, command string) string {
+	quoted := isCommandLine(line)
+	var out strings.Builder
+	at := 0
+	for at < len(line) {
+		openRel := strings.IndexByte(line[at:], '<')
+		if openRel < 0 {
+			out.WriteString(line[at:])
+			break
+		}
+		open := at + openRel
+		closeRel := strings.IndexByte(line[open:], '>')
+		if closeRel < 0 {
+			out.WriteString(line[at:])
+			break
+		}
+		closeAt := open + closeRel
+		tag := line[open : closeAt+1]
+		var value string
+		switch tag {
+		case "<name>":
+			value = name
+		case "<command>":
+			value = command
+		default:
+			// An unknown placeholder is the template's own text.
+			out.WriteString(line[at : open+1])
+			at = open + 1
+			continue
+		}
+		out.WriteString(line[at:open])
+		if quoted {
+			out.WriteString(format.ShellQuote(value))
+		} else {
+			out.WriteString(value)
+		}
+		at = closeAt + 1
+	}
+	return out.String()
+}
+
+// isCommandLine reports whether the line starts a command: the placeholder is
+// the first thing after the indentation, or it follows a markdown list item's
+// label and colon.
+func isCommandLine(line string) bool {
+	text := strings.TrimSpace(line)
+	if text == "" {
+		return false
+	}
+	if strings.HasPrefix(text, "<name>") || strings.HasPrefix(text, "<command>") {
+		return true
+	}
+	if !strings.HasPrefix(text, "- ") &&
+		!strings.HasPrefix(text, "* ") &&
+		!strings.HasPrefix(text, "+ ") {
+		return false
+	}
+	colon := strings.IndexByte(text, ':')
+	if colon < 0 {
+		return false
+	}
+	rest := strings.TrimSpace(text[colon+1:])
+	return strings.HasPrefix(rest, "<name>") || strings.HasPrefix(rest, "<command>")
+}
+
+// quotedPlaceholder reports a placeholder the template itself quoted: the tool
+// quotes the value, and nesting the two would put it back in the shell's hands.
+func quotedPlaceholder(template, placeholder string) bool {
+	for at := 0; ; {
+		found := strings.Index(template[at:], placeholder)
+		if found < 0 {
+			return false
+		}
+		found += at
+		before := found - 1
+		after := found + len(placeholder)
+		if before >= 0 && isQuote(template[before]) {
+			return true
+		}
+		if after < len(template) && isQuote(template[after]) {
+			return true
+		}
+		at = after
+	}
+}
+
+func isQuote(char byte) bool { return char == '\'' || char == '"' }
+
 func ValidateTemplate(name, template string) error {
+	for _, placeholder := range []string{"<name>", "<command>"} {
+		if quotedPlaceholder(template, placeholder) {
+			return fmt.Errorf(
+				"%s quotes %s; the tool quotes a value itself, and a quoted placeholder would let the shell expand it",
+				name, placeholder,
+			)
+		}
+	}
 	switch name {
 	case "usage-log.md":
 		if !strings.Contains(template, "<name>") {

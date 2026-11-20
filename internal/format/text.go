@@ -16,6 +16,13 @@ func isControl(code rune) bool {
 	return code == 0x7F
 }
 
+// ShellQuote returns text as one single-quoted shell word: the one quoting a
+// POSIX shell always reads back literally. A value that reaches a shell is a
+// word, not text, whatever it carries.
+func ShellQuote(text string) string {
+	return "'" + strings.ReplaceAll(text, "'", `'\''`) + "'"
+}
+
 // Sanitize turns every control character into a space, so one problem stays one
 // line and cannot inject a terminal escape.
 func Sanitize(text string) string {
