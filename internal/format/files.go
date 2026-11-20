@@ -89,13 +89,25 @@ func IsExecutable(path string) bool {
 	return info.Mode().Perm()&0o111 != 0
 }
 
-// SetExecutable gives path the execute bits, leaving its other permissions alone.
-func SetExecutable(path string) error {
+// IsOwnerExecutable reports whether the file's owner may execute it. git runs a
+// hook as the user who pulled, and setup writes the hook as that user, so the
+// owner's bit is the one that decides whether git runs it: a mode of 0641 has
+// the execute bit for other and none for the owner, so the owner cannot run it.
+func IsOwnerExecutable(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	return info.Mode().Perm()&0o100 != 0
+}
+
+// SetOwnerExecutable adds the owner's execute bit, leaving the other bits alone.
+func SetOwnerExecutable(path string) error {
 	info, err := os.Stat(path)
 	if err != nil {
 		return err
 	}
-	if err := os.Chmod(path, info.Mode().Perm()|0o111); err != nil {
+	if err := os.Chmod(path, info.Mode().Perm()|0o100); err != nil {
 		return fmt.Errorf("cannot make %s executable: %w", path, err)
 	}
 	return nil

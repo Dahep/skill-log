@@ -207,6 +207,32 @@ check_contains "a non-executable hook: the detail names the path" \
 run setup --repo "$TMP/r1" --check
 check "check: a repaired hook is green" "$STATUS" "0"
 
+# drift: the hook carries an execute bit, but not the owner's. git runs
+# the hook as the user who pulled — the owner — so mode 0641 is a hook
+# git skips silently even though "somebody" may execute it.
+chmod 0641 "$HOOK"
+run setup --repo "$TMP/r1" --check
+check "check: a hook executable for other only exits 1" "$STATUS" "1"
+check "check: a hook executable for other only is drift" \
+    "$(status_of "$OUT" hook)" "drift"
+check_contains "check: the drift names the executable bit" \
+    "$(detail_of "$OUT" hook)" "not executable"
+run setup --repo "$TMP/r1" --check --json
+check "check --json: the owner's bit is drift" \
+    "$(printf '%s\n' "$OUT" | python3 -c 'import json,sys; print(" ".join(o["status"] for o in map(json.loads, sys.stdin) if o["artifact"] == "hook"))')" \
+    "drift"
+check "check --json: the mode is untouched" "$(stat -c %a "$HOOK")" "641"
+
+run setup --repo "$TMP/r1"
+check "a hook executable for other only: the run exits 0" "$STATUS" "0"
+check "a hook executable for other only: the verdict is updated" \
+    "$(status_of "$OUT" hook)" "updated"
+check "a hook executable for other only: the owner's bit is added" \
+    "$(stat -c %a "$HOOK")" "741"
+run setup --repo "$TMP/r1"
+check "a repaired owner's bit is a no-op" \
+    "$(status_of "$OUT" hook)" "unchanged"
+
 # drift: the report directory is missing.
 run setup --repo "$TMP/r1"
 rm -rf "$TMP/r1/.skill-log"

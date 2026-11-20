@@ -268,7 +268,7 @@ func hookVerdict(common string, options setupOptions) verdict {
 		if text == wanted {
 			// The bytes are right, but git runs a hook only when it is
 			// executable, and says nothing when it is not.
-			if !format.IsExecutable(path) {
+			if !format.IsOwnerExecutable(path) {
 				if options.check {
 					return verdict{
 						artifactHook,
@@ -285,7 +285,7 @@ func hookVerdict(common string, options setupOptions) verdict {
 						"would make " + path + " executable",
 					}
 				}
-				if err := format.SetExecutable(path); err != nil {
+				if err := format.SetOwnerExecutable(path); err != nil {
 					return verdict{artifactHook, statusDrift, err.Error()}
 				}
 				return verdict{
