@@ -263,4 +263,38 @@ else
     fail "a short SHA pin is reported"
 fi
 
+# ---------------------------------------------------- reproducibility
+
+# The archive is one artifact per commit. A build that runs inside a
+# checkout carries Go's VCS stamp — revision, commit time, dirty flag —
+# and one that runs in a copy without .git carries none, so the two
+# differed. The build now keeps the checkout out of the binary.
+if command -v go >/dev/null 2>&1 && command -v sha256sum >/dev/null 2>&1; then
+    REPRO_A="$SCRATCH/repro-with-git"
+    REPRO_B="$SCRATCH/repro-no-git"
+    rm -rf "$REPRO_A" "$REPRO_B"
+    mkdir -p "$REPRO_A" "$REPRO_B"
+    tar -C "$ROOT" --exclude=dist --exclude=.package-stage -cf - . |
+        tar -C "$REPRO_A" -xf -
+    tar -C "$ROOT" --exclude=dist --exclude=.git --exclude=.package-stage -cf - . |
+        tar -C "$REPRO_B" -xf -
+
+    if (cd "$REPRO_A" && SKILL_LOG_VERSION=v9.9.9 ./scripts/package.sh >/dev/null 2>&1) &&
+        (cd "$REPRO_B" && SKILL_LOG_VERSION=v9.9.9 ./scripts/package.sh >/dev/null 2>&1); then
+        pass "a build with and without the checkout's VCS data both run"
+        check "two builds of one source tree produce the same binary" \
+            "$(sha256sum <"$REPRO_A/dist/skill-log" | cut -d' ' -f1)" \
+            "$(sha256sum <"$REPRO_B/dist/skill-log" | cut -d' ' -f1)"
+        check "two builds of one source tree produce the same archive" \
+            "$(cut -d' ' -f1 <"$REPRO_A/dist/skill-log-v9.9.9-x86_64-unknown-linux-gnu.tar.gz.sha256")" \
+            "$(cut -d' ' -f1 <"$REPRO_B/dist/skill-log-v9.9.9-x86_64-unknown-linux-gnu.tar.gz.sha256")"
+        check "the reproducible build still carries the version" \
+            "$("$REPRO_A/dist/skill-log" --version)" "v9.9.9"
+    else
+        fail "a reproducible build run failed"
+    fi
+else
+    printf 'skip go or sha256sum is missing: the reproducibility case did not run\n'
+fi
+
 tally
