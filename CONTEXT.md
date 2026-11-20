@@ -14,12 +14,32 @@ needs a name here, and a new rule needs a line in `SPEC.md`.
 
 ## Glossary
 
-- **Invocation row** — one skill run: when, which skill, harness, session,
-  parent, model, repo, worktree, project, machine, and its resolution.
+- **Invocation row** — one skill run: when, which skill, how the skill was in
+  play, harness, session, parent, model, repo, worktree, project, machine, and
+  its resolution.
 - **Problem row** — one piece of friction attached to an invocation, carrying
   the agent's own sentence about what went wrong. Problems are separate rows,
   so invocation count stays the denominator of the problems-per-invocation
   rate.
+- **Evidence grade** — what proves a skill was in play: `call` (a `skill` tool
+  call), `read` (a read of the skill's files), `body` (its text was in the
+  run's context), `listed` (only its name and description were), `attested`
+  (nothing but the agent's sentence). `call` and `read` are derived; the rest
+  are attested. The ladder only rises.
+- **Harvest** — deriving invocations and error rows from the harness's own
+  store, read-only. The only writer of derived rows.
+- **Error row** — one failed tool call, derived from the harness store: its
+  tool, its class, the harness's message, the signature it normalizes to, and
+  the invocation it is attributed to, if any.
+- **Signature** — one failure shape, identified by tool and normalized message,
+  allocated once per store. The unit a single change closes; `s<id>` in a
+  marker.
+- **Attribution** — how an error row is tied to an invocation: `prior_in_session`
+  (earlier in the same session), `ancestor_session` (earlier on an ancestor
+  session the harness records), or `none`. Unattributed errors are a worklist,
+  not noise.
+- **Documentation worklist** — the error rows with attribution `none`: the
+  failures no skill caused, which a doc or machine-rule change fixes.
 - **Harness** — the agent product that ran the skill (`opencode` today, later
   others). Its session id is recorded verbatim and is opaque to the tool.
 - **Adapter** — opt-in code that fills context fields from a known harness's

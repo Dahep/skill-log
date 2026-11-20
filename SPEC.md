@@ -29,41 +29,51 @@ each changes, is defined in `AGENTS.md` §Specification.
 
 ## 1. Purpose
 
-Record every agent-skill invocation and the friction it produced, keep the
-record local, and close friction by naming the change that fixed it.
+Record every agent-skill invocation, the friction it produced and the tool
+calls that failed, keep the record local, and close friction by naming the
+change that fixed it.
 
 The product is one loop, and every command is a step in it:
 
 1. **Adopt** — a repo's skills are swept so each one ends its run with a row.
    `skills audit` reports, `skills adopt` writes. `setup` installs the two
    bundled skills where the agent reads skills.
-2. **Record** — every skill invocation ends with one `add`: when, which skill,
-   harness, session, parent, model, repo, worktree, project, machine, and zero
-   or more problems. A clean run still writes; the invocation count is the
-   denominator.
-3. **Review** — the bundled `skill-friction-review` skill reads the friction,
-   groups it by skill and theme, separates instruction defects from
-   environment noise, and decides what to fix. This is the only step that
-   needs judgment, and nothing automates it.
-4. **Name** — the change that addresses those problems runs
-   `report --run <id>` (or `--id`, or `--skill`). That writes
-   `.skill-log/reports/<slug>.md` listing the markers it addresses — machine
-   names and local ids only — and the file is committed with the change. In a
-   repo without a report directory, the same markers ride a commit trailer.
-5. **Close** — `setup` installed a post-merge hook. When the fix lands, the
-   hook runs `resolve-merged`, which stamps each named row with the commit
-   that carried the report and the time.
+2. **Record** — every skill run ends with one `add`: when, which skill,
+   harness, session, parent, model, repo, worktree, project, machine, how the
+   skill was in play, and zero or more problems. A clean run still writes; the
+   invocation count is the denominator.
+3. **Observe** — `harvest` reads the harness's own store and derives what no
+   agent has to remember: every skill call, every read of a skill file, and
+   every failed tool call, clustered into signatures and attributed to the
+   invocation it followed. An error needs no invocation to be recorded; the
+   ones that have none are the documentation worklist.
+4. **Review** — the bundled `skill-friction-review` skill reads the
+   invocations, the problems and the error signatures, groups them by skill and
+   theme, separates instruction defects from environment noise, and decides
+   what to fix. This is the only step that needs judgment, and nothing
+   automates it.
+5. **Name** — the change that addresses those problems runs
+   `report --run <id>` (or `--id`, `--skill`, `--error`, `--signature`). That
+   writes `.skill-log/reports/<slug>.md` listing the markers it addresses —
+   machine names and local ids only — and the file is committed with the
+   change. In a repo without a report directory, the same markers ride a commit
+   trailer.
+6. **Close** — `setup` installed a post-merge hook. When the fix lands, the
+   hook runs `resolve-merged`, which stamps each named row — or every row a
+   named signature covers — with the commit that carried the report and the
+   time.
 
 ## 2. Scope and invariants
 
 - One CLI, one store per machine, no daemon, no network.
 - The CLI is the public surface. The store schema and the report format are
   contracts, not APIs.
-- A marker is `machine#id`. The machine is required because ids are per store.
+- A marker is `machine#row`: a bare id is an invocation, `e<id>` an error row,
+  `s<id>` a signature. The machine is required because ids are per store.
 - A marker naming another machine is **foreign**: reported, never stamped.
   There is no owner lookup and no cross-machine resolution in 1.0.
-- Reports carry machine names and local ids only — never problem text or
-  project details.
+- Reports carry machine names and local ids only — never problem text, error
+  text or project details.
 - Newest marker wins. A row whose timestamp is after the named commit is
   skipped. Resolution is idempotent.
 - Reads never create the state directory, an empty database, or a missing
@@ -71,6 +81,17 @@ The product is one loop, and every command is a step in it:
 - The store is created, never inherited or converted. A damaged, foreign or
   older file is refused by name.
 - Nothing outside the local store writes its rows.
+- The harness store is an input and is read-only. The tool never writes it; a
+  missing, unreadable or changed harness store is a blank or a named skip,
+  never a failure.
+- Error rows are derived. Only `harvest` writes them; `add` never does.
+- Attribution is local and evidence-based: the same session, or an ancestor
+  the harness records, at or before the error. Never a time window alone, and
+  never across repositories.
+- An evidence grade only rises. `harvest` may upgrade an attested row; nothing
+  downgrades one.
+- A signature is allocated once per store and never re-pointed, so a marker
+  naming it keeps its meaning.
 - The fence is the only provenance for generated skill text. Text outside a
   fence is user-owned and is never read, matched, rewritten or deleted.
 - The post-merge hook never changes a pull's exit status.
@@ -84,9 +105,13 @@ command, a column or a report field.
 
 ### Schema
 
-Two tables, `PRAGMA user_version = 1`, `PRAGMA journal_mode = WAL`,
+Four tables, `PRAGMA user_version = 1`, `PRAGMA journal_mode = WAL`,
 `PRAGMA foreign_keys = ON`, a busy timeout on connect, and a bounded
 whole-attempt retry budget for writes.
+
+1.0 is unreleased, so the error and signature tables belong to the first
+schema rather than to a migration. A store stamped with any other version is
+still refused by name.
 
 `invocations`:
 
@@ -95,6 +120,8 @@ whole-attempt retry budget for writes.
 | `id` | local row id, allocated by the store | never |
 | `ts` | ISO 8601 with the writer's offset | never |
 | `skill` | the invoked skill's name | never |
+| `evidence` | how the skill was in play — see `Evidence grades` below | never |
+| `evidence_ref` | the harness call id this row claims: proven for `call` and `read`, a claim otherwise | no claimed call |
 | `harness` | the agent product that ran the skill (`opencode` today, later others) | unknown |
 | `session` | that harness's session id, opaque to the tool | unknown |
 | `parent` | the spawning run's id, in the same namespace as `session` | not dispatched |
@@ -125,6 +152,107 @@ mis-stamp across offsets.
 They existed to make multi-machine merging idempotent, and merging left scope
 (see [ADR-0002](docs/adr/0002-explicit-harness-context.md)).
 
+### Evidence grades
+
+A row exists because a skill was in play, and the grade says what proves it.
+The ladder is ordered, and no row claims a grade above its proof.
+
+| Grade | What proves it | Written by |
+|---|---|---|
+| `call` | a `skill` tool call, with its call id | `harvest` |
+| `read` | a read, grep, glob or shell call naming a skill directory, with its call id | `harvest` |
+| `body` | the skill's body text is in the run's context | `add` only |
+| `listed` | only the skill's name and description are in context | `add` only |
+| `attested` | nothing beyond the agent's sentence | `add` only |
+
+`call` and `read` are derived because the harness's store proves them.
+`body` and `listed` are attested because proving them means classifying the
+prompt, which is heuristic and brittle in the way a denominator cannot afford.
+The lowest grade is a first-class row: a skill followed from its description
+produces friction like any other, and dropping it would bias the rate.
+
+A reader never writes `body` or `listed`. `harvest` upgrades an attested row to
+`call` when it finds the call that row described (§5.2), and nothing ever
+downgrades a grade. A ref recorded by `add` is a claim: it never raises the
+grade itself, and only the reader that finds the call does.
+
+### Error rows
+
+`errors` records one failed tool call, derived from the harness's own store:
+
+| Column | Meaning | Empty when |
+|---|---|---|
+| `id` | local row id, allocated by the store | never |
+| `ts` | when the failing call started, ISO 8601 with the writer's offset | never |
+| `harness` | the product whose store carried it | never |
+| `session` | that harness's session id, in the same namespace as `invocations.session` | the store carried none |
+| `call_id` | the harness's call or part id, opaque to the tool | the harness has no id |
+| `tool` | the tool that failed | the store did not name it |
+| `error_class` | the harness's own class: `tool.execution`, `aborted`, `unknown`, `provider_error` | unknown |
+| `error_text` | the harness's message, sanitized to one line like a problem | never |
+| `signature_id` | the signature row it normalizes to | never |
+| `invocation_id` | the invocation it is attributed to | no attribution |
+| `attribution` | `prior_in_session`, `ancestor_session` or `none` | never |
+| `source` | the reader that produced it: `opencode`, `t3`, `log` | never |
+| `machine` | the hostname | never |
+| `fix`, `resolved_at` | the resolution contract | unresolved |
+
+All text columns are `NOT NULL DEFAULT ''`. A row with a `call_id` is
+identified by `(machine, harness, session, call_id)`; without one, by
+`(harness, session, tool, ts)`. Re-harvesting an identical window writes
+nothing.
+
+An error is kept whether or not it can be attributed. Unattributed errors are
+the majority in practice and they are the point: they are what a documentation
+or machine-rule change fixes.
+
+### Attribution
+
+Attribution runs per error row, first hit wins:
+
+1. `prior_in_session` — the latest invocation whose `session` equals the
+   error's and whose `ts` is at or before the error's.
+2. `ancestor_session` — the latest invocation on the nearest ancestor session
+   the harness records for the error's session, at or before the error. The
+   chain is walked outward, nearest first, and only when rule 1 finds nothing.
+3. `none` — no candidate.
+
+A reader that cannot see the harness's session tree attributes
+`prior_in_session` or `none` and nothing else. Attribution never crosses
+repositories and never rests on a bare time window: an error in one session is
+not attributed to a skill run in another that merely happened nearby.
+
+Attribution is derived, so it is re-derivable: `harvest` recomputes it for
+unresolved errors in its window, and `add` re-attributes unresolved errors in
+the session it wrote whose `ts` is at or after the new row's. The same inputs
+produce the same result, so both stay idempotent.
+
+### Signatures
+
+A signature is one failure shape: the unit a single change closes.
+
+| Column | Meaning |
+|---|---|
+| `id` | local row id, allocated by the store, never reused |
+| `tool` | the tool the first matching error came from |
+| `signature` | the normalized error text |
+| `first_seen`, `last_seen` | the range of the errors that carry it |
+
+The unique key is `(tool, signature)`: two tools failing with the same generic
+message are two shapes, and merging them would hide which tool to fix.
+
+Normalization, in this order: replace absolute paths (`/…`, `~/…`) with
+`<path>`; replace hexadecimal runs of seven or more characters with `<hex>`;
+replace digit runs with `<n>`; collapse whitespace; strip; truncate to 110
+characters. The identity is the truncated form, and the mapping is
+many-to-one, computed once per error row.
+
+The normalizer is code, not data. A change to it can route a new failure into a
+new signature; that is a split, never a re-point. An existing row keeps its
+text, its errors and its resolution, and a marker naming it keeps its meaning.
+Signatures are per store: nothing claims that two machines' `s12` are the same
+failure, which is why a signature marker carries the machine.
+
 ### Creation, refusal and reads
 
 - The first write creates the state directory and the file.
@@ -143,8 +271,8 @@ older or newer store means.
 
 | Verb | Policy | Absent store means |
 |---|---|---|
-| `add`, `setup` | create | create it |
-| `show`, `stats` | read | the empty message, exit 0 |
+| `add`, `harvest`, `setup` | create | create it |
+| `show`, `errors`, `stats` | read | the empty message, exit 0 |
 | `report` | strict | refusal, exit 1, no file written |
 | `resolve` | write | refusal, exit 1 |
 | `resolve-merged` | optional | nothing to do, exit 0 |
@@ -192,20 +320,26 @@ Every context field resolves in this order: **explicit flag, then its
   caller-supplied.
 - `model` resolves after `session`, and `project` after `worktree`, because
   each depends on the other.
+- Evidence is not a context field: `add` takes it explicitly (§5.1), `harvest`
+  derives it, and no adapter may set it. The `opencode` and `t3` adapters name
+  the same stores `harvest` reads, so an adapter fills one row's context and a
+  harvest proves a session's evidence from the same file.
 
 ## 5. Commands
 
 | Verb | Store policy | Section |
 |---|---|---|
 | `add` | create | [§5.1](#51-add) |
-| `show` | read | [§5.2](#52-show) |
-| `stats` | read | [§5.3](#53-stats) |
-| `report` | strict | [§5.4](#54-report) |
-| `resolve` | write | [§5.5](#55-resolve) |
-| `resolve-merged` | optional | [§5.6](#56-resolve-merged) |
-| `setup` | create / verify with `--check` | [§5.7](#57-setup) |
-| `skills audit`, `skills adopt`, `skills template` | none | [§5.8](#58-skills) |
-| `--version` | none | [§5.9](#59---version) |
+| `harvest` | create | [§5.2](#52-harvest) |
+| `show` | read | [§5.3](#53-show) |
+| `errors` | read | [§5.4](#54-errors) |
+| `stats` | read | [§5.5](#55-stats) |
+| `report` | strict | [§5.6](#56-report) |
+| `resolve` | write | [§5.7](#57-resolve) |
+| `resolve-merged` | optional | [§5.8](#58-resolve-merged) |
+| `setup` | create / verify with `--check` | [§5.9](#59-setup) |
+| `skills audit`, `skills adopt`, `skills template` | none | [§5.10](#510-skills) |
+| `--version` | none | [§5.11](#511---version) |
 
 ### Common rules
 
@@ -228,17 +362,17 @@ Every context field resolves in this order: **explicit flag, then its
 
   | Flag | Verbs |
   |---|---|
-  | `--db` | every verb that touches the store: `add`, `show`, `stats`, `report`, `resolve`, `resolve-merged`, `setup` |
+  | `--db` | every verb that touches the store: `add`, `harvest`, `show`, `errors`, `stats`, `report`, `resolve`, `resolve-merged`, `setup` |
   | `--json` | every verb except `--version` |
-  | `--dry-run` | `add`, `report`, `resolve`, `resolve-merged`, `setup`, `skills adopt`, `skills template seed`, `skills template reset`, `skills audit` (no-op) |
-  | `--adapter` | `add` |
-  | `--repo`, `--skills-dir` | `setup` |
+  | `--dry-run` | `add`, `harvest`, `report`, `resolve`, `resolve-merged`, `setup`, `skills adopt`, `skills template seed`, `skills template reset`, `skills audit` (no-op) |
+  | `--adapter` | `add`, `harvest` |
+  | `--repo`, `--skills-dir` | `setup`; `--skills-dir` also on `add` |
 
 - Success output carries the handle the next verb needs: a marker from `add`,
   marker plus commit from `resolve`, a path from `report`.
 - Problems are sanitized on read so one problem stays one line. Blank problems
-  are ignored.
-- See [§5.10](#510-json-shapes) for the stable JSON shapes.
+  are ignored. Error text is sanitized the same way on write.
+- See [§5.12](#512-json-shapes) for the stable JSON shapes.
 
 ### 5.1 `add`
 
@@ -247,6 +381,17 @@ Record one invocation and zero or more problems. Creates the store under the
 
 - `--skill` is required. `--problem` is repeatable; `--problem -` reads the
   text from stdin and exits 2 instead of waiting when stdin is a terminal.
+- `--evidence` takes `body`, `listed` or `attested`, with `attested` the
+  default. `call` and `read` are refused with exit 2: only `harvest` can prove
+  them, and a self-graded row would claim what nothing checked.
+- `--ref <call-id>` names the harness call this row is about. When a harvested
+  row already carries that ref, the problems are appended to it and no
+  invocation row is written; otherwise the row is written as `attested` with the
+  ref recorded as a claim, and `harvest` raises it to `call` once it finds the
+  call. A claim never raises a grade by itself.
+- When `--skills-dir` or `SKILL_LOG_SKILLS_DIR` names a directory, an
+  unknown skill name is refused with exit 2 — a row naming a skill that does
+  not exist skews every rate it appears in.
 - Context comes from §4. The timestamp is local ISO 8601 with the writer's
   offset.
 - The invocation row and all problem rows commit in one transaction. A partial
@@ -256,10 +401,43 @@ Record one invocation and zero or more problems. Creates the store under the
 - **`add` is deliberately not idempotent.** The log records occurrences; a
   retry is indistinguishable from a genuine repeat, and deduping would hide
   the second occurrence of one error. `add --help`, the bundled skills and the
-  usage-log template all say so.
+  usage-log template all say so. `--ref` narrows this: the invocation is not
+  duplicated, only its problems are.
 - A clean run still writes a row.
+- Writing a row re-attributes unresolved errors in that session (§3).
 
-### 5.2 `show`
+### 5.2 `harvest`
+
+Derive invocations and errors from the harness's own store. Policy `create`.
+
+- Readers are the read side of §4's adapters, one per harness: `opencode`
+  (`session_v2`, `session_message`), `t3` (`statev2.sqlite` turn items), and
+  `log` for failures that never became a tool call. A reader is enabled by
+  `SKILL_LOG_ADAPTERS`, and `--adapter <name>` enables one for the run.
+- An invocation is derived in two cases: a `skill` tool call becomes a row
+  with evidence `call`, and a read, grep, glob or shell call naming a skill
+  directory becomes a row with evidence `read`. A `read` row is written only
+  when the session has no `call` row for that skill at or before it; the call
+  is the better evidence and one run is one row.
+- When a derived `call` row matches an attested row — same session and skill,
+  empty `evidence_ref` — the latest unresolved matching row is upgraded in
+  place, evidence `call`, ref set, and no second row is written.
+- Every failed tool call becomes an error row with a signature and an
+  attribution, whether or not any skill ran (§3).
+- The harness store is opened read-only and never written. A missing store is
+  a skip, exit 0. A store that cannot be read — schema drift, lock,
+  permissions — is a named skip, exit 0; `--strict` turns any skip into exit
+  1.
+- Identified per row (§3), so a second run over the same window writes
+  nothing. `--since <duration>` bounds the window, `--all` scans everything,
+  and the default is the last 24 hours.
+- `--dry-run` writes nothing and prints the counts. `--json` emits one object
+  per reader: `reader`, `invocations_added`, `upgraded`, `errors_added`,
+  `errors_attributed`, `signatures_created`, `skipped`.
+- Recomputes attribution for unresolved errors in the window before writing, so
+  a later `add` cannot leave a freshly harvested row unattributed.
+
+### 5.3 `show`
 
 Recent invocations with their problems, filterable, as a table for humans and
 stable JSON lines for pipes. Policy `read`.
@@ -273,10 +451,33 @@ stable JSON lines for pipes. Policy `read`.
   valid and yields no rows, exit 0 — never a usage error.
 - The table indents sanitized problems under their invocation and shortens the
   worktree under the home directory.
+- Errors are `errors`'s job: `show` lists invocations and never mixes them in.
 - An absent or empty store prints the empty message and exits 0; the JSON
   stream stays valid and empty.
 
-### 5.3 `stats`
+### 5.4 `errors`
+
+The error corpus and the documentation worklist. Policy `read`.
+
+- Row mode: one line per error, newest first, with its tool, signature,
+  attribution and the skill it is attributed to. Filters: `--signature`,
+  `--tool`, `--attribution`, `--skill`, `--session`, `--run`, `--unresolved`,
+  `--last`.
+- `--group signature|tool|attribution|skill|session` switches to one row per
+  cluster carrying `errors`, `unresolved`, `first_seen`, `last_seen`, and —
+  for `signature` grouping — the `signature_id` to report against.
+- `--attribution none` is the worklist that has no skill behind it: the errors
+  a documentation or machine-rule change fixes. It is a first-class query, not
+  a leftover.
+- `--signature` accepts a signature id, an `s<id>` marker, or the normalized
+  text itself. `--run` matches a row's `session`, which is the same namespace
+  `show --run` uses.
+- A well-formed filter that matches nothing yields no rows, exit 0. An unknown
+  `--group` or `--attribution` exits 2 and lists the choices.
+- `--json` emits the shapes in §5.12.
+- An absent or empty store prints the empty message and exits 0.
+
+### 5.5 `stats`
 
 The denominator and the friction rate. Policy `read`.
 
@@ -286,42 +487,53 @@ The denominator and the friction rate. Policy `read`.
   `machine` and `project`. An unknown key exits 2 and lists them.
   `--by-model` remains as an alias for `--by model`.
 - The grouped shape is its own; it is not the invocation row.
+- Errors are never blended into these counts: the failure corpus and its
+  attribution split belong to `errors --group`, and a derived failure count
+  inside the invocation denominator would make both numbers mean nothing.
 - An absent or empty store prints the empty message and exits 0.
 
-### 5.4 `report`
+### 5.6 `report`
 
 Write the committed report listing the rows a change resolves. Policy
 `strict`.
 
-- Selection by `--id`, `--run` or `--skill`. Without a selector, exits 2 with
+- Selection by `--id`, `--run`, `--skill`, `--error` or `--signature`. `--id`,
+  `--error` and `--signature` are repeatable. Without a selector, exits 2 with
   an example — except with `--check`, which validates the branch's existing
   report and needs no selector.
+- `--error` selects one error row by id or `e<id>` marker. `--signature`
+  selects a set: every unresolved error row carrying that signature whose
+  timestamp is not after the fix commit. One marker, one change, every row it
+  covers — which is how a documentation fix closes a cluster without 74 lines
+  in the report.
 - The file is `.skill-log/reports/<slug>.md`, named for the branch,
   overridable with `--slug`, written atomically.
-- Ids are validated against the store; unknown ids are named. Already-resolved
-  rows are skipped and reported.
+- Ids are validated against the store; unknown ids and unknown row prefixes
+  are named. Already-resolved rows are skipped and reported.
 - New markers are unioned with the file's current contents. Existing lines are
   preserved byte-for-byte, including a marker naming another machine: the tool
   never adds a foreign marker, and never removes one a previous report carried.
-  Problem text and project details never appear.
+  Problem text, error text and project details never appear.
 - `--check` validates an existing report without writing. `--dry-run` writes
   nothing. `--json` carries the path and the markers.
 - Re-running over an unchanged report prints that it is already reported.
 - A checkout without the report directory falls back to trailer mode: the
   markers ride the commit body instead.
 
-### 5.5 `resolve`
+### 5.7 `resolve`
 
 The manual escape hatch for history that was rewritten. Policy `write`.
 
 - `--id` and `--fix` stamp one local row with a commit and the current time.
+  `--id` accepts any row form: a bare id, an `e<id>` error row, or an `s<id>`
+  signature, which stamps every unresolved row it covers.
 - It stamps once by design: no scan, no time guard, no newest-wins. Those
   belong to `resolve-merged`.
 - Prints the marker plus the commit. Supports `--dry-run` and `--json`.
 - An unknown id is named. A missing store is a named failure.
 - A second identical call changes nothing.
 
-### 5.6 `resolve-merged`
+### 5.8 `resolve-merged`
 
 The hook's entry point. Policy `optional`: an absent store is nothing to do,
 exit 0.
@@ -336,13 +548,16 @@ exit 0.
 - The scan yields located markers: a marker plus the commit and time it came
   from.
 - One pure decision — no git, clock or store — decides each located marker:
+  - a signature marker expands to the unresolved error rows it covers, and each
+    of those rows is then decided on its own, so the rules below apply per row;
   - the newest marker per row wins;
   - a row already stamped with the same commit is unchanged;
   - a row stamped with a different commit is **restamped**, so an amended fix
     supersedes an earlier one;
   - a row logged after the named commit is skipped, reason
     `logged_after_commit`;
-  - an unknown id is skipped, reason `unknown_id`;
+  - an unknown id — including an unknown row prefix — is skipped, reason
+    `unknown_id`;
   - a foreign marker is skipped, reason `foreign`, and never stamped.
 - Applying the decision is the only write. Resolution is idempotent: a second
   scan stamps nothing.
@@ -352,7 +567,7 @@ exit 0.
 - `--quiet`, `--dry-run` and `--json` with one stable shape that carries every
   skip reason.
 
-### 5.7 `setup`
+### 5.9 `setup`
 
 Make a machine and a repo ready. Idempotent. Policy `create`, except `--check`,
 which is `verify`.
@@ -379,7 +594,7 @@ skill-log`; `mise which skill-log` when `mise` is on `PATH`;
 `$HOME/.local/share/mise/shims/skill-log` when executable; otherwise exit 0
 silently. The resolution call is wrapped so any failure exits 0.
 
-### 5.8 `skills`
+### 5.10 `skills`
 
 #### `skills audit`
 
@@ -420,27 +635,36 @@ Subcommands, not mode flags:
   shipped defaults, which the next `adopt` re-renders. It refuses while copies
   exist unless `--force` is given.
 
-### 5.9 `--version`
+### 5.11 `--version`
 
 Prints the release version baked in at build time.
 
-### 5.10 JSON shapes
+### 5.12 JSON shapes
 
 One flat object per row, one stable object per outcome. Every key below is
 part of the contract; no verb adds or drops keys between runs.
 
 **The invocation object** is emitted by `add` and `show`, and by either with
-`--dry-run`. Its keys are `id`, `ts`, `skill`, `harness`, `session`, `parent`,
-`model`, `repo`, `worktree`, `project`, `t3_thread`, `machine`, `fix`,
-`resolved_at`, `marker`, `problems` (an array of strings).
+`--dry-run`. Its keys are `id`, `ts`, `skill`, `evidence`, `evidence_ref`,
+`harness`, `session`, `parent`, `model`, `repo`, `worktree`, `project`,
+`t3_thread`, `machine`, `fix`, `resolved_at`, `marker`, `problems` (an array of
+strings).
+
+**The error object** is emitted by `errors` in row mode. Its keys are `id`,
+`ts`, `harness`, `session`, `call_id`, `tool`, `error_class`, `error_text`,
+`signature`, `signature_id`, `invocation_id`, `attribution`, `skill`, `source`,
+`machine`, `fix`, `resolved_at`, `marker`. `skill` repeats the attributed
+invocation's name and is empty when attribution is `none`.
 
 | Verb | Shape |
 |---|---|
 | `add` | one invocation object |
+| `harvest` | one object per reader: `reader`, `invocations_added`, `upgraded`, `errors_added`, `errors_attributed`, `signatures_created`, `skipped` |
 | `show` | one invocation object per row |
+| `errors` | one error object per row; with `--group`, one object per cluster: `group`, `errors`, `unresolved`, `first_seen`, `last_seen`, plus `signature_id` and `marker` when grouping by `signature` |
 | `stats` | `invocations`, `with_problems`, `problems`, `resolved`, `problems_per_invocation`, plus the grouping column named by `--by` |
 | `report` | `path`, `markers` |
-| `resolve` | `id`, `skill`, `fix`, `resolved_at` |
+| `resolve` | `id`, `stamped` (markers), `fix`, `resolved_at` |
 | `resolve-merged` | `resolved` (markers), `unchanged` (markers), `skipped` (objects of `row` and `reason`), `ignored` (hidden and malformed marker text), `dry_run` |
 | `setup` | one object per artifact examined: `artifact` (`store`, `hook`, `report_dir`, `skills`), `status` (`created`, `updated`, `unchanged`, `drift`, `skipped`), `detail` |
 | `skills audit` | one object per skill: `skill`, `path`, `state` |
@@ -453,10 +677,16 @@ part of the contract; no verb adds or drops keys between runs.
 
 ## 6. Markers and reports
 
-- A marker is a value: `machine#id`, parsed and formatted in one place, never
-  assembled by hand.
-- A bare id, a placeholder, an empty machine and id 0 are refused, never
-  guessed at.
+- A marker is a value: `machine#row`, parsed and formatted in one place, never
+  assembled by hand. The row is a bare id for an invocation, `e<id>` for an
+  error row, or `s<id>` for a signature.
+- A bare id, a placeholder, an empty machine, id 0 and an unknown row prefix
+  are refused, never guessed at.
+- A signature marker names a set, not a row: it expands at resolution time to
+  the unresolved error rows the store holds for that signature, and each of
+  those is then decided on its own. The expansion is a query, so the marker
+  written today still covers a row that arrives before the commit — and the
+  time guard still keeps it from covering one that arrives after.
 - In a commit body markers are comma-separated in the `Skill-log-Fix` trailer.
   In a report file they are one per line.
 - Report files live under the repo's report directory, are named for the
@@ -548,18 +778,25 @@ verifies both.
 
 The review session's contract:
 
-- **Input**: `stats` and `show --unresolved --json` over a bounded window —
-  unresolved rows by default, or the last N invocations.
+- **Input**: `harvest --since` first, so the window is complete, then `stats`,
+  `show --unresolved --json` and `errors --group signature --json` over the same
+  bounded window — unresolved rows by default, or the last N invocations.
 - **Clustering, not listing**: the same failure repeated across runs is one
-  theme with several markers, and the theme is what gets fixed.
+  theme with several markers, and the theme is what gets fixed. An error
+  signature is already a cluster; it does not need to be found again.
 - **Classification**: an instruction that contradicts reality, a missing step,
-  a missing tool, or environment noise. Only the first three are actionable;
-  noise is recorded as such rather than "fixed" with a workaround.
-- **Decisions**: fix the skill text now, file an issue for a larger change, or
-  leave it. It may edit skills and open issues. It never marks rows resolved —
-  only the merge hook does that, and only after the change lands.
+  a missing tool, a harness rule that blocks the workflow (a permission rule, a
+  subagent depth, a model gate), or environment noise. The first four are
+  actionable; noise is recorded as such rather than "fixed" with a workaround.
+  A signature whose attribution is `none` is usually the second or third kind,
+  and its fix often lives in a machine rule or a doc rather than in a skill.
+- **Decisions**: fix the skill text now, fix a doc or machine rule, file an
+  issue for a larger change, or leave it. It may edit skills and open issues.
+  It never marks rows resolved — only the merge hook does that, and only after
+  the change lands.
 - **Output**: a short report per theme — evidence markers, what it decided,
-  what changed. When it lands a change, it writes the `report` file for it.
+  what changed. When it lands a change, it writes the `report` file for it,
+  naming a signature where one change covers a whole cluster.
 - **Itself**: it writes the same usage-log row as any other skill.
 
 The review skill is deliberately not a linter. The log records friction the
@@ -646,6 +883,18 @@ session decides how the log gets read. Neither changes the other's contract.
   malformed marker reports; `report --check` without a selector; uncommitted
   report edits not resolving rows; a non-git checkout; a missing or older CLI
   in the hook; a time guard across differing writer offsets.
+- **The error contract, against a fixture harness store**, never a live one:
+  harvest twice over one window and the second run writes nothing; the fixture
+  file is byte-identical after a harvest, and a read-only file is accepted; a
+  drifted fixture is a named skip, exit 0, and exit 1 under `--strict`; the
+  attribution matrix (`prior_in_session`, `ancestor_session`, `none`, an error
+  before any skill, an error in a session with no skill, an error two
+  ancestors up); an attested row upgraded in place by the matching call, once;
+  a normalized text mapping two messages to one signature and two tools with
+  the same text to two; `add --evidence call` refused with exit 2; an unknown
+  row prefix reported as `unknown_id`; a signature marker resolving its rows
+  and skipping the one logged after the commit; `errors --attribution none`
+  returning the unattributed corpus rather than an empty set.
 - **Packaging test**: install the release archive into a clean container with
   no toolchain and no system SQLite, run `--version` and `setup --dry-run`,
   and assert the bundled SQLite is the one loaded.
@@ -665,8 +914,21 @@ Out of scope for 1.0, recorded as intent rather than behavior:
   needs it and an external consolidator does too. The user's own setup handles
   consolidation; reintroducing it here is a new design, not a flag.
 - **A JSON parser / import path**, for reading another store's export.
+- **Readers beyond the three 1.0 ships** (`opencode`, `t3`, `log`): a new
+  harness is a new reader, which is the same shape as a new adapter.
+- **Mining reasoning traces** for friction the agent never wrote down. The
+  store holds the failure, not the intent, and a transcript-sized text scan per
+  review is a different product.
 
 Out of scope:
+
+- Cross-machine signature identity: two stores' `s12` are unrelated, and
+  merging error corpora is the same design as `sync`.
+- Writing anything into the harness store — annotating its rows, retrying its
+  calls, or patching its schema. It is read-only input, and an upgrade would
+  clobber a write.
+- Editing documentation or machine rules automatically. A signature names the
+  cluster; the review session decides the change.
 
 - A UI, dashboard, web service or hosted sync.
 - Multi-user stores, permissions or tenancy; one user per machine.
