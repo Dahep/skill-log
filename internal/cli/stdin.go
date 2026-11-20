@@ -7,15 +7,6 @@ import (
 
 const stdinSize = 65536
 
-// stdinIsTTY reports whether stdin is a terminal; unknown state counts as a terminal.
-func stdinIsTTY() bool {
-	info, err := os.Stdin.Stat()
-	if err != nil {
-		return true
-	}
-	return info.Mode()&os.ModeCharDevice != 0
-}
-
 // readStdinLine reads at most 64 KiB through the first newline from stdin.
 func readStdinLine() string {
 	buffer := make([]byte, stdinSize)

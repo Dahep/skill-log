@@ -1113,6 +1113,36 @@ check "case 33: the row went to the sandbox's store, not the real one" \
         "SELECT COUNT(*) FROM invocations WHERE skill = 'must-not-reach-the-real-store'" \
         2>/dev/null || printf 0)" "1"
 
+# --- case 34: stdin redirection is read, not refused ----------------------
+#
+# /dev/null is a character device, not a terminal: a caller that redirects
+# it records a clean run instead of a usage error.
+say "contract: case 34 — stdin redirection is read, not refused"
+C34="$DBT/c34.db"
+OUT="$("$BIN" add --skill devnull --problem - </dev/null --db "$C34" --json 2>"$S/stderr")"
+STATUS=$?
+check "case 34: /dev/null is not a terminal" "$STATUS" "0"
+check "case 34: the row lands" "$(count_rows "$C34")" "1"
+check "case 34: the row carries no problems" \
+    "$(sqlite3 "$C34" 'SELECT COUNT(*) FROM problems')" "0"
+
+OUT="$(printf 'from a pipe\n' | "$BIN" add --skill piped --problem - --db "$C34" --json)"
+check "case 34: a pipe is read" "$(json_problem "$OUT")" "from a pipe"
+
+printf 'from a file\n' >"$S/c34.txt"
+OUT="$("$BIN" add --skill filed --problem - <"$S/c34.txt" --db "$C34" --json)"
+check "case 34: a regular file is read" "$(json_problem "$OUT")" "from a file"
+
+if command -v script >/dev/null 2>&1; then
+    script -qec "$BIN add --skill tty --problem - --db $C34 2>$S/tty.err" /dev/null >"$S/tty.out"
+    TTY_STATUS=$?
+    check "case 34: a terminal still exits 2" "$TTY_STATUS" "2"
+    check "case 34: a terminal says why" \
+        "$(grep -c 'stdin is a terminal' "$S/tty.err")" "1"
+else
+    skip "contract: case 34 — a terminal still exits 2" "script is not installed"
+fi
+
 # ----------------------------------------------------------------- report
 
 printf '\n'
@@ -1121,11 +1151,12 @@ if [ "$SKIPPED" -gt 0 ]; then
 fi
 # The clock injection the contract names: SKILL_LOG_NOW pins the
 # writer's stamp, proved through the CLI rather than by writing the store.
+say "contract: case 35 — the clock pin is the only injection"
 OUT="$(SKILL_LOG_NOW="2020-01-02T03:04:05+00:00" \
     "$BIN" add --skill clock-probe --dry-run --json 2>"$S/stderr")"
 STATUS=$?
 check "the clock case exits 0" "$STATUS" "0"
-check "case 34: SKILL_LOG_NOW pins the writer's stamp" \
+check "case 35: SKILL_LOG_NOW pins the writer's stamp" \
     "$(json_field "$OUT" ts)" "2020-01-02T03:04:05+00:00"
 check_absent "the clock case reports no error" "$(cat "$S/stderr")" "skill-log:"
 tally
