@@ -263,6 +263,26 @@ else
     fail "a short SHA pin is reported"
 fi
 
+# ------------------------------------------------------------------- ci
+
+CI="$ROOT/.github/workflows/ci.yml"
+check "the test workflow exists" \
+    "$([ -f "$CI" ] && echo yes || echo no)" "yes"
+check "ci.yml interpolates no expression into shell source" \
+    "$(interpolated_in "$CI")" ""
+check "ci.yml pins every action to a commit" "$(unpinned_uses "$CI")" ""
+check "ci.yml runs on a pull request" \
+    "$(grep -cE '^  pull_request:' "$CI")" "1"
+check_contains "ci.yml runs the suites" "$(cat "$CI")" "scripts/test.sh"
+check_contains "ci.yml checks formatting" "$(cat "$CI")" "gofmt -l ./cmd ./internal"
+check_contains "ci.yml runs go vet" "$(cat "$CI")" "go vet ./..."
+check_contains "ci.yml verifies the modules" "$(cat "$CI")" "go mod verify"
+check_contains "ci.yml runs the build" "$(cat "$CI")" "scripts/build.sh"
+# The shims are the pinned toolchain. Without them `go` is whatever the
+# runner happens to ship, and the pin does nothing.
+check_contains "ci.yml puts the mise shims on PATH" "$(cat "$CI")" \
+    'echo "$HOME/.local/share/mise/shims" >> "$GITHUB_PATH"'
+
 # ---------------------------------------------------- reproducibility
 
 # The archive is one artifact per commit. A build that runs inside a

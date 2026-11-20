@@ -1,0 +1,62 @@
+# CI: every pull request runs the offline gate before a review sees it.
+#
+# The steps are the ones a contributor runs locally: format, vet, the
+# pinned module graph, the build, and the black-box suites against dist/.
+# Two rules from release.yml hold here too:
+#
+#   * Every third-party action is pinned to a commit SHA. A tag is a
+#     name somebody else can move; a commit is not.
+#   * A GitHub expression never appears inside a `run:` block. It would
+#     be text the shell parses; values reach the shell through `env:`.
+
+name: "ci"
+
+on:
+  pull_request:
+  push:
+    branches: ["main"]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: "Checkout"
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+
+      - name: "Suite tools"
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends sqlite3
+
+      - name: "Install the pinned toolchain"
+        run: |
+          curl -fsSL https://mise.run | MISE_QUIET=1 sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          mise trust
+          mise install
+          # The shims are the pinned toolchain; without them `go` is
+          # whatever the runner happens to ship.
+          echo "$HOME/.local/share/mise/shims" >> "$GITHUB_PATH"
+
+      - name: "Format"
+        run: |
+          unformatted="$(gofmt -l ./cmd ./internal)"
+          if [ -n "$unformatted" ]; then
+            printf 'not gofmt-ed:\n%s\n' "$unformatted" >&2
+            exit 1
+          fi
+
+      - name: "Vet"
+        run: go vet ./...
+
+      - name: "Modules"
+        run: go mod verify
+
+      - name: "Build"
+        run: scripts/build.sh
+
+      - name: "Suites"
+        run: scripts/test.sh
