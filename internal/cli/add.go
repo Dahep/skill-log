@@ -15,16 +15,9 @@ type addOptions struct {
 	dryRun   bool
 	json     bool
 	db       string
-	harness  string
-	session  string
-	parent   string
-	model    string
-	repo     string
-	worktree string
-	project  string
-	t3Thread string
-	machine  string
 	adapters []string
+	// context collects the context flags by column, for ResolveContext.
+	context map[string]string
 }
 
 func addVerb() Verb {
@@ -78,15 +71,17 @@ func addFlags(options *addOptions) *flagSet {
 	flags.value("--skill", "a name", func(value string) error { options.skill = value; return nil })
 	flags.value("--problem", "a text", func(value string) error { options.problems = append(options.problems, value); return nil })
 	flags.value("--db", "a path", func(value string) error { options.db = value; return nil })
-	flags.value("--harness", "a name", func(value string) error { options.harness = value; return nil })
-	flags.value("--session", "an id", func(value string) error { options.session = value; return nil })
-	flags.value("--parent", "an id", func(value string) error { options.parent = value; return nil })
-	flags.value("--model", "provider/id", func(value string) error { options.model = value; return nil })
-	flags.value("--repo", "a name", func(value string) error { options.repo = value; return nil })
-	flags.value("--worktree", "a path", func(value string) error { options.worktree = value; return nil })
-	flags.value("--project", "a name", func(value string) error { options.project = value; return nil })
-	flags.value("--t3-thread", "an id", func(value string) error { options.t3Thread = value; return nil })
-	flags.value("--machine", "a name", func(value string) error { options.machine = value; return nil })
+	// The context flags come from the precedence table: one descriptor per
+	// column carries the flag's name and its value description.
+	for _, field := range settings.ContextFields() {
+		flags.value(field.Flag, field.What, func(value string) error {
+			if options.context == nil {
+				options.context = map[string]string{}
+			}
+			options.context[field.Column] = value
+			return nil
+		})
+	}
 	flags.value("--adapter", "a name", func(value string) error { options.adapters = append(options.adapters, value); return nil })
 	return flags
 }
@@ -112,19 +107,6 @@ func parseAddOptions(args []string) (addOptions, error) {
 	return options, nil
 }
 
-func resolveField(flag, variable, adapterValue, detected string) string {
-	if strings.TrimSpace(flag) != "" {
-		return strings.TrimSpace(flag)
-	}
-	if strings.TrimSpace(variable) != "" {
-		return strings.TrimSpace(variable)
-	}
-	if strings.TrimSpace(adapterValue) != "" {
-		return strings.TrimSpace(adapterValue)
-	}
-	return strings.TrimSpace(detected)
-}
-
 func handleAdd(args []string) Outcome {
 	options, err := parseAddOptions(args)
 	if err != nil {
@@ -148,54 +130,25 @@ func handleAdd(args []string) Outcome {
 	// One pass answers both: the toplevel is the worktree, and the repo is
 	// the name that checkout belongs to.
 	detectedRepo, detectedWorktree := settings.DetectCheckout()
-	worktree := resolveField(
-		options.worktree,
-		settings.EnvOrEmpty("SKILL_LOG_WORKTREE"),
-		"",
-		detectedWorktree,
-	)
-	detectedWorktreeRepo := detectedRepo
-	if worktree != detectedWorktree {
-		// A worktree the caller named may be another checkout: it carries
-		// its own toplevel and its own origin.
-		detectedWorktreeRepo = settings.DetectRepo(worktree)
+	resolved, err := settings.ResolveContext(options.context, options.adapters, settings.Detected{
+		Repo:     detectedRepo,
+		Worktree: detectedWorktree,
+	})
+	if err != nil {
+		return Fail(err.Error(), ExitFailure)
 	}
-
-	adapters := settings.EnabledAdapters(options.adapters)
-	adapterSession := ""
-	if settings.HasAdapter(adapters, "opencode") {
-		adapterSession = settings.EnvOrEmpty(settings.OpenCodeSessionEnv)
-	}
-	session := resolveField(
-		options.session,
-		settings.EnvOrEmpty("SKILL_LOG_SESSION"),
-		adapterSession,
-		"",
-	)
-
-	adapter := settings.ApplyAdapters(adapters, worktree, session)
 
 	var row store.Invocation
 	row.Skill = strings.TrimSpace(options.skill)
-	row.Harness = resolveField(options.harness, settings.EnvOrEmpty("SKILL_LOG_HARNESS"), adapter.Harness, "")
-	row.Session = session
-	row.Parent = resolveField(options.parent, settings.EnvOrEmpty("SKILL_LOG_PARENT"), "", "")
-	row.Model = resolveField(options.model, settings.EnvOrEmpty("SKILL_LOG_MODEL"), adapter.Model, "")
-	row.Repo = resolveField(
-		options.repo, settings.EnvOrEmpty("SKILL_LOG_REPO"), "", detectedWorktreeRepo,
-	)
-	row.Worktree = worktree
-	row.Project = resolveField(options.project, settings.EnvOrEmpty("SKILL_LOG_PROJECT"), adapter.Project, "")
-	row.T3Thread = resolveField(options.t3Thread, settings.EnvOrEmpty("SKILL_LOG_T3_THREAD"), "", "")
-	if strings.TrimSpace(options.machine) != "" {
-		row.Machine = strings.TrimSpace(options.machine)
-	} else {
-		name, err := settings.Hostname()
-		if err != nil {
-			return Fail(err.Error(), ExitFailure)
-		}
-		row.Machine = name
-	}
+	row.Harness = resolved.Harness
+	row.Session = resolved.Session
+	row.Parent = resolved.Parent
+	row.Model = resolved.Model
+	row.Repo = resolved.Repo
+	row.Worktree = resolved.Worktree
+	row.Project = resolved.Project
+	row.T3Thread = resolved.T3Thread
+	row.Machine = resolved.Machine
 
 	if strings.Contains(row.Machine, "#") {
 		return Fail("usage: --machine names a marker; it cannot contain '#' or a control character", ExitUsage)
@@ -209,13 +162,14 @@ func handleAdd(args []string) Outcome {
 		clean = append(clean, format.Sanitize(problem))
 	}
 
+	now := settings.LocalTimestamp()
 	if options.dryRun {
-		row.TS = settings.LocalTimestamp()
+		row.TS = now
 		row.Problems = clean
 		return OK(RenderRowJSON(row))
 	}
 
-	result, err := store.WriteInvocation(path, &row, clean)
+	result, err := store.WriteInvocation(path, &row, clean, now)
 	if failure := writeOutcome(path, result.Refusal, err); failure != nil {
 		return Fail(failure.Message, failure.Code)
 	}

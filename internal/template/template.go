@@ -39,7 +39,7 @@ func ResolveDir(flag string) string {
 func Load(name, templateDir string) (Template, error) {
 	out := Template{Name: name, Source: "shipped"}
 	if templateDir != "" {
-		candidate := joinPath(templateDir, name)
+		candidate := format.JoinPath(templateDir, name)
 		if format.IsRegularFile(candidate) {
 			content, err := format.ReadText(candidate)
 			if err != nil {
@@ -70,10 +70,23 @@ func Load(name, templateDir string) (Template, error) {
 	return out, nil
 }
 
+// LoadValidated is the effective-template composition: load the template, then
+// validate it. The first error answers.
+func LoadValidated(name, templateDir string) (Template, error) {
+	loaded, err := Load(name, templateDir)
+	if err != nil {
+		return loaded, err
+	}
+	if err := document.ValidateTemplate(name, loaded.Content); err != nil {
+		return loaded, err
+	}
+	return loaded, nil
+}
+
 // SeededPath is where the seeded-from record for name lives: under the state
 // directory, never under the user config dir.
 func SeededPath(name string) string {
-	return joinPath(joinPath(settings.StateDir(), seededDirName), name)
+	return format.JoinPath(format.JoinPath(settings.StateDir(), seededDirName), name)
 }
 
 func readSeeded(name string) string {
@@ -89,7 +102,7 @@ func readSeeded(name string) string {
 }
 
 func WriteSeeded(name, hashValue string) error {
-	dir := joinPath(settings.StateDir(), seededDirName)
+	dir := format.JoinPath(settings.StateDir(), seededDirName)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
@@ -127,5 +140,3 @@ func findInPath(program string) string {
 	}
 	return program
 }
-
-func joinPath(dir, name string) string { return dir + "/" + name }

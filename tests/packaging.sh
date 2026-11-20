@@ -160,24 +160,12 @@ check "install: the archive carries the third-party notices" \
     "$([ -f "$PKG/THIRD-PARTY-NOTICES.md" ] && printf yes || printf no)" "yes"
 
 # --------------------------------------------------- the static executable
-if command -v ldd >/dev/null 2>&1; then
-    report="$(ldd "$PKG/skill-log" 2>&1 || true)"
-    if printf '%s\n' "$report" | grep -qi 'not a dynamic executable'; then
-        pass "binary: the executable is static"
-    else
-        fail "binary: the executable is static ($report)"
-    fi
-else
-    if command -v file >/dev/null 2>&1; then
-        if file "$PKG/skill-log" | grep -qi 'statically linked'; then
-            pass "binary: the executable is static"
-        else
-            fail "binary: the executable is static"
-        fi
-    else
-        printf 'skip neither ldd nor file is installed: the static check did not run\n'
-    fi
-fi
+PROBE="$(static_link_probe "$PKG/skill-log")"
+case "$PROBE" in
+    static) pass "binary: the executable is static" ;;
+    skip) printf 'skip neither ldd nor file is installed: the static check did not run\n' ;;
+    *) fail "binary: the executable is static (${PROBE#dynamic })" ;;
+esac
 
 check "binary: no shared object sits beside it" \
     "$(find "$PKG" -name '*.so*' 2>/dev/null | wc -l | tr -d ' ')" "0"

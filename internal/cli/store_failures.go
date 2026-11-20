@@ -68,10 +68,11 @@ func writeOutcome(path string, refusal *store.Refusal, err error) *Failure {
 func openStore(path string, create bool) (*store.Store, *Failure) {
 	opened, refusal, err := store.Open(path, create)
 	if err != nil {
-		failure := readFailure(path, err)
 		if create {
-			failure = writeFailure(path, err)
+			failure := writeFailure(path, err)
+			return nil, &failure
 		}
+		failure := readFailure(path, err)
 		return nil, &failure
 	}
 	if refusal != nil {

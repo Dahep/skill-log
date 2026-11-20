@@ -18,8 +18,12 @@ func GitToplevel() string {
 }
 
 // GitBranch is the current branch of the repository dir is in, or "". A detached
-// HEAD answers `HEAD`, which names no report file.
+// HEAD answers `HEAD`, which names no report file; a repository with no commits
+// still has a branch, and `symbolic-ref` names it.
 func GitBranch(dir string) string {
+	if out := gitDir(dir, "symbolic-ref", "--short", "HEAD"); out != "" {
+		return out
+	}
 	return gitDir(dir, "rev-parse", "--abbrev-ref", "HEAD")
 }
 
@@ -73,7 +77,6 @@ func StripUserinfo(url string) string {
 	return url[cut+1:]
 }
 
-// produce an empty segment.
 func Basename(path string) string {
 	text := path
 	for len(text) > 1 && strings.HasSuffix(text, "/") {
@@ -123,10 +126,6 @@ func DetectRepo(top string) string {
 		return name
 	}
 	return Basename(top)
-}
-
-func DetectWorktree() string {
-	return GitToplevel()
 }
 
 // DetectCheckout resolves the working-tree root and the repository it belongs

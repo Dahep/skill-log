@@ -29,16 +29,6 @@ count_examples() {
     sed -n '/^examples:$/,$p' "$1" | grep -c '^  ' || true
 }
 
-static_binary() {
-    local report
-    if command -v ldd >/dev/null 2>&1; then
-        report="$(ldd "$1" 2>&1 || true)"
-        printf '%s\n' "$report" | grep -qi 'not a dynamic executable'
-        return $?
-    fi
-    file "$1" 2>/dev/null | grep -qi 'statically linked'
-}
-
 require_artifact
 
 rm -rf "$SCRATCH"
@@ -107,11 +97,12 @@ check "plain: an unknown verb names the verb" \
 
 # -------------------------------------------------------- static link proof
 
-if static_binary "$DIST/skill-log"; then
-    pass "plain: the artifact is a static executable"
-else
-    fail "plain: the artifact is a static executable"
-fi
+PROBE="$(static_link_probe "$DIST/skill-log")"
+case "$PROBE" in
+    static) pass "plain: the artifact is a static executable" ;;
+    skip) printf 'skip neither ldd nor file is installed: the static check did not run\n' ;;
+    *) fail "plain: the artifact is a static executable" ;;
+esac
 
 # --------------------------------------------------------------- sandbox
 

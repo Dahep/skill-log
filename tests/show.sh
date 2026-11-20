@@ -131,7 +131,6 @@ check "the table has a header, three rows and the problems" \
 check "the table has exactly three invocation rows" \
     "$(printf '%s\n' "$OUT" | grep -cE '^[0-9]+ ')" "3"
 check_contains "the table names the skill column" "$OUT" "skill"
-check_contains "the table names the problems column" "$OUT" "resolved_at"
 check_contains "the table shows the session" "$OUT" "ses-1"
 check_contains "the table shows the parent" "$OUT" "ses-1"
 check_contains "the table shows the t3 thread" "$OUT" "thr-9"
@@ -146,10 +145,10 @@ check "the header ends with the last cell" \
     "$(printf '%s\n' "$OUT" | head -1 | awk '{print $NF}')" "resolved_at"
 
 HEADER_DB="$SCRATCH/header.db"
-"$BIN" add --skill gamma --machine box3 --harness h --session s --parent p \
+"$BIN" add --skill gamma --machine "$(hostname)" --harness h --session s --parent p \
     --model m --repo r --worktree /w --project pr --t3-thread t \
     --db "$HEADER_DB" >/dev/null
-"$BIN" add --skill delta --machine box3 --harness h --session s --parent p \
+"$BIN" add --skill delta --machine "$(hostname)" --harness h --session s --parent p \
     --model m --repo r --worktree /w --project pr --t3-thread t \
     --problem one --db "$HEADER_DB" >/dev/null
 "$BIN" resolve --id 1 --fix abc1234 --db "$HEADER_DB" >/dev/null
@@ -194,8 +193,11 @@ check "no problem line appears before its invocation" \
 check_contains "the worktree under the home is shortened" "$OUT" "~/wt"
 check_contains "a worktree outside the home is untouched" "$OUT" "/elsewhere/beta"
 
+CLEAN="$("$BIN" show --skill beta)"
+CLEAN_STATUS=$?
+check "the clean-row show exits 0" "$CLEAN_STATUS" "0"
 check "a clean row has no problem lines" \
-    "$(printf '%s\n' "$OUT" | grep -c '^    problem')" "2"
+    "$(printf '%s\n' "$CLEAN" | grep -c '^    problem')" "0"
 
 check "the table leaves no trailing whitespace" \
     "$(printf '%s\n' "$OUT" | grep -c ' $')" "0"

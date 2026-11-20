@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"strings"
 
 	"github.com/Dahep/skill-log/internal/format"
@@ -114,11 +115,19 @@ func handleResolve(args []string) Outcome {
 	if failure != nil {
 		return Fail(failure.Message, failure.Code)
 	}
-	if opened != nil {
-		opened.Close()
-	}
+	opened.Close()
 
-	row, refusal, err := store.ResolveRow(path, options.id, options.fix, options.dryRun)
+	host, hostErr := settings.Hostname()
+	if hostErr != nil {
+		return Fail(hostErr.Error(), ExitFailure)
+	}
+	row, refusal, err := store.ResolveRow(
+		path, options.id, options.fix, host, settings.LocalTimestamp(), options.dryRun,
+	)
+	var foreign *store.ForeignMarker
+	if errors.As(err, &foreign) {
+		return Fail(foreign.Error(), ExitFailure)
+	}
 	if failure := writeOutcome(path, refusal, err); failure != nil {
 		return Fail(failure.Message, failure.Code)
 	}

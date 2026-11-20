@@ -19,20 +19,12 @@ if [ ! -x "$DIST/skill-log" ]; then
     exit 1
 fi
 
-if command -v ldd >/dev/null 2>&1; then
-    ldd_report="$(ldd "$DIST/skill-log" 2>&1 || true)"
-    if printf '%s\n' "$ldd_report" | grep -qi 'not a dynamic executable'; then
-        pass "the artifact is a static executable"
-    else
-        fail "the artifact is a static executable ($ldd_report)"
-    fi
-else
-    if file "$DIST/skill-log" 2>/dev/null | grep -qi 'statically linked'; then
-        pass "the artifact is a static executable"
-    else
-        fail "the artifact is a static executable"
-    fi
-fi
+PROBE="$(static_link_probe "$DIST/skill-log")"
+case "$PROBE" in
+    static) pass "the artifact is a static executable" ;;
+    skip) printf 'skip neither ldd nor file is installed: the static check did not run\n' ;;
+    *) fail "the artifact is a static executable (${PROBE#dynamic })" ;;
+esac
 
 rm -rf "$SCRATCH"
 mkdir -p "$SCRATCH"
@@ -109,8 +101,10 @@ row = json.loads(sys.stdin.read())
 print("yes" if re.match(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[+-][0-9]{2}:[0-9]{2}$", row.get("resolved_at", "")) else "no")
 ')" "yes"
 
-check "no run reported a SQLite problem" \
-    "$(grep -ci 'sqlite unavailable\|cannot load\|shared object' "$SCRATCH/all-err")" "0"
+# A storage failure would name one of the store's refusals — the code's own
+# vocabulary — and none of the runs reported one.
+check "no run reported a store refusal" \
+    "$(grep -ci 'damaged store\|locked store\|read-only store\|unusable store path\|not a skill-log store' "$SCRATCH/all-err")" "0"
 
 DB="$SANDBOX_HOME/.local/state/skill-log/skills.db"
 if command -v sqlite3 >/dev/null 2>&1; then

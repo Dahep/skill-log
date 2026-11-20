@@ -9,9 +9,10 @@ Every skill invocation ends with one row in the local SQLite log:
 invocation date, skill, harness, session, parent, model, repo, worktree,
 project and machine — plus problem rows tying each finding to the
 invocation that found it. The CLI owns the store; query it through the
-CLI, never the db by hand. The context columns are auto-detected at add
-time; blank means "unknown or not applicable", and a blank is reported
-as a gap rather than guessed at.
+CLI, never the db by hand. The context columns are filled at add time —
+flag, then environment variable, then an enabled adapter (opt-in, never
+by default), then the tool's own detection; blank means "unknown or not
+applicable", and a blank is reported as a gap rather than guessed at.
 
 ## Reading
 
@@ -23,14 +24,14 @@ as a gap rather than guessed at.
 - Pipes: `skill-log show --last 50 --json` emits one flat object per
   row, one stable key set (`... | jq -c 'select(.model != "")'`)
 - Counts and the friction rate: `skill-log stats` — the
-  problems/invocation column is the friction-per-use signal
+  problems-per-invocation rate is the friction-per-use signal
 - Cuts: `skill-log stats --by <column>` groups by skill (the default),
   harness, model, repo, worktree, machine or project; `--by-model`
   remains an alias for `--by model`. The model cut is the rotation view
   — friction per model rather than per skill — and a blank model means
   none was recorded: a gap, never a model row. The machine cut
   (`skill-log show --machine <host>`, `skill-log stats --by machine`)
-  reads the rows of one host in a consolidated copy.
+  reads the rows of one host.
 
 Every command accepts `--db <path>` for scratch copies and snapshot
 reads. Done when the user's question is answered from CLI output, and
@@ -46,7 +47,7 @@ empty machine and id 0 are refused, never guessed at. Every marker names
 its machine, because one id means a different row in each machine's log
 and the same merged commit is read on all of them.
 
-## Fixing
+## Name
 
 The change that fixes logged friction names the invocations it resolves
 in a report file committed with it:

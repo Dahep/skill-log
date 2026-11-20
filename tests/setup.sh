@@ -207,6 +207,20 @@ check_contains "a non-executable hook: the detail names the path" \
 run setup --repo "$TMP/r1" --check
 check "check: a repaired hook is green" "$STATUS" "0"
 
+# drift: the content differs and the file is not executable. The rewrite
+# restores the script and the owner's execute bit in one run, so the Close
+# step keeps working.
+printf '# older script\n' >>"$HOOK"
+chmod 0644 "$HOOK"
+run setup --repo "$TMP/r1"
+check "a differing non-executable hook: the run exits 0" "$STATUS" "0"
+check "a differing non-executable hook: the verdict is updated" \
+    "$(status_of "$OUT" hook)" "updated"
+check "a differing non-executable hook: the rewrite is executable" \
+    "$([ -x "$HOOK" ] && echo yes || echo no)" "yes"
+run setup --repo "$TMP/r1" --check
+check "a differing non-executable hook: the next check is green" "$STATUS" "0"
+
 # drift: the hook carries an execute bit, but not the owner's. git runs
 # the hook as the user who pulled — the owner — so mode 0641 is a hook
 # git skips silently even though "somebody" may execute it.
@@ -267,6 +281,12 @@ fi
 
 rm -f "$HOOK"
 run setup --repo "$TMP/r1"
+run setup --repo "$TMP/r1" --remove-hook --dry-run
+check "--remove-hook --dry-run exits 0" "$STATUS" "0"
+check "a --dry-run of --remove-hook shows the change" \
+    "$(detail_of "$OUT" hook)" "would remove the post-merge hook at $HOOK"
+check "a --dry-run of --remove-hook leaves the hook" \
+    "$([ -e "$HOOK" ] && echo yes || echo no)" "yes"
 run setup --repo "$TMP/r1" --remove-hook
 check "--remove-hook exits 0" "$STATUS" "0"
 check "--remove-hook: the hook verdict is updated" \
@@ -641,6 +661,14 @@ check_contains "the body names the foreign-marker rule" \
     "$(cat "$LOG_DOC")" "marker naming another machine"
 check_contains "the body says the report is sorted" \
     "$(cat "$LOG_DOC")" "one marker per line, sorted"
+check_contains "the body spells the rate problems-per-invocation" \
+    "$(cat "$LOG_DOC")" "problems-per-invocation"
+check_contains "the body heads the report step Name" \
+    "$(cat "$LOG_DOC")" "## Name"
+check_absent "the body does not claim adapter fields are auto-detected" \
+    "$(cat "$LOG_DOC")" "auto-detected"
+check_absent "the body does not advertise a consolidated copy" \
+    "$(cat "$LOG_DOC")" "consolidated"
 check_absent "the body does not promise byte-for-byte preservation" \
     "$(cat "$LOG_DOC")" "preserved byte-for-byte"
 

@@ -15,9 +15,10 @@ finding in its place:
         --problem "<second finding, one flag per finding>"
 
 A clean run still lands its row, problem-less: the invocation count is
-the denominator of the problems/invocation rate. Add `--t3-thread <id>`
-when the T3 thread id is in context; the invocation date, project,
-harness session, worktree, and machine are auto-detected by the tool.
+the denominator of the problems-per-invocation rate. Add `--t3-thread <id>`
+when the T3 thread id is in context; the tool detects the invocation
+date, repo, worktree and machine itself, while harness, session, model
+and project come from an enabled adapter or stay blank.
 
 `add` is deliberately not idempotent: the log records occurrences, so a
 retry after a crashed run is indistinguishable from a genuine repeat.
@@ -25,9 +26,9 @@ Two identical calls write two rows.
 
 Read the log back through the same command: `show` for recent
 invocations and their problems, `show --run <id>` for one run, `stats`
-and `stats --by <column>` for counts and the problems/invocation rate,
-`report` and `resolve` to name and stamp the rows a change fixes. A row
-is named `machine#id` — the machine plus the invocation id — and that
+and `stats --by <column>` for counts and the problems-per-invocation
+rate, `report` and `resolve` to name and stamp the rows a change fixes. A
+row is named `machine#id` — the machine plus the invocation id — and that
 marker is what every later command speaks. A reader never calls `add`.
 
 When <command> does not exist, skip the write silently and carry on:

@@ -31,6 +31,7 @@ unset SKILL_LOG_PROJECT SKILL_LOG_T3_THREAD SKILL_LOG_MACHINE
 unset OPENCODE_SESSION_ID T3CODE_HOME
 
 DB="$HOME/.local/state/skill-log/skills.db"
+H="$(hostname)"
 
 # run <args...>: the binary with the sandbox's environment. Output lands
 # in $OUT and $ERR, the status in $STATUS.
@@ -42,14 +43,14 @@ run() {
 
 # ------------------------------------------------------------------ rows
 
-run add --skill alpha --machine boxA --session ses_run \
+run add --skill alpha --machine "$H" --session ses_run \
     --problem "secret problem text"
 check "the first row is written" "$STATUS" "0"
-run add --skill alpha --machine boxA --parent ses_run
+run add --skill alpha --machine "$H" --parent ses_run
 check "the second row is written" "$STATUS" "0"
-run add --skill beta --machine boxA
+run add --skill beta --machine "$H"
 check "the third row is written" "$STATUS" "0"
-run add --skill gamma --machine boxA
+run add --skill gamma --machine "$H"
 check "the fourth row is written" "$STATUS" "0"
 
 # The row a later change already resolved: the CLI resolves it, the way
@@ -97,7 +98,7 @@ if [ -f "$REPORT" ]; then
 else
     fail "report did not write the branch's file"
 fi
-check "the file holds one marker per line" "$(cat "$REPORT")" "boxA#1"
+check "the file holds one marker per line" "$(cat "$REPORT")" "$H#1"
 check "the file ends with a newline" "$(tail -c 1 "$REPORT")" ""
 check "the problem text never reaches the report" \
     "$(grep -c 'secret' "$REPORT")" "0"
@@ -116,7 +117,7 @@ run report --id 4 --slug atomic
 check "a planted temp symlink is not followed" \
     "$(cat "$SCRATCH/victim")" "valuable"
 check "the report beside a planted symlink is written" \
-    "$(cat "$REPO/.skill-log/reports/atomic.md")" "boxA#4"
+    "$(cat "$REPO/.skill-log/reports/atomic.md")" "$H#4"
 if [ -L "$REPO/.skill-log/reports/atomic.md.tmp" ]; then
     pass "the planted symlink is left alone"
 else
@@ -130,7 +131,7 @@ check "no temporary file is left behind" \
 run report --id 2
 check "a second selection unions" "$OUT" "reported 2 markers in $REL"
 check "the file holds both markers, sorted" "$(cat "$REPORT")" \
-    "$(printf 'boxA#1\nboxA#2')"
+    "$(printf '%s\n' "$H#1" "$H#2")"
 
 # Re-running over an unchanged report writes nothing and says so.
 BEFORE_SUM="$(md5sum <"$REPORT")"
@@ -149,7 +150,7 @@ check "--run selects the session and the parent" "$OUT" \
     "reported 2 markers in .skill-log/reports/run-report.md"
 check "--run writes both markers" \
     "$(cat "$REPO/.skill-log/reports/run-report.md")" \
-    "$(printf 'boxA#1\nboxA#2')"
+    "$(printf '%s\n' "$H#1" "$H#2")"
 
 run report --skill alpha --slug alpha-report
 check "--skill selects that skill's rows" "$OUT" \
@@ -161,7 +162,7 @@ check "a resolved row exits 0" "$STATUS" "0"
 check "a resolved row reports nothing to write" "$OUT" \
     "nothing to report: the selected rows are already resolved"
 check "a resolved row is named on stderr" "$ERR" \
-    "skill-log: boxA#3 already resolved; skipped"
+    "skill-log: $H#3 already resolved; skipped"
 if [ -e "$REPO/.skill-log/reports/closed.md" ]; then
     fail "a resolved row wrote a report"
 else
@@ -242,7 +243,7 @@ check "json carries the path and the markers" "$(json_keys "$OUT")" \
     "already_reported already_resolved dry_run markers path trailer"
 check "json names the file" "$(json_field "$OUT" path)" \
     ".skill-log/reports/json-report.md"
-check "json carries the marker" "$(json_array "$OUT" markers)" "boxA#4"
+check "json carries the marker" "$(json_array "$OUT" markers)" "$H#4"
 check "json says it wrote" "$(json_field "$OUT" already_reported)" "False"
 check "json carries no trailer in artifact mode" \
     "$(json_field "$OUT" trailer)" ""
@@ -259,7 +260,7 @@ printf 'otherbox#7\n' >"$REPO/.skill-log/reports/union.md"
 run report --id 4 --slug union
 check "a foreign marker is kept in the union" \
     "$(cat "$REPO/.skill-log/reports/union.md")" \
-    "$(printf 'boxA#4\notherbox#7')"
+    "$(printf '%s\n' "$H#4" "otherbox#7" | LC_ALL=C sort)"
 
 run report --check --slug union
 check "a report with a foreign marker is valid" "$STATUS" "0"
@@ -273,11 +274,11 @@ check "the check's json carries the warnings" \
     "otherbox#7: not in this db (resolves where it is)"
 
 # A marker this store has and has already resolved is warned about too.
-printf 'boxA#3\n' >"$REPO/.skill-log/reports/closed.md"
+printf '%s\n' "$H#3" >"$REPO/.skill-log/reports/closed.md"
 run report --check --slug closed
 check "a resolved marker is a warning, not a problem" "$STATUS" "0"
 check "the resolved marker names its commit" "$ERR" \
-    "skill-log: boxA#3: already resolved by abc123456"
+    "skill-log: $H#3: already resolved by abc123456"
 
 # A line that is not a marker is a problem: fail, name the line.
 printf 'not a marker\n' >"$REPO/.skill-log/reports/broken.md"
@@ -316,12 +317,66 @@ run report --check --slug bad-line
 check "a report with an unparseable marker is not valid" "$STATUS" "1"
 check_contains "the unparseable marker names its position" "$ERR" \
     "not a marker (machine#id)"
-sqlite3 "$DB" "update invocations set machine = 'boxA' where id = 4"
+sqlite3 "$DB" "update invocations set machine = '$H' where id = 4"
 
 run report --check --slug no-such-report
 check "a missing report file exits 0" "$STATUS" "0"
 check "a missing report file says so" "$OUT" \
     "no report file at .skill-log/reports/no-such-report.md"
+
+# ------------------------------------------------- foreign and empty machine
+
+# A row naming another machine is never written into the file: the tool
+# adds no foreign marker. The run names the skipped row and succeeds.
+run add --skill foreign-run --machine otherhost
+check "the foreign-machine row is written" "$STATUS" "0"
+FOREIGN_ID="$(sqlite3 "$DB" 'select max(id) from invocations')"
+run report --id 4 --id "$FOREIGN_ID" --slug foreign-mixed
+check "a foreign row does not fail the run" "$STATUS" "0"
+check "the file carries only this host's marker" \
+    "$(cat "$REPO/.skill-log/reports/foreign-mixed.md")" "$H#4"
+check_contains "the run names the skipped foreign row" "$ERR" \
+    "otherhost#$FOREIGN_ID"
+run report --id "$FOREIGN_ID" --slug foreign-only
+check "a foreign-only selection does not fail the run" "$STATUS" "0"
+check_contains "a foreign-only selection names the skipped row" "$ERR" \
+    "otherhost#$FOREIGN_ID"
+check "a foreign-only selection says why nothing was written" "$OUT" \
+    "nothing to report: the selected rows name another machine"
+if [ -e "$REPO/.skill-log/reports/foreign-only.md" ]; then
+    fail "a foreign-only selection wrote a report"
+else
+    pass "a foreign-only selection writes no report"
+fi
+run report --id 3 --id "$FOREIGN_ID" --slug closed-and-foreign
+check "a closed and a foreign row are both named as reasons" "$OUT" \
+    "nothing to report: the selected rows are already resolved or name another machine"
+
+# A row written before `add` always filled `machine` has an empty one. It
+# belongs to the machine reading it and reports as this host's spelling.
+sqlite3 "$DB" \
+    "insert into invocations (ts, skill) values ('2026-01-01T00:00:00+00:00', 'legacy')"
+LEGACY_ID="$(sqlite3 "$DB" 'select max(id) from invocations')"
+run report --id "$LEGACY_ID" --slug legacy
+check "an empty-machine row reports for this host" "$STATUS" "0"
+check "the file carries this host's spelling of the empty-machine row" \
+    "$(cat "$REPO/.skill-log/reports/legacy.md")" "$(hostname)#$LEGACY_ID"
+run report --check --slug legacy
+check "a report naming an empty-machine row is valid" "$STATUS" "0"
+check_absent "the empty-machine row is not called foreign" "$ERR" "not in this db"
+
+# A symlink planted where the report file goes is replaced, never followed: a
+# report always lands inside the report directory.
+OUTSIDE="$SCRATCH/outside-report.md"
+: >"$OUTSIDE"
+ln -sf "$OUTSIDE" "$REPO/.skill-log/reports/linked.md"
+run report --id 4 --slug linked
+check "a linked report path is written" "$STATUS" "0"
+check "the outside target stays empty" "$(stat -c %s "$OUTSIDE")" "0"
+check "the report file is a regular file" \
+    "$([ -L "$REPO/.skill-log/reports/linked.md" ] && echo link || echo regular)" "regular"
+check_contains "the report carries the marker" \
+    "$(cat "$REPO/.skill-log/reports/linked.md")" "$H#4"
 
 # --------------------------------------------------------------- naming
 
@@ -344,6 +399,23 @@ run report --id 4 --slug detached
 check "a detached HEAD with --slug works" "$STATUS" "0"
 git -C "$REPO" checkout -q feature/thing
 
+# A repository with no commits still has a branch: the report is named
+# for it instead of blaming a detached HEAD.
+FRESH="$SCRATCH/fresh"
+rm -rf "$FRESH"
+git init -q -b main "$FRESH"
+mkdir -p "$FRESH/.skill-log/reports"
+cd "$FRESH" || exit 1
+run add --skill freshrepo --machine "$H"
+check "the fresh-repo row is written" "$STATUS" "0"
+FRESH_ID="$(sqlite3 "$DB" 'select max(id) from invocations')"
+run report --id "$FRESH_ID"
+check "a repository with no commits names the report for its branch" \
+    "$STATUS" "0"
+check "the report is written under the branch's name" \
+    "$(cat "$FRESH/.skill-log/reports/main.md")" "$H#$FRESH_ID"
+cd "$REPO" || exit 1
+
 cd "$SCRATCH" || exit 1
 run report --id 1
 check "outside a checkout report exits 1" "$STATUS" "1"
@@ -356,7 +428,7 @@ cd "$PLAIN" || exit 1
 
 run report --id 4
 check "trailer mode exits 0" "$STATUS" "0"
-check "trailer mode prints the trailer" "$OUT" "Skill-log-Fix: boxA#4"
+check "trailer mode prints the trailer" "$OUT" "Skill-log-Fix: $H#4"
 check "trailer mode says where the line belongs" "$ERR" \
     "skill-log: no .skill-log/reports/ here; put the trailer in the commit body"
 if [ -e "$PLAIN/.skill-log" ]; then
@@ -368,18 +440,18 @@ fi
 run report --id 4 --json
 check "trailer mode json carries no path" "$(json_field "$OUT" path)" ""
 check "trailer mode json carries the trailer" \
-    "$(json_field "$OUT" trailer)" "Skill-log-Fix: boxA#4"
+    "$(json_field "$OUT" trailer)" "Skill-log-Fix: $H#4"
 check "trailer mode json carries the markers" \
-    "$(json_array "$OUT" markers)" "boxA#4"
+    "$(json_array "$OUT" markers)" "$H#4"
 
 run report --run ses_run
 check "trailer mode carries one line for a tree" "$OUT" \
-    "Skill-log-Fix: boxA#1, boxA#2"
+    "Skill-log-Fix: $H#1, $H#2"
 
 run report --id 3
 check "trailer mode skips a resolved row" "$STATUS" "0"
 check "trailer mode names the skipped row" "$ERR" \
-    "skill-log: boxA#3 already resolved; skipped"
+    "skill-log: $H#3 already resolved; skipped"
 
 run report --check
 check "trailer mode check exits 0" "$STATUS" "0"
@@ -411,8 +483,8 @@ check "a table-less store names the id" "$ERR" \
     "skill-log: no invocation 99 in $SCRATCH/tableless.db"
 run report --run nope --db "$SCRATCH/tableless.db" --slug tableless
 check "a table-less store has nothing to report for a run" "$OUT" \
-    "nothing to report: the selected rows are already resolved"
-printf 'boxA#1\n' >"$REPO/.skill-log/reports/tableless-check.md"
+    "nothing to report"
+printf '%s\n' "$H#1" >"$REPO/.skill-log/reports/tableless-check.md"
 run report --check --slug tableless-check --db "$SCRATCH/tableless.db"
 check "a table-less store still checks report syntax" "$STATUS" "0"
 check "a table-less store check is valid" "$OUT" \
@@ -432,7 +504,7 @@ check_contains "the malformed report is still named" "$ERR" \
 
 # A report file that cannot be read is attributed to the report, not the
 # store.
-printf 'boxA#1\n' >"$REPO/.skill-log/reports/unreadable.md"
+printf '%s\n' "$H#1" >"$REPO/.skill-log/reports/unreadable.md"
 chmod 000 "$REPO/.skill-log/reports/unreadable.md"
 run report --check --slug unreadable
 if [ "$(id -u)" -eq 0 ]; then
@@ -457,14 +529,14 @@ for pair in 'skills?db:query' 'skills#db:hash'; do
     name="${pair%%:*}"
     slug="${pair##*:}"
     RESERVED_DB="$RESERVED/$name"
-    run add --skill reserved --machine boxA --db "$RESERVED_DB"
+    run add --skill reserved --machine "$H" --db "$RESERVED_DB"
     check "a store named $name is written" "$STATUS" "0"
     run report --id 1 --db "$RESERVED_DB" --slug "reserved-$slug"
     check "a report over the store named $name exits 0" "$STATUS" "0"
     check "a report over the store named $name names the marker" \
         "$OUT" "reported 1 marker in .skill-log/reports/reserved-$slug.md"
     check "the report over the store named $name holds the marker" \
-        "$(cat "$REPO/.skill-log/reports/reserved-$slug.md")" "boxA#1"
+        "$(cat "$REPO/.skill-log/reports/reserved-$slug.md")" "$H#1"
 done
 
 # ------------------------------------------------------- reads never write

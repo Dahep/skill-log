@@ -4,7 +4,6 @@ import (
 	"database/sql"
 
 	"github.com/Dahep/skill-log/internal/marker"
-	"github.com/Dahep/skill-log/internal/settings"
 )
 
 // The skip reasons resolve-merged reports: the --json skipped[].reason and the
@@ -127,8 +126,9 @@ func readResolutionRows(q querier) ([]resolutionRow, error) {
 }
 
 // ResolveMergedRows applies: stamp every row the scanned markers name. The first
-// pass reads through a read connection: no write path opens for no change.
-func ResolveMergedRows(path string, located []Located, localHost string, dryRun bool) (MergedResult, *Refusal, error) {
+// pass reads through a read connection: no write path opens for no change. now
+// is the caller's stamp, written to every row it stamps.
+func ResolveMergedRows(path string, located []Located, localHost, now string, dryRun bool) (MergedResult, *Refusal, error) {
 	var empty MergedResult
 	if len(located) == 0 {
 		return empty, nil, nil
@@ -164,7 +164,7 @@ func ResolveMergedRows(path string, located []Located, localHost string, dryRun 
 	}
 
 	result, refusal, err := withRetry(func() (MergedResult, *Refusal, error) {
-		return mergedWriteAttempt(path, located, localHost)
+		return mergedWriteAttempt(path, located, localHost, now)
 	})
 	if err != nil || refusal != nil {
 		return empty, refusal, err
@@ -172,7 +172,7 @@ func ResolveMergedRows(path string, located []Located, localHost string, dryRun 
 	return result, nil, nil
 }
 
-func mergedWriteAttempt(path string, located []Located, localHost string) (MergedResult, *Refusal, error) {
+func mergedWriteAttempt(path string, located []Located, localHost, now string) (MergedResult, *Refusal, error) {
 	var empty MergedResult
 	if !isFile(path) {
 		return empty, nil, nil
@@ -194,7 +194,6 @@ func mergedWriteAttempt(path string, located []Located, localHost string) (Merge
 		}
 	}()
 
-	stamp := settings.LocalTimestamp()
 	rows, err := readResolutionRows(tx)
 	if err != nil {
 		return empty, nil, err
@@ -211,7 +210,7 @@ func mergedWriteAttempt(path string, located []Located, localHost string) (Merge
 		}
 		if _, err := tx.Exec(
 			"UPDATE invocations SET fix = ?, resolved_at = ? WHERE id = ?",
-			stamped.Commit, stamp, rows[rowIndex].ID,
+			stamped.Commit, now, rows[rowIndex].ID,
 		); err != nil {
 			return empty, nil, err
 		}

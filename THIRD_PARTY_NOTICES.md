@@ -9,11 +9,12 @@ Each licence below was read from the module's own tree in the Go module cache
 (`go mod download` then `go env GOMODCACHE`), not from a secondary index. The
 versions are the ones `go.mod` and `go.sum` pin.
 
-## The direct dependency
+## The direct dependencies
 
 | Module | Version | Licence | What it is |
 |---|---|---|---|
-| [`modernc.org/sqlite`](https://pkg.go.dev/modernc.org/sqlite) | v1.62.0 | BSD-3-Clause | The SQLite driver: the SQLite C amalgamation translated to Go. It is the only direct requirement in `go.mod`, and it is what makes `CGO_ENABLED=0` possible. |
+| [`modernc.org/sqlite`](https://pkg.go.dev/modernc.org/sqlite) | v1.62.0 | BSD-3-Clause | The SQLite driver: the SQLite C amalgamation translated to Go. It is what makes `CGO_ENABLED=0` possible. |
+| [`golang.org/x/sys`](https://pkg.go.dev/golang.org/x/sys) | v0.49.0 | BSD-3-Clause | System calls behind the terminal check (`internal/cli/stdin_tty_linux.go`); a direct requirement in `go.mod`, not a transitive dependency of the driver. |
 
 `modernc.org/sqlite` is BSD-3-Clause (its `LICENSE`). It also carries
 `LICENSE-3RD-PARTY.md`, which accounts for everything the driver links in —
@@ -35,7 +36,6 @@ These are pinned by `go.sum` and required by `modernc.org/sqlite` through
 | [`github.com/mattn/go-isatty`](https://pkg.go.dev/github.com/mattn/go-isatty) | v0.0.24 | MIT | Terminal detection. |
 | [`github.com/ncruces/go-strftime`](https://pkg.go.dev/github.com/ncruces/go-strftime) | v1.1.0 | MIT | `strftime` for the transpiled libc. |
 | [`github.com/remyoudompheng/bigfft`](https://pkg.go.dev/github.com/remyoudompheng/bigfft) | v0.0.0-20230129092748-24d4a6f8daec | BSD-3-Clause | Fast Fourier transform, used by the transpiled libc. |
-| [`golang.org/x/sys`](https://pkg.go.dev/golang.org/x/sys) | v0.49.0 | BSD-3-Clause | System calls for the platforms the driver supports. |
 
 ## The licence texts
 

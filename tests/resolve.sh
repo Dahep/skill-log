@@ -31,6 +31,7 @@ unset SKILL_LOG_PROJECT SKILL_LOG_T3_THREAD SKILL_LOG_MACHINE
 unset OPENCODE_SESSION_ID T3CODE_HOME
 
 DB="$HOME/.local/state/skill-log/skills.db"
+H="$(hostname)"
 
 # run <args...>: the binary with the sandbox's environment. Output lands
 # in $OUT and $ERR, the status in $STATUS.
@@ -52,9 +53,9 @@ else
     pass "resolve creates no store"
 fi
 
-run add --skill alpha --machine boxA
+run add --skill alpha --machine "$H"
 check "the first row is written" "$STATUS" "0"
-run add --skill beta --machine boxA
+run add --skill beta --machine "$H"
 check "the second row is written" "$STATUS" "0"
 
 run resolve --id 99 --fix abc1234
@@ -68,7 +69,7 @@ check_one_line "an unknown id is one line" "$ERR"
 run resolve --id 1 --fix abc1234
 check "resolve exits 0" "$STATUS" "0"
 check "resolve prints the marker and the commit" "$OUT" \
-    "boxA#1 resolved: abc1234"
+    "$H#1 resolved: abc1234"
 check "the fix lands" \
     "$(sqlite3 "$DB" 'select fix from invocations where id = 1')" "abc1234"
 check "the timestamp is ISO 8601 with an offset" \
@@ -81,13 +82,13 @@ FIRST_STAMP="$(sqlite3 "$DB" 'select resolved_at from invocations where id = 1')
 run resolve --id 1 --fix abc1234
 check "a repeated resolve exits 0" "$STATUS" "0"
 check "a repeated resolve says already resolved" "$OUT" \
-    "boxA#1 already resolved: abc1234"
+    "$H#1 already resolved: abc1234"
 check "a repeated resolve keeps the first timestamp" \
     "$(sqlite3 "$DB" 'select resolved_at from invocations where id = 1')" \
     "$FIRST_STAMP"
 
 run resolve --id 1 --fix def5678
-check "a different commit resolves again" "$OUT" "boxA#1 resolved: def5678"
+check "a different commit resolves again" "$OUT" "$H#1 resolved: def5678"
 check "a different commit is written" \
     "$(sqlite3 "$DB" 'select fix from invocations where id = 1')" "def5678"
 
@@ -99,7 +100,7 @@ BEFORE_SUM="$(md5sum <"$DB")"
 run resolve --id 2 --fix deadbeef --dry-run
 check "a dry run exits 0" "$STATUS" "0"
 check "a dry run says what it would stamp" "$OUT" \
-    "boxA#2 would resolve: deadbeef"
+    "$H#2 would resolve: deadbeef"
 check "a dry run leaves the fix alone" \
     "$(sqlite3 "$DB" 'select fix from invocations where id = 2')" "$BEFORE_FIX"
 check "a dry run leaves the timestamp alone" \
@@ -110,7 +111,7 @@ check "a dry run does not change the store file" \
 
 run resolve --id 1 --fix def5678 --dry-run
 check "a dry run of a repeat says already resolved" "$OUT" \
-    "boxA#1 already resolved: def5678"
+    "$H#1 already resolved: def5678"
 
 # ------------------------------------------------------------------- json
 
@@ -119,7 +120,7 @@ check "json exits 0" "$STATUS" "0"
 check "json carries the row's facts" "$(json_keys "$OUT")" \
     "changed dry_run fix id marker resolved_at skill"
 check "json carries the id" "$(json_field "$OUT" id)" "2"
-check "json carries the marker" "$(json_field "$OUT" marker)" "boxA#2"
+check "json carries the marker" "$(json_field "$OUT" marker)" "$H#2"
 check "json carries the skill" "$(json_field "$OUT" skill)" "beta"
 check "json carries the commit" "$(json_field "$OUT" fix)" "cafebabe"
 check "json says it changed" "$(json_field "$OUT" changed)" "True"
@@ -129,6 +130,34 @@ run resolve --id 2 --fix cafebabe --json
 check "json says a repeat changed nothing" "$(json_field "$OUT" changed)" "False"
 run resolve --id 2 --fix 11112222 --dry-run --json
 check "a dry-run json says so" "$(json_field "$OUT" dry_run)" "True"
+
+# --------------------------------------------------- foreign and empty rows
+
+# A row naming another machine is refused: only this host's own spelling
+# stamps. The refusal is one line and the row is left untouched.
+run add --skill foreign-row --machine otherhost
+check "the foreign-machine row is written" "$STATUS" "0"
+FOREIGN_ID="$(sqlite3 "$DB" 'select max(id) from invocations')"
+run resolve --id "$FOREIGN_ID" --fix a1b2c3d
+check "a foreign row is refused" "$STATUS" "1"
+check "the refusal names the foreign marker" "$ERR" \
+    "skill-log: foreign marker otherhost#$FOREIGN_ID: only this host's spelling stamps"
+check_one_line "a foreign row's refusal is one line" "$ERR"
+run show --skill foreign-row --json
+check "the foreign row is unchanged in show --json" \
+    "$(json_field "$OUT" fix)" ""
+
+# A row written before `add` always filled `machine` has an empty one: it
+# belongs to the machine reading it and stamps with this host's spelling.
+sqlite3 "$DB" \
+    "insert into invocations (ts, skill) values ('2026-01-01T00:00:00+00:00', 'legacy')"
+LEGACY_ID="$(sqlite3 "$DB" 'select max(id) from invocations')"
+run resolve --id "$LEGACY_ID" --fix a1b2c3d
+check "an empty-machine row stamps" "$STATUS" "0"
+check "an empty-machine row stamps with this host's spelling" "$OUT" \
+    "$H#$LEGACY_ID resolved: a1b2c3d"
+check "the empty-machine row carries the fix" \
+    "$(sqlite3 "$DB" "select fix from invocations where id = $LEGACY_ID")" "a1b2c3d"
 
 # --------------------------------------------------------------- refusals
 
@@ -209,7 +238,7 @@ check "a table-less store does not fail on the missing tables" "$ERR" \
     "skill-log: no invocation 1 in $SCRATCH/tableless.db"
 
 # ------------------------------------------------------------------ races
-run add --skill parallel --machine boxA
+run add --skill parallel --machine "$H"
 check "the race fixture row is written" "$STATUS" "0"
 RACE_ID="$(sqlite3 "$DB" 'select max(id) from invocations')"
 rm -f "$SCRATCH"/race-*.json "$SCRATCH"/race-*.err

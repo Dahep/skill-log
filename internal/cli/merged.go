@@ -2,6 +2,7 @@ package cli
 
 import (
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -278,29 +279,17 @@ func latestReportCommit(root, relative, revision string) reportFile {
 	return reportFile{path: relative, commit: commit, epoch: epoch}
 }
 
+// newestFirst orders the report files for the scan: newest commit first, and
+// files of one commit in the range's order.
 func newestFirst(files []reportFile) []reportFile {
-	order := make([]int, 0, len(files))
-	taken := make([]bool, len(files))
-	for range files {
-		best := -1
-		for i, file := range files {
-			if taken[i] {
-				continue
-			}
-			if best == -1 || file.epoch > files[best].epoch ||
-				(file.epoch == files[best].epoch && file.order < files[best].order) {
-				best = i
-			}
+	sorted := make([]reportFile, len(files))
+	copy(sorted, files)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		if sorted[i].epoch != sorted[j].epoch {
+			return sorted[i].epoch > sorted[j].epoch
 		}
-		if best != -1 {
-			taken[best] = true
-			order = append(order, best)
-		}
-	}
-	sorted := make([]reportFile, 0, len(order))
-	for _, index := range order {
-		sorted = append(sorted, files[index])
-	}
+		return sorted[i].order < sorted[j].order
+	})
 	return sorted
 }
 
@@ -361,17 +350,12 @@ func scanReports(root, since string) mergedScan {
 	var scan mergedScan
 	for _, file := range reportFiles(root, since) {
 		content := gitOutput(root, "show", file.commit+":"+file.path)
-		for _, line := range strings.Split(content, "\n") {
-			value := strings.TrimSpace(line)
-			if value == "" {
-				continue
-			}
-			parsed, ok := marker.Parse(value)
-			if !ok {
-				scan.malformed = append(scan.malformed,
-					format.Sanitize(file.path+": "+value))
-				continue
-			}
+		markers, bad := marker.ScanLines(content)
+		for _, line := range bad {
+			scan.malformed = append(scan.malformed,
+				format.Sanitize(file.path+": "+line.Text))
+		}
+		for _, parsed := range markers {
 			scan.located = addLocated(
 				scan.located, parsed.Machine, parsed.ID, file.commit, file.epoch,
 			)
@@ -542,7 +526,8 @@ func handleResolveMerged(args []string) Outcome {
 		if opened != nil {
 			opened.Close()
 			resolved, refusal, err := store.ResolveMergedRows(
-				path, outcome.scan.located, localHostname(), options.dryRun,
+				path, outcome.scan.located, localHostname(), settings.LocalTimestamp(),
+				options.dryRun,
 			)
 			if failure := writeOutcome(path, refusal, err); failure != nil {
 				notes := mergedNotes(outcome, result, options.quiet)

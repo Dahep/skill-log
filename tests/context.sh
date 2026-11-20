@@ -238,7 +238,8 @@ INSERT INTO session_v2 (id, model) VALUES
     ('ses_other', '{"id":"other-model","providerID":"other-provider"}'),
     ('ses_nested', '{"meta":{"id":"NESTED","providerID":"nested"},"id":"real","providerID":"p"}'),
     ('ses_bare', 'kimi-k3'),
-    ('ses_escaped', '{"id":"\u0061","providerID":"p"}');
+    ('ses_escaped', '{"id":"\u0061","providerID":"p"}'),
+    ('ses_nonstring', '{"id":5,"providerID":"p"}');
 SQL
 
 cd "$OUTSIDE" || exit 1
@@ -289,8 +290,12 @@ check "the model reader takes the top-level id" \
 
 OUT="$(HOME="$OC_HOME" OPENCODE_SESSION_ID=ses_escaped \
     "$BIN" add --skill adapters --dry-run --json --adapter opencode)"
-check "an undecodable escape falls back to the raw value" \
-    "$(json_field "$OUT" model)" '{"id":"\u0061","providerID":"p"}'
+check "the reader decodes a JSON escape" "$(json_field "$OUT" model)" "p/a"
+
+OUT="$(HOME="$OC_HOME" OPENCODE_SESSION_ID=ses_nonstring \
+    "$BIN" add --skill adapters --dry-run --json --adapter opencode)"
+check "an adapter failure is a blank field, never an error" \
+    "$(json_field "$OUT" model)" ""
 
 OUT="$(HOME="$OC_HOME" OPENCODE_SESSION_ID=ses_bare \
     "$BIN" add --skill adapters --dry-run --json --adapter opencode)"

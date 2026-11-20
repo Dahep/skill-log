@@ -1,12 +1,10 @@
 package settings
 
 import (
-	"database/sql"
+	"encoding/json"
 	"strings"
 
-	"github.com/Dahep/skill-log/internal/format"
-
-	_ "modernc.org/sqlite"
+	"github.com/Dahep/skill-log/internal/store"
 )
 
 const AdaptersEnv = "SKILL_LOG_ADAPTERS"
@@ -16,8 +14,6 @@ const AdaptersEnv = "SKILL_LOG_ADAPTERS"
 const OpenCodeSessionEnv = "OPENCODE_SESSION_ID"
 
 const openCodeDBRelative = "/.local/share/opencode/opencode.db"
-
-const openCodeModelSQL = "SELECT model FROM session_v2 WHERE id = ?"
 
 // AdapterContext is what an enabled adapter filled. Every field is a string; an
 // empty one means the adapter did not fill it, or that it failed.
@@ -64,128 +60,10 @@ func openCodeDBPath() string {
 	return EnvOrEmpty("HOME") + openCodeDBRelative
 }
 
-func isJSONSpace(ch byte) bool {
-	return ch == ' ' || ch == '\n' || ch == '\r' || ch == '\t'
-}
-
-// jsonStringSpan is the index just past the closing quote of the string opening at
-// at. Escapes are skipped as a pair. -1 when the string never closes.
-func jsonStringSpan(text string, at int) int {
-	i := at + 1
-	for i < len(text) {
-		switch text[i] {
-		case '\\':
-			i += 2
-			continue
-		case '"':
-			return i + 1
-		}
-		i++
-	}
-	return -1
-}
-
-// jsonStringValue is the text of the string that opens at at, its escapes resolved.
-// An unrecognised escape makes the value unreadable.
-func jsonStringValue(text string, at int) string {
-	end := jsonStringSpan(text, at)
-	if end == -1 {
-		return ""
-	}
-	inner := text[at+1 : end-1]
-	if strings.IndexByte(inner, '\\') == -1 {
-		return inner
-	}
-	var out strings.Builder
-	for i := 0; i < len(inner); {
-		if inner[i] != '\\' {
-			out.WriteByte(inner[i])
-			i++
-			continue
-		}
-		if i+1 >= len(inner) {
-			return ""
-		}
-		switch inner[i+1] {
-		case '"':
-			out.WriteByte('"')
-		case '\\':
-			out.WriteByte('\\')
-		case '/':
-			out.WriteByte('/')
-		case 'n':
-			out.WriteByte('\n')
-		case 't':
-			out.WriteByte('\t')
-		case 'r':
-			out.WriteByte('\r')
-		case 'b':
-			out.WriteByte('\b')
-		case 'f':
-			out.WriteByte('\f')
-		default:
-			return ""
-		}
-		i += 2
-	}
-	return out.String()
-}
-
-// jsonStringField is the value of a string field at the top level of a JSON object.
-// The scan tracks nesting, so a nested key never answers for the top-level one.
-func jsonStringField(text, key string) string {
-	i := 0
-	for i < len(text) && isJSONSpace(text[i]) {
-		i++
-	}
-	if i >= len(text) || text[i] != '{' {
-		return ""
-	}
-	i++
-	depth := 1
-	for i < len(text) {
-		c := text[i]
-		if c == '"' {
-			end := jsonStringSpan(text, i)
-			if end == -1 {
-				return ""
-			}
-			name := jsonStringValue(text, i)
-			i = end
-			j := i
-			for j < len(text) && isJSONSpace(text[j]) {
-				j++
-			}
-			if j < len(text) && text[j] == ':' {
-				if depth == 1 && name == key {
-					k := j + 1
-					for k < len(text) && isJSONSpace(text[k]) {
-						k++
-					}
-					if k < len(text) && text[k] == '"' {
-						return jsonStringValue(text, k)
-					}
-					return ""
-				}
-				i = j + 1
-			}
-			continue
-		}
-		if c == '{' || c == '[' {
-			depth++
-		} else if c == '}' || c == ']' {
-			depth--
-			if depth == 0 {
-				return ""
-			}
-		}
-		i++
-	}
-	return ""
-}
-
 // renderModel turns an opencode model value into `provider/id`. A value that is
-// not the `{"id":"...","providerID":"..."}` shape is passed through unchanged.
+// not a JSON object is passed through unchanged; a JSON object whose `id` and
+// `providerID` are not both strings is a blank field — an adapter failure is a
+// blank field, never an error.
 func renderModel(raw string) string {
 	if raw == "" {
 		return ""
@@ -193,38 +71,24 @@ func renderModel(raw string) string {
 	if !strings.HasPrefix(raw, "{") {
 		return raw
 	}
-	provider := jsonStringField(raw, "providerID")
-	modelID := jsonStringField(raw, "id")
+	var value struct {
+		ID         json.RawMessage `json:"id"`
+		ProviderID json.RawMessage `json:"providerID"`
+	}
+	if err := json.Unmarshal([]byte(raw), &value); err != nil {
+		return ""
+	}
+	var modelID, provider string
+	if err := json.Unmarshal(value.ID, &modelID); err != nil {
+		return ""
+	}
+	if err := json.Unmarshal(value.ProviderID, &provider); err != nil {
+		return ""
+	}
 	if provider == "" || modelID == "" {
-		return raw
+		return ""
 	}
 	return provider + "/" + modelID
-}
-
-func fileURI(path string) string {
-	return format.FileURI(path)
-}
-
-// openCodeModel is the model of an opencode session, or "". The session store is
-// read read-only, so a missing file or absent row is an empty string.
-func openCodeModel(sessionID string) string {
-	if sessionID == "" {
-		return ""
-	}
-	path := openCodeDBPath()
-	if !format.IsRegularFile(path) {
-		return ""
-	}
-	db, err := sql.Open("sqlite", fileURI(path)+"?mode=ro")
-	if err != nil {
-		return ""
-	}
-	defer db.Close()
-	var raw string
-	if err := db.QueryRow(openCodeModelSQL, sessionID).Scan(&raw); err != nil {
-		return ""
-	}
-	return renderModel(raw)
 }
 
 // ApplyAdapters runs the enabled adapters and collects what they filled. worktree is
@@ -239,7 +103,7 @@ func ApplyAdapters(names []string, worktree string, session string) AdapterConte
 				session = EnvOrEmpty(OpenCodeSessionEnv)
 			}
 			context.Session = session
-			context.Model = openCodeModel(context.Session)
+			context.Model = renderModel(store.HarnessSessionModel(openCodeDBPath(), session))
 		case "t3":
 			context.Project = T3Project(worktree)
 		}

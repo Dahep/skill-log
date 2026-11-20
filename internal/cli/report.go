@@ -214,7 +214,6 @@ func markerCount(count int) string {
 	return formatInt(int64(count)) + " markers"
 }
 
-// hash.
 func firstNine(text string) string {
 	if len(text) <= 9 {
 		return text
@@ -223,26 +222,39 @@ func firstNine(text string) string {
 }
 
 // reportSelection is what the selectors found: markers to write, rows already
-// closed, and ids the store does not have. `missing` is a failure.
+// closed, rows naming another machine, and ids the store does not have.
+// `missing` is a failure; `foreign` is named and never written.
 type reportSelection struct {
 	pending  []string
 	resolved []string
+	foreign  []string
 	missing  []int64
 }
 
-// list (resolved).
-func recordReportRow(row store.Invocation, pending, resolved *[]string) {
-	text := marker.Format(row.Machine, row.ID)
+// recordReportRow sorts one selected row into the selection. A row naming
+// another machine is foreign: named, never written into the file. The marker
+// goes through rowMarker, so an empty-machine row is this host's spelling; a
+// marker that does not parse back is kept pending, where the run refuses it.
+func recordReportRow(row store.Invocation, host string, selection *reportSelection) {
+	text := rowMarker(row.Machine, row.ID)
 	if row.Fix != "" {
-		*resolved = append(*resolved, text)
+		selection.resolved = append(selection.resolved, text)
 		return
 	}
-	*pending = append(*pending, text)
+	if _, ok := marker.Parse(text); !ok {
+		selection.pending = append(selection.pending, text)
+		return
+	}
+	if row.Machine != "" && row.Machine != host {
+		selection.foreign = append(selection.foreign, text)
+		return
+	}
+	selection.pending = append(selection.pending, text)
 }
 
-// selectReportMarkers is the markers the selectors name, split into pending and
-// resolved. A query with no id list reads every matching row.
-func selectReportMarkers(opened *store.Store, options reportOptions) (reportSelection, error) {
+// selectReportMarkers is the markers the selectors name, split into pending,
+// resolved and foreign. A query with no id list reads every matching row.
+func selectReportMarkers(opened *store.Store, options reportOptions, host string) (reportSelection, error) {
 	var selection reportSelection
 
 	var wanted []int64
@@ -269,7 +281,7 @@ func selectReportMarkers(opened *store.Store, options reportOptions) (reportSele
 			if options.skill != "" && row.Skill != options.skill {
 				continue
 			}
-			recordReportRow(*row, &selection.pending, &selection.resolved)
+			recordReportRow(*row, host, &selection)
 		}
 		return selection, nil
 	}
@@ -285,12 +297,11 @@ func selectReportMarkers(opened *store.Store, options reportOptions) (reportSele
 		return selection, err
 	}
 	for _, row := range rows {
-		recordReportRow(row, &selection.pending, &selection.resolved)
+		recordReportRow(row, host, &selection)
 	}
 	return selection, nil
 }
 
-// cannot read.
 type existingReport struct {
 	markers []string
 	bad     []string
@@ -300,19 +311,14 @@ type existingReport struct {
 // A report is tool-owned, so such a line is reported with its position.
 func parseReport(text, relative string) existingReport {
 	var report existingReport
-	for i, line := range strings.Split(text, "\n") {
-		value := strings.TrimSpace(line)
-		if value == "" {
-			continue
-		}
-		parsed, ok := marker.Parse(value)
-		if !ok {
-			report.bad = append(report.bad,
-				relative+":"+formatInt(int64(i+1))+
-					": not a marker (machine#id): "+format.Sanitize(value))
-			continue
-		}
+	markers, bad := marker.ScanLines(text)
+	for _, parsed := range markers {
 		report.markers = append(report.markers, parsed.Text())
+	}
+	for _, line := range bad {
+		report.bad = append(report.bad,
+			relative+":"+formatInt(int64(line.Line))+
+				": not a marker (machine#id): "+format.Sanitize(line.Text))
 	}
 	return report
 }
@@ -330,26 +336,46 @@ func writeReportJSON(path string, markers, resolved []string, already, dryRun bo
 	)
 }
 
-// closed.
-func resolvedNotes(resolved []string) string {
-	lines := make([]string, 0, len(resolved))
+// selectionNotes names the rows the write skips: the ones a change already
+// closed, and the ones naming another machine.
+func selectionNotes(resolved, foreign []string) string {
+	lines := make([]string, 0, len(resolved)+len(foreign))
 	for _, item := range resolved {
 		lines = append(lines, item+" already resolved; skipped")
+	}
+	for _, item := range foreign {
+		lines = append(lines, item+" names another machine; skipped")
 	}
 	return prefixedNotes(lines)
 }
 
-// write at all.
-func nothingOutcome(options reportOptions, resolved []string, notes string) Outcome {
+// nothingMessage names why the selection wrote nothing, so a row skipped for
+// naming another machine is never described as already resolved.
+func nothingMessage(resolved, foreign []string) string {
+	switch {
+	case len(resolved) == 0 && len(foreign) == 0:
+		return "nothing to report"
+	case len(resolved) > 0 && len(foreign) > 0:
+		return "nothing to report: the selected rows are already resolved or name another machine"
+	case len(foreign) > 0:
+		return "nothing to report: the selected rows name another machine"
+	default:
+		return "nothing to report: the selected rows are already resolved"
+	}
+}
+
+func nothingOutcome(options reportOptions, selection reportSelection, notes string) Outcome {
+	resolved := sortedUnique(selection.resolved)
 	if options.json {
 		return OKNotes(writeReportJSON("", nil, resolved, false, options.dryRun, ""), notes)
 	}
-	return OKNotes("nothing to report: the selected rows are already resolved", notes)
+	return OKNotes(nothingMessage(resolved, selection.foreign), notes)
 }
 
-func trailerOutcome(pending, resolved []string, notes string, options reportOptions) Outcome {
+func trailerOutcome(pending []string, selection reportSelection, notes string, options reportOptions) Outcome {
+	resolved := sortedUnique(selection.resolved)
 	if len(pending) == 0 {
-		return nothingOutcome(options, resolved, notes)
+		return nothingOutcome(options, selection, notes)
 	}
 	line := trailerKey + ": " + strings.Join(pending, ", ")
 	allNotes := notes
@@ -364,7 +390,6 @@ func trailerOutcome(pending, resolved []string, notes string, options reportOpti
 	return OKNotes(line, allNotes)
 }
 
-// warnings.
 type checkResult struct {
 	markers  []string
 	problems []string
@@ -373,20 +398,15 @@ type checkResult struct {
 
 // validateReport checks every line of a report against the marker grammar and the
 // store. A marker this store lacks is a warning; a line that is no marker is a problem.
-func validateReport(text, relative string, opened *store.Store, haveStore bool) (checkResult, error) {
+func validateReport(text, relative string, opened *store.Store, haveStore bool, host string) (checkResult, error) {
 	var result checkResult
-	for i, line := range strings.Split(text, "\n") {
-		value := strings.TrimSpace(line)
-		if value == "" {
-			continue
-		}
-		parsed, ok := marker.Parse(value)
-		if !ok {
-			result.problems = append(result.problems,
-				relative+":"+formatInt(int64(i+1))+
-					": not a marker (machine#id): "+format.Sanitize(value))
-			continue
-		}
+	markers, bad := marker.ScanLines(text)
+	for _, line := range bad {
+		result.problems = append(result.problems,
+			relative+":"+formatInt(int64(line.Line))+
+				": not a marker (machine#id): "+format.Sanitize(line.Text))
+	}
+	for _, parsed := range markers {
 		textMarker := parsed.Text()
 		result.markers = append(result.markers, textMarker)
 		if !haveStore {
@@ -401,7 +421,13 @@ func validateReport(text, relative string, opened *store.Store, haveStore bool) 
 				textMarker+": not in this db (resolves where it is)")
 			continue
 		}
-		if row.Machine != parsed.Machine {
+		machine := row.Machine
+		if machine == "" {
+			// A row written before the machine column existed belongs to the
+			// machine reading it, so the report names this host.
+			machine = host
+		}
+		if machine != parsed.Machine {
 			result.warnings = append(result.warnings,
 				textMarker+": not in this db (resolves where it is)")
 			continue
@@ -414,8 +440,7 @@ func validateReport(text, relative string, opened *store.Store, haveStore bool) 
 	return result, nil
 }
 
-// problem.
-func checkOutcome(path, relative, storePath string, artifact, asJSON bool) Outcome {
+func checkOutcome(path, relative, storePath string, artifact, asJSON bool, host string) Outcome {
 	if !artifact {
 		if asJSON {
 			return OK(format.Object(format.Str("path", ""), format.Raw("markers", "[]"), format.Raw("problems", "[]"), format.Raw("warnings", "[]")))
@@ -451,7 +476,7 @@ func checkOutcome(path, relative, storePath string, artifact, asJSON bool) Outco
 	if err != nil {
 		return Fail("cannot read the report: "+path+": "+err.Error(), ExitFailure)
 	}
-	result, err := validateReport(text, relative, opened, haveStore)
+	result, err := validateReport(text, relative, opened, haveStore, host)
 	if err != nil {
 		failure := readFailure(storePath, err)
 		return Fail(failure.Message, failure.Code)
@@ -532,8 +557,15 @@ func handleReport(args []string) Outcome {
 	artifact := format.IsDir(filepath.Join(root, filepath.FromSlash(reportDir)))
 	storePath := settings.ResolveDB(options.db)
 
+	// Every ownership decision needs this machine's spelling: without it a
+	// foreign marker would be reported or stamped, which the contract forbids.
+	host, hostErr := settings.Hostname()
+	if hostErr != nil {
+		return Fail(hostErr.Error(), ExitFailure)
+	}
+
 	if options.check {
-		return checkOutcome(path, relative, storePath, artifact, options.json)
+		return checkOutcome(path, relative, storePath, artifact, options.json, host)
 	}
 
 	opened, failure := openStore(storePath, false)
@@ -547,7 +579,7 @@ func handleReport(args []string) Outcome {
 
 	var selection reportSelection
 	// A store with no tables yet is an empty log: every named id is a missing id.
-	selection, err = selectReportMarkers(opened, options)
+	selection, err = selectReportMarkers(opened, options, host)
 	if err != nil {
 		failure := readFailure(storePath, err)
 		return Fail(failure.Message, failure.Code)
@@ -562,7 +594,7 @@ func handleReport(args []string) Outcome {
 
 	pending := sortedUnique(selection.pending)
 	resolved := sortedUnique(selection.resolved)
-	notes := resolvedNotes(resolved)
+	notes := selectionNotes(resolved, sortedUnique(selection.foreign))
 
 	// A report only carries markers that parse back to the same row: an
 	// unparseable marker would put a line in the file no resolver can read.
@@ -578,7 +610,7 @@ func handleReport(args []string) Outcome {
 	}
 
 	if !artifact {
-		return trailerOutcome(pending, resolved, notes, options)
+		return trailerOutcome(pending, selection, notes, options)
 	}
 
 	var existing existingReport
@@ -607,7 +639,7 @@ func handleReport(args []string) Outcome {
 	}
 
 	if len(merged) == 0 {
-		return nothingOutcome(options, resolved, notes)
+		return nothingOutcome(options, selection, notes)
 	}
 
 	already := existingCount > 0 && len(merged) == existingCount

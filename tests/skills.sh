@@ -637,6 +637,205 @@ check "a second adopt reports only unchanged and skipped" \
     "$(printf '%s\n' "$OUT" | python3 -c 'import json,sys; s={json.loads(l)["action"] for l in sys.stdin if l.strip()}; print(" ".join(sorted(s)))')" \
     "skipped unchanged"
 
+# ------------------------------------------------ the vendor stamp's shape
+#
+# The stamp is a `source:` key inside the frontmatter's top-level
+# `metadata:` block, recognised by shape. A `source:` outside the block,
+# and a block the closing `---` never ends, are no stamp.
+STAMP="$SCRATCH/stamp"
+rm -rf "$STAMP"
+mkdir -p "$STAMP/inline" "$STAMP/closed" "$STAMP/unterminated"
+{
+    printf -- '---\n'
+    printf 'name: inline\n'
+    printf 'metadata:\n'
+    printf '  source: https://example.com/upstream\n'
+    printf -- '---\n'
+} > "$STAMP/inline/SKILL.md"
+{
+    printf -- '---\n'
+    printf 'name: closed\n'
+    printf 'metadata: {license: MIT}\n'
+    printf 'source: https://example.com/upstream\n'
+    printf -- '---\n'
+} > "$STAMP/closed/SKILL.md"
+{
+    printf -- '---\n'
+    printf 'name: unterminated\n'
+    printf 'metadata:\n'
+    printf '  source: https://example.com/upstream\n'
+} > "$STAMP/unterminated/SKILL.md"
+
+run skills audit --dir "$STAMP" --json
+check "the stamp is the source: key inside the metadata: block" \
+    "$(printf '%s\n' "$OUT" | python3 -c 'import json,sys; print(" ".join(o["skill"]+":"+o["state"] for o in map(json.loads, sys.stdin)))')" \
+    "closed:missing inline:vendored unterminated:missing"
+
+cp -r "$STAMP" "$STAMP.orig"
+run skills adopt --dir "$STAMP"
+check_contains "a vendored skill is skipped" "$OUT" \
+    "skipped  vendored  inline  $STAMP/inline"
+check "the vendored skill is untouched" \
+    "$(md5sum < "$STAMP/inline/SKILL.md")" \
+    "$(md5sum < "$STAMP.orig/inline/SKILL.md")"
+check_contains "a source: outside the metadata: block is no stamp" \
+    "$(cat "$STAMP/closed/SKILL.md")" "add --skill 'closed'"
+check_contains "an unterminated frontmatter block is no stamp" \
+    "$(cat "$STAMP/unterminated/SKILL.md")" "add --skill 'unterminated'"
+
+# ------------------------------------------------- a documented block example
+#
+# Skill-log fence lines inside a markdown code fence are documentation,
+# not the block. The example is never read, matched, rewritten or deleted;
+# only the real block outside any code fence is adopted.
+example_region() {
+    python3 - "$1" <<'PY'
+import sys
+out, inside = [], False
+for line in open(sys.argv[1], encoding="utf-8").readlines():
+    if not inside and line.startswith("```markdown"):
+        inside = True
+    if inside:
+        out.append(line)
+        if len(out) > 1 and line.strip() == "```":
+            break
+sys.stdout.write("".join(out))
+PY
+}
+
+DOC="$SCRATCH/documented"
+rm -rf "$DOC"
+mkdir -p "$DOC/exampledoc"
+{
+    printf 'name: exampledoc\n\n'
+    printf 'The usage block looks like this:\n\n'
+    printf '```markdown\n'
+    render_block exampledoc "$EXPECTED_CMD" '## Usage log
+
+example text that must survive'
+    printf '```\n\n'
+    printf 'Real body below.\n\n'
+    render_block exampledoc "$EXPECTED_CMD" '## Usage log
+
+old wording
+'
+} > "$DOC/exampledoc/SKILL.md"
+BEFORE_EXAMPLE="$(example_region "$DOC/exampledoc/SKILL.md" | md5sum)"
+
+run skills adopt --dir "$DOC"
+check "the documented example is not the block" "$STATUS" "0"
+check "the example block is byte-identical" \
+    "$(example_region "$DOC/exampledoc/SKILL.md" | md5sum)" "$BEFORE_EXAMPLE"
+check "the example's text survives the adoption" \
+    "$(grep -c 'example text that must survive' "$DOC/exampledoc/SKILL.md")" "1"
+check_contains "the real block was the one updated" \
+    "$(cat "$DOC/exampledoc/SKILL.md")" "add --skill 'exampledoc'"
+check_absent "the stale render is gone from the real block" \
+    "$(cat "$DOC/exampledoc/SKILL.md")" "old wording"
+
+# --force rewrites an edited block; the example's text is still not
+# deleted with it.
+sed -i 's/silent write/quiet write/' "$DOC/exampledoc/SKILL.md"
+run skills adopt --dir "$DOC" --force
+check "adopt --force rewrites the edited real block" "$STATUS" "0"
+check "adopt --force does not delete the example's text" \
+    "$(grep -c 'example text that must survive' "$DOC/exampledoc/SKILL.md")" "1"
+check "adopt --force keeps the example block byte-identical" \
+    "$(example_region "$DOC/exampledoc/SKILL.md" | md5sum)" "$BEFORE_EXAMPLE"
+
+# ---------------------------------------------- a truncated close is edited
+#
+# An opening fence whose close never matches is an orphan: edited, never
+# missing. adoption refuses it without --force and never appends a second
+# block below it.
+ORPHAN="$SCRATCH/orphan"
+rm -rf "$ORPHAN"
+mkdir -p "$ORPHAN/orphandoc"
+{
+    printf 'name: orphandoc\n\n'
+    printf '<!-- skill-log:usage-log template=0000000000000000 hash=0000000000000000 -->\n'
+    printf '## Usage log\n\norphan content\n'
+    printf '<!-- /skill-log:usage-log\n'
+} > "$ORPHAN/orphandoc/SKILL.md"
+BEFORE_ORPHAN="$(md5sum < "$ORPHAN/orphandoc/SKILL.md")"
+
+run skills audit --dir "$ORPHAN" --json
+check "an opening fence with a truncated close is edited" \
+    "$(json_field "$OUT" state)" "edited"
+run skills adopt --dir "$ORPHAN"
+check "adopt refuses an orphaned fence without --force" "$STATUS" "1"
+check "the refused run appends no second block" \
+    "$(grep -c '^<!-- skill-log:usage-log' "$ORPHAN/orphandoc/SKILL.md")" "1"
+check "the refused run leaves the file alone" \
+    "$(md5sum < "$ORPHAN/orphandoc/SKILL.md")" "$BEFORE_ORPHAN"
+
+run skills adopt --dir "$ORPHAN" --force
+check "adopt --force rewrites the orphaned fence" "$STATUS" "0"
+check "the rewritten file has exactly one opening fence" \
+    "$(grep -c '^<!-- skill-log:usage-log' "$ORPHAN/orphandoc/SKILL.md")" "1"
+check_contains "the rewritten orphan is the current render" \
+    "$(cat "$ORPHAN/orphandoc/SKILL.md")" "add --skill 'orphandoc'"
+
+# ------------------------------------ a code fence inside the block is content
+#
+# The close line belongs to the block, not to a markdown code fence: an
+# unclosed fence inside the block must not turn the real close into content.
+# Everything after the close is user-owned, and --force must not delete it.
+INFENCE="$SCRATCH/fence-in-block"
+rm -rf "$INFENCE"
+mkdir -p "$INFENCE/fencedoc"
+printf 'name: fencedoc\n' >"$INFENCE/fencedoc/SKILL.md"
+run skills adopt --dir "$INFENCE"
+python3 - "$INFENCE/fencedoc/SKILL.md" <<'PY'
+import sys
+path = sys.argv[1]
+lines = open(path).read().split("\n")
+close = [i for i, line in enumerate(lines) if line.startswith("<!-- /skill-log")][0]
+lines[close:close] = ["```sh", "sample"]
+lines.append("USER TEXT AFTER THE CLOSE.")
+open(path, "w").write("\n".join(lines))
+PY
+run skills adopt --dir "$INFENCE" --force
+check "a forced rewrite keeps the text after the close" \
+    "$(grep -c 'USER TEXT AFTER THE CLOSE' "$INFENCE/fencedoc/SKILL.md")" "1"
+check "a code fence inside the block does not duplicate the block" \
+    "$(grep -c '^<!-- skill-log:usage-log' "$INFENCE/fencedoc/SKILL.md")" "1"
+
+# ------------------------------------------ an unclosed code fence is no fence
+#
+# A document that opens a code fence it never closes is a typo, not a fence:
+# the real block stays visible and a second run changes nothing.
+UNCLOSED="$SCRATCH/unclosed-fence"
+rm -rf "$UNCLOSED"
+mkdir -p "$UNCLOSED/uncloseddoc"
+printf 'name: uncloseddoc\n' >"$UNCLOSED/uncloseddoc/SKILL.md"
+run skills adopt --dir "$UNCLOSED"
+printf '```sh\nsample\n' >>"$UNCLOSED/uncloseddoc/SKILL.md"
+BEFORE_UNCLOSED="$(md5sum <"$UNCLOSED/uncloseddoc/SKILL.md")"
+run skills audit --dir "$UNCLOSED" --json
+check "an unclosed code fence does not hide the block" \
+    "$(json_field "$OUT" state)" "ok"
+run skills adopt --dir "$UNCLOSED"
+check "an unclosed code fence: the second run changes nothing" \
+    "$(md5sum <"$UNCLOSED/uncloseddoc/SKILL.md")" "$BEFORE_UNCLOSED"
+
+# A four-space indented sample is an indented code block, not a fence.
+INDENTED="$SCRATCH/indented-sample"
+rm -rf "$INDENTED"
+mkdir -p "$INDENTED/indenteddoc"
+{
+    printf 'name: indenteddoc\n\n'
+    printf '# Doc\n\n'
+    printf '    ```\n'
+    printf '    sample\n\n'
+} >"$INDENTED/indenteddoc/SKILL.md"
+run skills adopt --dir "$INDENTED"
+run skills audit --dir "$INDENTED" --json
+check "a four-space indented sample is not a fence" \
+    "$(json_field "$OUT" state)" "ok"
+check "a four-space indented sample: one block" \
+    "$(grep -c '^<!-- skill-log:usage-log' "$INDENTED/indenteddoc/SKILL.md")" "1"
+
 # ------------------------------------------------ a moved binary is stale
 MOVEDBIN="$SCRATCH/moved-bin"
 rm -rf "$MOVEDBIN"
@@ -781,6 +980,50 @@ check "running the rendered line exits 0" "$STATUS" "0"
 check "running the rendered line creates no file" \
     "$(test -e "$SCRATCH/pwned" && echo created || echo none)" "none"
 
+# A single-backtick code span whose content starts with `<command>` is a
+# command line too: its substituted values are shell-quoted exactly as on
+# an indented command line, and the span is never a refusal case.
+SPAN="$SCRATCH/span"
+rm -rf "$SPAN"
+mkdir -p "$SPAN/tpl" "$SPAN/injected/alpha"
+printf 'Run `<command> add --skill <name>` at the end.\n\n    <command> add --skill <name>\n' \
+    > "$SPAN/tpl/usage-log.md"
+printf -- '---\nname: alpha; touch %s/span-pwned\n---\n\nbody\n' "$SCRATCH" \
+    > "$SPAN/injected/alpha/SKILL.md"
+run skills template show --template-dir "$SPAN/tpl"
+check "a command span is not a quoted-placeholder refusal" "$STATUS" "0"
+run skills adopt --dir "$SPAN/injected" --template-dir "$SPAN/tpl"
+check "the command span renders" "$STATUS" "0"
+SPAN_LINE="$(grep -m1 ' at the end' "$SPAN/injected/alpha/SKILL.md")"
+check_contains "the rendered span contains the quoted value" "$SPAN_LINE" \
+    "add --skill 'alpha; touch $SCRATCH/span-pwned'"
+check_contains "the rendered span quotes the binary too" "$SPAN_LINE" \
+    "'$EXPECTED_CMD' add --skill"
+check_absent "the span's name value never runs unquoted" "$SPAN_LINE" "skill alpha;"
+check_contains "the indented command line still matches" \
+    "$(cat "$SPAN/injected/alpha/SKILL.md")" \
+    "    '$EXPECTED_CMD' add --skill 'alpha; touch $SCRATCH/span-pwned'"
+
+# ------------------------------------------------- a symlinked skill file
+#
+# dotfiles-style: SKILL.md is a link to the shared source. adopt writes the
+# resolved target and never replaces the link, and the target's own mode
+# survives the write.
+LINK="$SCRATCH/linked"
+rm -rf "$LINK"
+mkdir -p "$LINK/skills/alpha" "$LINK/shared"
+printf 'name: alpha\n' > "$LINK/shared/foo.md"
+chmod 0644 "$LINK/shared/foo.md"
+ln -s ../../shared/foo.md "$LINK/skills/alpha/SKILL.md"
+
+run skills adopt --dir "$LINK/skills"
+check "adopt writes through a symlinked skill" "$STATUS" "0"
+check "the symlink stays a link" \
+    "$([ -L "$LINK/skills/alpha/SKILL.md" ] && echo yes || echo no)" "yes"
+check_contains "the target carries the new fenced block" \
+    "$(cat "$LINK/shared/foo.md")" "add --skill 'alpha'"
+check "the target keeps its mode" "$(stat -c %a "$LINK/shared/foo.md")" "644"
+
 # A binary path carrying a space is one word too.
 SPACED="$SCRATCH/spaced dir"
 rm -rf "$SPACED"
@@ -800,6 +1043,21 @@ SPACED_LINE="$(grep -m1 " add --skill " "$SPACED_SKILLS/x/SKILL.md")"
 OUT="$(sh -c "$SPACED_LINE" 2>"$SCRATCH/stderr")"
 STATUS=$?
 check "the spaced binary's command line exits 0" "$STATUS" "0"
+
+# The same path inside a command span: the span quotes it, so a reader who
+# copies the span still runs one word.
+SPAN_SPACED="$SCRATCH/span-spaced"
+rm -rf "$SPAN_SPACED"
+mkdir -p "$SPAN_SPACED/tpl" "$SPAN_SPACED/skills/y"
+printf 'Run `<command> add --skill <name>` at the end.\n' \
+    >"$SPAN_SPACED/tpl/usage-log.md"
+printf 'name: y\n' >"$SPAN_SPACED/skills/y/SKILL.md"
+"$SPACED/skill-log" skills adopt --dir "$SPAN_SPACED/skills" \
+    --template-dir "$SPAN_SPACED/tpl" >/dev/null 2>"$SCRATCH/stderr"
+check "a command span renders with a spaced binary" "$?" "0"
+SPAN_SPACED_LINE="$(grep -m1 ' at the end' "$SPAN_SPACED/skills/y/SKILL.md")"
+check_contains "a command span quotes a spaced binary" "$SPAN_SPACED_LINE" \
+    "'$SPACED_CMD' add --skill 'y'"
 
 # Prose is read, not run: the placeholder stays plain there.
 check_contains "a prose placeholder stays unquoted" \

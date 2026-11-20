@@ -41,18 +41,12 @@ func templateActionJSON(item templateAction) string {
 // source and hashes.
 func handleTemplateShow(options skillsOptions) Outcome {
 	templateDir := templatepkg.ResolveDir(options.templateDir)
-	usage, err := templatepkg.Load(assets.UsageLogName, templateDir)
+	usage, err := templatepkg.LoadValidated(assets.UsageLogName, templateDir)
 	if err != nil {
 		return Fail(err.Error(), ExitFailure)
 	}
-	review, err := templatepkg.Load(assets.ReviewName, templateDir)
+	review, err := templatepkg.LoadValidated(assets.ReviewName, templateDir)
 	if err != nil {
-		return Fail(err.Error(), ExitFailure)
-	}
-	if err := document.ValidateTemplate(assets.UsageLogName, usage.Content); err != nil {
-		return Fail(err.Error(), ExitFailure)
-	}
-	if err := document.ValidateTemplate(assets.ReviewName, review.Content); err != nil {
 		return Fail(err.Error(), ExitFailure)
 	}
 
@@ -93,7 +87,7 @@ func handleTemplateSeed(options skillsOptions) Outcome {
 	refused := false
 
 	for _, name := range names {
-		target := joinPath(dir, name)
+		target := format.JoinPath(dir, name)
 		if format.IsRegularFile(target) && !options.force {
 			refused = true
 			actions = append(actions, templateAction{
@@ -118,7 +112,7 @@ func handleTemplateSeed(options skillsOptions) Outcome {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return Fail("cannot create "+dir+": "+err.Error(), ExitFailure)
 		}
-		if err := format.WriteText(target, content); err != nil {
+		if err := format.WriteTextThroughLink(target, content); err != nil {
 			return Fail("cannot write "+target+": "+err.Error(), ExitFailure)
 		}
 		if err := templatepkg.WriteSeeded(name, document.Hash(content)); err != nil {
@@ -148,7 +142,7 @@ func handleTemplateReset(options skillsOptions) Outcome {
 	refused := false
 
 	for _, name := range names {
-		target := joinPath(dir, name)
+		target := format.JoinPath(dir, name)
 		if !format.IsRegularFile(target) {
 			actions = append(actions, templateAction{
 				path:   target,

@@ -14,7 +14,8 @@ func rowMarker(machine string, id int64) string {
 	if machine == "" {
 		host, err := settings.Hostname()
 		if err != nil {
-			return "#" + formatInt(id)
+			// No hostname, no spelling: a marker is never assembled by hand.
+			return ""
 		}
 		machine = host
 	}

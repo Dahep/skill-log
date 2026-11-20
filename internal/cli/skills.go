@@ -155,10 +155,6 @@ func movedSuffix(moved string) string {
 	return "; " + moved
 }
 
-// joinPath is the tool's path spelling: the directory and the name joined with a
-// separator, deliberately naive rather than filepath.Join's cleaning one.
-func joinPath(dir, name string) string { return dir + "/" + name }
-
 func skillDirs(dir string) []string {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -170,8 +166,8 @@ func skillDirs(dir string) []string {
 		if name == "." || name == ".." {
 			continue
 		}
-		sub := joinPath(dir, name)
-		if format.IsDir(sub) && format.IsRegularFile(joinPath(sub, "SKILL.md")) {
+		sub := format.JoinPath(dir, name)
+		if format.IsDir(sub) && format.IsRegularFile(format.JoinPath(sub, "SKILL.md")) {
 			names = append(names, name)
 		}
 	}
@@ -187,8 +183,8 @@ type skillState struct {
 
 // auditSkill returns one skill's state, from its `SKILL.md`.
 func auditSkill(dir, name string, template templatepkg.Template, command string) (skillState, error) {
-	result := skillState{skill: name, path: joinPath(dir, name)}
-	docPath := joinPath(result.path, "SKILL.md")
+	result := skillState{skill: name, path: format.JoinPath(dir, name)}
+	docPath := format.JoinPath(result.path, "SKILL.md")
 	text, err := format.ReadText(docPath)
 	if err != nil {
 		return result, errors.New("cannot read " + docPath + ": " + err.Error())
@@ -213,8 +209,8 @@ type adopted struct {
 // adoptSkill makes one skill's document conform, and says what happened. The
 // state is the document's state *before* the run.
 func adoptSkill(dir, name string, template templatepkg.Template, command string, force, dryRun bool) (adopted, error) {
-	result := adopted{skill: name, path: joinPath(dir, name)}
-	docPath := joinPath(result.path, "SKILL.md")
+	result := adopted{skill: name, path: format.JoinPath(dir, name)}
+	docPath := format.JoinPath(result.path, "SKILL.md")
 	text, err := format.ReadText(docPath)
 	if err != nil {
 		return result, errors.New("cannot read " + docPath + ": " + err.Error())
@@ -250,7 +246,7 @@ func adoptSkill(dir, name string, template templatepkg.Template, command string,
 		result.action = actionRewritten
 	}
 	if !dryRun {
-		if err := format.WriteText(docPath, updated); err != nil {
+		if err := format.WriteTextThroughLink(docPath, updated); err != nil {
 			return result, errors.New("cannot write " + docPath + ": " + err.Error())
 		}
 	}
@@ -374,15 +370,12 @@ func handleAudit(options skillsOptions) Outcome {
 	// The effective template is validated first: a broken template must not
 	// silently mark every skill stale.
 	templateDir := templatepkg.ResolveDir(options.templateDir)
-	template, err := templatepkg.Load(assets.UsageLogName, templateDir)
+	template, err := templatepkg.LoadValidated(assets.UsageLogName, templateDir)
 	if err != nil {
 		return Fail(err.Error(), ExitFailure)
 	}
 	review, err := templatepkg.Load(assets.ReviewName, templateDir)
 	if err != nil {
-		return Fail(err.Error(), ExitFailure)
-	}
-	if err := document.ValidateTemplate(assets.UsageLogName, template.Content); err != nil {
 		return Fail(err.Error(), ExitFailure)
 	}
 
@@ -437,11 +430,8 @@ func handleAdopt(options skillsOptions) Outcome {
 	// The effective template is validated first: rendering from a broken template
 	// would write blocks no skill can log from.
 	templateDir := templatepkg.ResolveDir(options.templateDir)
-	template, err := templatepkg.Load(assets.UsageLogName, templateDir)
+	template, err := templatepkg.LoadValidated(assets.UsageLogName, templateDir)
 	if err != nil {
-		return Fail(err.Error(), ExitFailure)
-	}
-	if err := document.ValidateTemplate(assets.UsageLogName, template.Content); err != nil {
 		return Fail(err.Error(), ExitFailure)
 	}
 

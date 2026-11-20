@@ -57,6 +57,30 @@ require_tools() {
     done
 }
 
+# static_link_probe <binary>: one of `static`, `dynamic <report>` or `skip`.
+# The static-link proof runs with ldd, else file; with neither tool installed it
+# is a skip, not a failure (a missing optional tool prints a skip line).
+static_link_probe() {
+    local report
+    if command -v ldd >/dev/null 2>&1; then
+        report="$(ldd "$1" 2>&1 || true)"
+        if printf '%s\n' "$report" | grep -qi 'not a dynamic executable'; then
+            printf 'static\n'
+        else
+            printf 'dynamic %s\n' "$report"
+        fi
+    elif command -v file >/dev/null 2>&1; then
+        report="$(file "$1" 2>&1 || true)"
+        if printf '%s\n' "$report" | grep -qi 'statically linked'; then
+            printf 'static\n'
+        else
+            printf 'dynamic %s\n' "$report"
+        fi
+    else
+        printf 'skip\n'
+    fi
+}
+
 # sandbox_root <root> <binary>...
 sandbox_root() {
     local root="$1"

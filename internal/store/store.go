@@ -227,6 +227,14 @@ func isFile(path string) bool {
 	return format.IsRegularFile(path)
 }
 
+// fileHasBytes reports whether the file already carries content. A zero-byte
+// file holds nothing to inherit and is created like an absent one; a file with
+// bytes was written by someone and is never inherited or converted.
+func fileHasBytes(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Size() > 0
+}
+
 // openRead opens an existing store for reading. A nil store with no refusal means
 // the file does not exist: a read never creates the file or an empty database.
 func openRead(path string) (*Store, *Refusal, error) {
@@ -250,7 +258,7 @@ func openRead(path string) (*Store, *Refusal, error) {
 		return nil, nil, err
 	}
 	store := &Store{db: db}
-	refusal, err := store.schemaRefusal(true)
+	refusal, err := store.schemaRefusal(true, fileHasBytes(path))
 	if err != nil {
 		db.Close()
 		return nil, nil, err
@@ -280,6 +288,7 @@ func openRead(path string) (*Store, *Refusal, error) {
 // state directory and the file are created here, and only here.
 func openWrite(path string) (*Store, *Refusal, error) {
 	existed := isFile(path)
+	hasBytes := fileHasBytes(path)
 	if err := createStoreDirectory(path); err != nil {
 		return nil, nil, err
 	}
@@ -294,8 +303,17 @@ func openWrite(path string) (*Store, *Refusal, error) {
 		}
 		return nil, nil, err
 	}
+	if !existed {
+		// SQLite just created the file; tighten it to the mode every file the
+		// tool writes itself gets. A file that was already there keeps its own
+		// mode, and the WAL and SHM sit inside the owner-only directory.
+		if err := os.Chmod(path, 0o600); err != nil {
+			db.Close()
+			return nil, nil, err
+		}
+	}
 	store := &Store{db: db}
-	refusal, err := store.schemaRefusal(existed)
+	refusal, err := store.schemaRefusal(existed, hasBytes)
 	if err != nil {
 		db.Close()
 		return nil, nil, err
@@ -384,7 +402,10 @@ func (s *Store) isOlder() (bool, error) {
 	return len(missing) > 0, nil
 }
 
-func (s *Store) schemaRefusal(existed bool) (*Refusal, error) {
+// schemaRefusal refuses a file that is not this schema. hasBytes says the file
+// already carried content when it was found: a zero-byte file holds nothing to
+// inherit, and is treated like an absent one.
+func (s *Store) schemaRefusal(existed, hasBytes bool) (*Refusal, error) {
 	older, err := s.isOlder()
 	if err != nil {
 		if isCorruption(err, err.Error()) {
@@ -402,31 +423,17 @@ func (s *Store) schemaRefusal(existed bool) (*Refusal, error) {
 		}
 		return nil, err
 	}
-	if !ours && existed {
-		tables, err := s.userTableCount()
+	if !ours && existed && hasBytes {
+		// A concurrent `add` may have committed the schema between the
+		// queries: ask once more before calling the file foreign.
+		ours, err = s.isOurs()
 		if err != nil {
-			if isCorruption(err, err.Error()) {
-				return &Refusal{Kind: Damaged}, nil
-			}
 			return nil, err
 		}
-		version, err := s.userVersion()
-		if err != nil {
-			if isCorruption(err, err.Error()) {
-				return &Refusal{Kind: Damaged}, nil
-			}
-			return nil, err
-		}
-		if tables > 0 || version != 0 {
-			// A concurrent `add` may have committed the schema between those two
-			// queries: ask once more before calling the file foreign.
-			ours, err = s.isOurs()
-			if err != nil {
-				return nil, err
-			}
-			if !ours {
-				return &Refusal{Kind: Foreign}, nil
-			}
+		if !ours {
+			// A file that is already a database and not this schema is
+			// refused by name: the store is created, never inherited.
+			return &Refusal{Kind: Foreign}, nil
 		}
 	}
 	if ours {
@@ -507,16 +514,4 @@ func (s *Store) userVersion() (int, error) {
 		return 0, err
 	}
 	return version, nil
-}
-
-func (s *Store) userTableCount() (int, error) {
-	var count int
-	err := s.db.QueryRow(
-		"SELECT count(*) FROM sqlite_master WHERE type = 'table'" +
-			" AND name NOT LIKE 'sqlite_%'",
-	).Scan(&count)
-	if err != nil {
-		return 0, err
-	}
-	return count, nil
 }

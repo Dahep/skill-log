@@ -26,6 +26,10 @@ func FileURI(path string) string {
 	return "file:" + strings.Join(segments, "/")
 }
 
+// JoinPath is the tool's path spelling: the directory and the name joined with a
+// separator, deliberately naive rather than filepath.Join's cleaning one.
+func JoinPath(dir, name string) string { return dir + "/" + name }
+
 func ReadText(path string) (string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -38,11 +42,38 @@ func WriteText(path, text string) error {
 	return WriteTextMode(path, text, 0o600)
 }
 
-// WriteTextMode replaces path with text, atomically, at exactly mode. The
-// temporary is created exclusively under an unpredictable name.
+// WriteTextThroughLink writes a user-owned file: a symlink at path is kept and
+// the write lands on its target, so a stowed skill or template stays a link.
+func WriteTextThroughLink(path, text string) error {
+	return writeText(path, text, 0o600, true)
+}
+
+// WriteTextMode replaces the file at path with text, atomically. The path is the
+// file the tool owns: a symlink planted there is replaced, never followed, so a
+// write cannot land outside the directory the contract names. A file that
+// exists keeps its own mode; only a newly created file gets mode.
 func WriteTextMode(path, text string, mode os.FileMode) error {
-	dir := filepath.Dir(path)
-	file, err := os.CreateTemp(dir, filepath.Base(path)+".tmp.*")
+	return writeText(path, text, mode, false)
+}
+
+// writeText stages the text beside its target and renames it into place. The
+// temporary is created exclusively under an unpredictable name.
+func writeText(path, text string, mode os.FileMode, follow bool) error {
+	target := path
+	if follow {
+		if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
+			resolved, err := filepath.EvalSymlinks(path)
+			if err != nil {
+				return fmt.Errorf("cannot resolve %s: %w", path, err)
+			}
+			target = resolved
+		}
+	}
+	if info, err := os.Stat(target); err == nil && info.Mode().IsRegular() {
+		mode = info.Mode().Perm()
+	}
+	dir := filepath.Dir(target)
+	file, err := os.CreateTemp(dir, filepath.Base(target)+".tmp.*")
 	if err != nil {
 		return fmt.Errorf("cannot create a temporary file beside %s: %w", path, err)
 	}
@@ -64,7 +95,7 @@ func WriteTextMode(path, text string, mode os.FileMode) error {
 	if err := file.Close(); err != nil {
 		return fmt.Errorf("cannot write %s: %w", path, err)
 	}
-	if err := os.Rename(temp, path); err != nil {
+	if err := os.Rename(temp, target); err != nil {
 		return fmt.Errorf("cannot replace %s: %w", path, err)
 	}
 	temp = ""

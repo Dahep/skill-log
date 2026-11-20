@@ -23,6 +23,16 @@ const hookName = "post-merge"
 // executable, so the file carries its execute bits at creation.
 const hookMode = 0o755
 
+// writeHook writes the hook this tool owns. The hook must be executable for git
+// to run it, and a rewrite keeps an existing file's mode, so the owner's execute
+// bit is restored after the write.
+func writeHook(path, wanted string) error {
+	if err := format.WriteTextMode(path, wanted, hookMode); err != nil {
+		return err
+	}
+	return format.SetOwnerExecutable(path)
+}
+
 // The artifact names, in the order every output lists them.
 const (
 	artifactStore     = "store"
@@ -313,7 +323,7 @@ func hookVerdict(common string, options setupOptions) verdict {
 		if options.dryRun {
 			return verdict{artifactHook, statusUpdated, path}
 		}
-		if err := format.WriteTextMode(path, wanted, hookMode); err != nil {
+		if err := writeHook(path, wanted); err != nil {
 			return verdict{artifactHook, statusDrift, err.Error()}
 		}
 		return verdict{artifactHook, statusUpdated, path}
@@ -325,10 +335,10 @@ func hookVerdict(common string, options setupOptions) verdict {
 	if options.dryRun {
 		return verdict{artifactHook, statusCreated, path}
 	}
-	if err := os.MkdirAll(joinPath(common, "hooks"), 0o755); err != nil {
+	if err := os.MkdirAll(format.JoinPath(common, "hooks"), 0o755); err != nil {
 		return verdict{artifactHook, statusDrift, err.Error()}
 	}
-	if err := format.WriteTextMode(path, wanted, hookMode); err != nil {
+	if err := writeHook(path, wanted); err != nil {
 		return verdict{artifactHook, statusDrift, err.Error()}
 	}
 	return verdict{artifactHook, statusCreated, path}
@@ -356,7 +366,7 @@ func removeHookVerdict(path string, dryRun bool) verdict {
 		}
 	}
 	if dryRun {
-		return verdict{artifactHook, statusUpdated, "removed " + path}
+		return verdict{artifactHook, statusUpdated, "would remove the post-merge hook at " + path}
 	}
 	if err := os.Remove(path); err != nil {
 		return verdict{artifactHook, statusDrift, err.Error()}
@@ -439,18 +449,12 @@ func skillsVerdict(skillsDir string, options setupOptions) verdict {
 	// The effective templates are validated first: a broken one would
 	// silently write blocks no skill can log from.
 	templateDir := templatepkg.ResolveDir("")
-	usage, err := templatepkg.Load(assets.UsageLogName, templateDir)
+	usage, err := templatepkg.LoadValidated(assets.UsageLogName, templateDir)
 	if err != nil {
 		return verdict{artifactSkills, statusDrift, err.Error()}
 	}
-	review, err := templatepkg.Load(assets.ReviewName, templateDir)
+	review, err := templatepkg.LoadValidated(assets.ReviewName, templateDir)
 	if err != nil {
-		return verdict{artifactSkills, statusDrift, err.Error()}
-	}
-	if err := document.ValidateTemplate(assets.UsageLogName, usage.Content); err != nil {
-		return verdict{artifactSkills, statusDrift, err.Error()}
-	}
-	if err := document.ValidateTemplate(assets.ReviewName, review.Content); err != nil {
 		return verdict{artifactSkills, statusDrift, err.Error()}
 	}
 	command := templatepkg.ResolvedCommand()
@@ -532,7 +536,7 @@ func (s skillInstall) text() string {
 // install as `updated` with the given reason.
 func replaceSkill(name, path, wanted, reason string, options setupOptions) skillInstall {
 	if !options.dryRun {
-		if err := format.WriteText(path, wanted); err != nil {
+		if err := format.WriteTextThroughLink(path, wanted); err != nil {
 			return skillInstall{name, statusDrift, err.Error()}
 		}
 	}
@@ -555,7 +559,7 @@ func installedSkillAction(dir, name, wanted string, options setupOptions) skillI
 				return skillInstall{name, statusDrift, err.Error()}
 			}
 		}
-		if err := format.WriteText(path, wanted); err != nil {
+		if err := format.WriteTextThroughLink(path, wanted); err != nil {
 			return skillInstall{name, statusDrift, err.Error()}
 		}
 		return skillInstall{name, statusCreated, path}
@@ -587,7 +591,7 @@ func installedSkillAction(dir, name, wanted string, options setupOptions) skillI
 			return skillInstall{name, statusDrift, "no version stamp at " + path}
 		}
 		if options.force {
-			return replaceSkill(name, path, wanted, path, options)
+			return replaceSkill(name, path, wanted, "had no version stamp", options)
 		}
 		return skillInstall{
 			name,
@@ -627,7 +631,7 @@ func installedSkillAction(dir, name, wanted string, options setupOptions) skillI
 		}
 	}
 	if options.force {
-		return replaceSkill(name, path, wanted, path, options)
+		return replaceSkill(name, path, wanted, "differed from this version", options)
 	}
 	return skillInstall{
 		name,

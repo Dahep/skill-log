@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/Dahep/skill-log/internal/format"
-	"github.com/Dahep/skill-log/internal/marker"
 )
 
 // Invocation is one invocation row and its problems. The column order is the
@@ -27,15 +26,6 @@ type Invocation struct {
 	Fix        string
 	ResolvedAt string
 	Problems   []string
-}
-
-// Marker is the row's marker: `machine#id`. A row that has not been written has
-// no id yet, so it has no marker either.
-func (i Invocation) Marker() string {
-	if i.ID == 0 {
-		return ""
-	}
-	return marker.Format(i.Machine, i.ID)
 }
 
 // Filters is what one read of the store selects. An empty string means the filter
@@ -104,8 +94,8 @@ func (s *Store) ReadInvocation(id int64) (*Invocation, error) {
 	return invocation, nil
 }
 
-// isEmptyLog reports whether the store carries no tables at all. A file that is a
-// SQLite database but not a skill-log store is an empty log, not a foreign one.
+// isEmptyLog reports whether the store carries no tables at all. A zero-byte
+// file is an empty log: it holds nothing to read and nothing to inherit.
 func (s *Store) isEmptyLog() (bool, error) {
 	has, err := s.hasTables()
 	if err != nil {

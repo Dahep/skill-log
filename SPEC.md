@@ -564,7 +564,9 @@ fence, someone edited the block.
 Unfenced text is user-owned and is not classified at all: the tool never reads,
 matches, rewrites or deletes it. A skill that has usage-log text but no fence
 is `missing`, and adoption appends a fenced block; reconciling the old section
-is a human task.
+is a human task. An opening fence whose closing line never comes is `edited`:
+its content cannot be proven, so audit reports it and adoption rewrites it only
+with `--force`.
 
 The vendor stamp is a frontmatter `metadata:` block carrying a `source:` key.
 Such a skill is skipped entirely: its wording belongs to its upstream, not to

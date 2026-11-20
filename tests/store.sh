@@ -58,6 +58,55 @@ check "the row carries a local ISO 8601 stamp with an offset" \
     "$(sqlite3 "$DB" 'select ts from invocations order by id limit 1' \
         | grep -cE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[+-][0-9]{2}:[0-9]{2}$')" "1"
 
+# ------------------------------------------------------------- owner-only
+
+# The tool creates its state directory and the store file owner-only: the
+# directory 0700, the file 0600 — the mode every file the tool writes
+# itself gets. WAL and SHM sit inside the 0700 directory. The creating run
+# sits under a permissive umask, so the modes come from the tool and not
+# from the caller's mask.
+OWNER="$SCRATCH/owner-only"
+mkdir -p "$OWNER"
+( umask 022
+  env -u XDG_STATE_HOME -u SKILL_LOG_DB XDG_STATE_HOME="$OWNER" HOME="$HOME_DIR" \
+      "$BIN" add --skill owner-only >/dev/null )
+check "the store's directory is created owner-only" \
+    "$(stat -c %a "$OWNER/skill-log")" "700"
+check "the store file is created owner-only" \
+    "$(stat -c %a "$OWNER/skill-log/skills.db")" "600"
+
+# A directory or file the user already had keeps its own mode: only what
+# the tool creates is tightened.
+PREMODE="$SCRATCH/premode"
+mkdir -p "$PREMODE/skill-log"
+chmod 0755 "$PREMODE/skill-log"
+( umask 022
+  env -u XDG_STATE_HOME -u SKILL_LOG_DB XDG_STATE_HOME="$PREMODE" HOME="$HOME_DIR" \
+      "$BIN" add --skill premode >/dev/null )
+check "a pre-created store directory is not re-moded" \
+    "$(stat -c %a "$PREMODE/skill-log")" "755"
+check "the store file created inside it is owner-only" \
+    "$(stat -c %a "$PREMODE/skill-log/skills.db")" "600"
+chmod 0644 "$PREMODE/skill-log/skills.db"
+( umask 022
+  env -u XDG_STATE_HOME -u SKILL_LOG_DB XDG_STATE_HOME="$PREMODE" HOME="$HOME_DIR" \
+      "$BIN" add --skill premode >/dev/null )
+check "a pre-existing store file is not re-moded" \
+    "$(stat -c %a "$PREMODE/skill-log/skills.db")" "644"
+
+# The directories above the store are the user's: only the store's own
+# directory is tightened.
+DEEPHOME="$SCRATCH/deep-home"
+rm -rf "$DEEPHOME"
+mkdir -p "$DEEPHOME"
+( umask 022
+  env -u XDG_STATE_HOME -u SKILL_LOG_DB HOME="$DEEPHOME" \
+      "$BIN" add --skill deep >/dev/null )
+check "the directories above the store keep their usual mode" \
+    "$(stat -c %a "$DEEPHOME/.local")" "755"
+check "the store's own directory stays owner-only" \
+    "$(stat -c %a "$DEEPHOME/.local/state/skill-log")" "700"
+
 PARALLEL_DB="$SCRATCH/parallel.db"
 PARALLEL_ERR="$SCRATCH/parallel.err"
 : >"$PARALLEL_ERR"
@@ -205,6 +254,21 @@ check "a foreign store is named" \
     "$(printf '%s' "$ERR" | grep -c 'foreign store')" "1"
 check_one_line "a foreign store is one line" "$ERR"
 check "a foreign store is not converted" "$(md5sum <"$SCRATCH/foreign.db")" "$BEFORE_SUM"
+
+# The store is created, never inherited: an existing SQLite database with
+# no skill-log tables is refused by name and gains nothing.
+sqlite3 "$SCRATCH/inherited.db" 'VACUUM;'
+BEFORE_SUM="$(md5sum <"$SCRATCH/inherited.db")"
+run add --skill x --db "$SCRATCH/inherited.db"
+check "an existing database is never inherited" "$STATUS" "1"
+check "an existing database is named as not a skill-log store" "$ERR" \
+    "skill-log: foreign store: $SCRATCH/inherited.db is not a skill-log store"
+check_one_line "the inheritance refusal is one line" "$ERR"
+check "the refused database gains no invocations table" \
+    "$(sqlite3 "$SCRATCH/inherited.db" \
+        "select count(*) from sqlite_master where name = 'invocations'")" "0"
+check "the refused database is not written" \
+    "$(md5sum <"$SCRATCH/inherited.db")" "$BEFORE_SUM"
 
 cp "$DB" "$SCRATCH/newer.db"
 sqlite3 "$SCRATCH/newer.db" 'pragma user_version=99'

@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/Dahep/skill-log/internal/settings"
+	"github.com/Dahep/skill-log/internal/marker"
 )
 
 type WriteResult struct {
@@ -52,15 +52,16 @@ func withRetry[T any](attempt func() (T, *Refusal, error)) (T, *Refusal, error) 
 }
 
 // WriteInvocation writes one invocation and its problems, atomically: one
-// transaction covers the invocation row and every problem row.
-func WriteInvocation(path string, row *Invocation, problems []string) (WriteResult, error) {
+// transaction covers the invocation row and every problem row. now is the
+// writer's stamp, from the caller's clock.
+func WriteInvocation(path string, row *Invocation, problems []string, now string) (WriteResult, error) {
 	result, _, err := withRetry(func() (WriteResult, *Refusal, error) {
-		return writeAttempt(path, row, problems)
+		return writeAttempt(path, row, problems, now)
 	})
 	return result, err
 }
 
-func writeAttempt(path string, row *Invocation, problems []string) (WriteResult, *Refusal, error) {
+func writeAttempt(path string, row *Invocation, problems []string, now string) (WriteResult, *Refusal, error) {
 	opened, refusal, err := openWrite(path)
 	if err != nil {
 		return WriteResult{}, nil, err
@@ -81,7 +82,7 @@ func writeAttempt(path string, row *Invocation, problems []string) (WriteResult,
 		}
 	}()
 
-	row.TS = settings.LocalTimestamp()
+	row.TS = now
 	result, err := tx.Exec(
 		"INSERT INTO invocations"+
 			" (ts, skill, harness, session, parent, model, repo, worktree,"+
@@ -124,9 +125,32 @@ type Resolved struct {
 	Changed    bool
 }
 
+// ForeignMarker is a row naming another machine: only this host's own spelling
+// stamps, so the row is refused and left untouched.
+type ForeignMarker struct {
+	Marker string
+}
+
+func (f *ForeignMarker) Error() string {
+	return "foreign marker " + f.Marker + ": only this host's spelling stamps"
+}
+
+// foreignRow reports whether a stored row names another machine. An empty
+// machine column is this host's own: the row belongs to the machine reading it.
+// An unknown host cannot establish this host's spelling, so a named row is
+// foreign: only this host's own spelling stamps.
+func foreignRow(machine, host string) bool {
+	if machine == "" {
+		return false
+	}
+	return machine != host
+}
+
 // ResolveRow stamps one row with the commit that carries its fix. The read comes
-// first: a row already carrying this fix is answered without a write.
-func ResolveRow(path string, id int64, fix string, dryRun bool) (Resolved, *Refusal, error) {
+// first: a row already carrying this fix is answered without a write. host is
+// this machine's hostname (or "" when it cannot be read); now is the caller's
+// stamp, which a dry run reports instead of writing.
+func ResolveRow(path string, id int64, fix, host, now string, dryRun bool) (Resolved, *Refusal, error) {
 	var result Resolved
 	opened, refusal, err := openRead(path)
 	if err != nil || refusal != nil {
@@ -143,6 +167,9 @@ func ResolveRow(path string, id int64, fix string, dryRun bool) (Resolved, *Refu
 	if row == nil {
 		return result, nil, nil
 	}
+	if foreignRow(row.Machine, host) {
+		return result, nil, &ForeignMarker{Marker: marker.Format(row.Machine, id)}
+	}
 	result.Found = true
 	result.Skill = row.Skill
 	result.Machine = row.Machine
@@ -153,13 +180,13 @@ func ResolveRow(path string, id int64, fix string, dryRun bool) (Resolved, *Refu
 		return result, nil, nil
 	}
 	if dryRun {
-		result.ResolvedAt = settings.LocalTimestamp()
+		result.ResolvedAt = now
 		result.Changed = true
 		return result, nil, nil
 	}
 
 	stamped, refusal, err := withRetry(func() (Resolved, *Refusal, error) {
-		return stampAttempt(path, id, fix)
+		return stampAttempt(path, id, fix, host, now)
 	})
 	if err != nil || refusal != nil {
 		return result, refusal, err
@@ -167,7 +194,7 @@ func ResolveRow(path string, id int64, fix string, dryRun bool) (Resolved, *Refu
 	return stamped, nil, nil
 }
 
-func stampAttempt(path string, id int64, fix string) (Resolved, *Refusal, error) {
+func stampAttempt(path string, id int64, fix, host, now string) (Resolved, *Refusal, error) {
 	var result Resolved
 	opened, refusal, err := openWrite(path)
 	if err != nil {
@@ -200,6 +227,10 @@ func stampAttempt(path string, id int64, fix string) (Resolved, *Refusal, error)
 		}
 		return result, nil, err
 	}
+	if foreignRow(machine, host) {
+		// The stamp is the write: the guard repeats where it lands.
+		return result, nil, &ForeignMarker{Marker: marker.Format(machine, id)}
+	}
 	result.Found = true
 	result.Skill = skill
 	result.Machine = machine
@@ -210,13 +241,12 @@ func stampAttempt(path string, id int64, fix string) (Resolved, *Refusal, error)
 		result.ResolvedAt = resolvedAt
 		return result, nil, nil
 	}
-	stamp := settings.LocalTimestamp()
 	if _, err := tx.Exec(
-		"UPDATE invocations SET fix = ?, resolved_at = ? WHERE id = ?", fix, stamp, id,
+		"UPDATE invocations SET fix = ?, resolved_at = ? WHERE id = ?", fix, now, id,
 	); err != nil {
 		return result, nil, err
 	}
-	result.ResolvedAt = stamp
+	result.ResolvedAt = now
 	result.Changed = true
 	if err := tx.Commit(); err != nil {
 		return result, nil, err

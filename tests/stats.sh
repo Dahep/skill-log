@@ -33,6 +33,7 @@ unset SKILL_LOG_PROJECT SKILL_LOG_T3_THREAD SKILL_LOG_MACHINE
 unset OPENCODE_SESSION_ID T3CODE_HOME
 
 DB="$HOME_DIR/.local/state/skill-log/skills.db"
+H="$(hostname)"
 
 # run <args...>: the binary with the sandbox's environment. Output lands
 # in $OUT and $ERR, the status in $STATUS.
@@ -70,18 +71,18 @@ fi
 
 cd "$SCRATCH" || exit 1
 
-run add --skill alpha --machine boxA --harness opencode --model m1 \
+run add --skill alpha --machine "$H" --harness opencode --model m1 \
     --repo r1 --project pA --problem "one" --problem "two"
 check "the first row is written" "$STATUS" "0"
 
-run add --skill alpha --machine boxA --harness claude --model m1 \
+run add --skill alpha --machine "$H" --harness claude --model m1 \
     --repo r2 --project pB --problem "three"
 check "the second row is written" "$STATUS" "0"
 
 run add --skill beta --machine boxB --harness opencode --model m2 --repo r1
 check "the third row is written" "$STATUS" "0"
 
-run add --skill gamma --machine boxA --harness claude --model m2 \
+run add --skill gamma --machine "$H" --harness claude --model m2 \
     --repo r2 --worktree "$HOME_DIR/wt" --problem "four"
 check "the fourth row is written" "$STATUS" "0"
 
@@ -158,10 +159,10 @@ check "the repo cut counts its runs" "$(json_field "$R1" invocations)" "2"
 check "the repo cut counts its problems" "$(json_field "$R1" problems)" "2"
 
 run stats --by machine --json
-BOXA="$(printf '%s\n' "$OUT" | grep '"machine":"boxA"')"
-check "the machine cut counts its runs" "$(json_field "$BOXA" invocations)" "3"
+HOST_ROWS="$(printf '%s\n' "$OUT" | grep "\"machine\":\"$H\"")"
+check "the machine cut counts its runs" "$(json_field "$HOST_ROWS" invocations)" "3"
 check "the machine cut rounds the rate" \
-    "$(json_number "$BOXA" problems_per_invocation)" "1.33"
+    "$(json_number "$HOST_ROWS" problems_per_invocation)" "1.33"
 
 run stats --by project --json
 PA="$(printf '%s\n' "$OUT" | grep '"project":"pA"')"
