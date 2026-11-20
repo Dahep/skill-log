@@ -1,0 +1,250 @@
+# Release: a tag produces the artifact mise installs.
+#
+# Triggered by a v* tag; workflow_dispatch builds and tests without
+# publishing, as a dry run (add the publish input to create the release
+# from a dispatch). The jobs:
+#
+#   build     — pinned Go toolchain, build a static executable with the
+#               version baked in, pack the archive, digest, clean-container
+#               packaging test (tests/packaging.sh on ubuntu:22.04),
+#               upload for the next jobs.
+#   release   — create the release for the tag, upload the archive and
+#               its digest, attach the provenance attestation.
+#   mise      — after the release is published: install the released tag
+#               through mise's github: backend in a clean container and
+#               run --version and setup --dry-run. Skippable by input.
+#
+# The archive is skill-log-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz with
+# the static executable and the licence material (§8); the version is
+# baked in from the tag.
+#
+# The build is CGO_ENABLED=0: the SQLite implementation is pure Go and
+# travels inside the executable, so the artifact is statically linked and
+# a machine needs neither a toolchain nor a SQLite to run it.
+#
+# Two rules the pipeline keeps, because the tag is a name somebody
+# chose:
+#
+#   * A version never reaches a shell as source. The tag is read into
+#     an environment variable and the shell reads it from there; a
+#     GitHub expression inside a `run:` block would be text the shell
+#     parses, and a tag named `v$(id)` would run a command.
+#   * Every third-party action is pinned to a commit SHA. A tag is a
+#     name somebody else can move; a commit is not.
+
+name: "release"
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "create the GitHub release (dispatch runs are dry by default)"
+        type: boolean
+        default: false
+      mise:
+        description: "run the mise install exercise after publishing"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: "Checkout"
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+
+      - name: "Install the pinned toolchain"
+        run: |
+          curl -fsSL https://mise.run | MISE_QUIET=1 sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          mise trust
+          mise install
+
+      - name: "Version from the tag"
+        id: version
+        env:
+          # The tag reaches the shell as a value, never as source.
+          TAG_NAME: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          set -euo pipefail
+          if [ "$REF_TYPE" = "tag" ]; then
+            version="$TAG_NAME"
+          else
+            version="v0.0.0-ci.$RUN_NUMBER"
+          fi
+          # The grammar is checked here, before anything uses the
+          # version: a release version is exactly vX.Y.Z. The dispatch
+          # version is the same shape with a ci suffix.
+          case "$version" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "release: version must look like vX.Y.Z, got: $version" >&2; exit 1 ;;
+          esac
+          # And the grammar, strictly: three numbers, nothing else.
+          if ! printf '%s' "$version" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-ci\.[0-9]+)?$'; then
+            echo "release: version must look like vX.Y.Z, got: $version" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "SKILL_LOG_VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: "Build and package"
+        env:
+          # The version comes from the environment, not from an
+          # expression inside the shell source.
+          SKILL_LOG_VERSION: ${{ steps.version.outputs.version }}
+          # The build is pure Go: the executable links nothing, so it
+          # runs on a machine with no toolchain and no SQLite.
+          CGO_ENABLED: "0"
+        run: ./scripts/package.sh --version "$SKILL_LOG_VERSION"
+
+      - name: "Packaging test in a clean container"
+        env:
+          SKILL_LOG_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          bash tests/packaging.sh \
+            --archive "dist/skill-log-$SKILL_LOG_VERSION-x86_64-unknown-linux-gnu.tar.gz" \
+            --image ubuntu:22.04
+
+      - name: "Attest the archive"
+        id: attest
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a  # v3
+        with:
+          subject-path: dist/skill-log-*-x86_64-unknown-linux-gnu.tar.gz
+
+      - name: "Upload the archive and digest"
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: release-artifact
+          path: |
+            dist/skill-log-*-x86_64-unknown-linux-gnu.tar.gz
+            dist/skill-log-*-x86_64-unknown-linux-gnu.tar.gz.sha256
+          if-no-files-found: error
+
+      - name: "Upload the attestation bundle"
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: attestation-bundle
+          path: ${{ steps.attest.outputs.bundle-path }}
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: github.ref_type == 'tag' || inputs.publish
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - name: "Download the archive and digest"
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
+        with:
+          name: release-artifact
+          path: dist
+
+      - name: "Download the attestation bundle"
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
+        with:
+          name: attestation-bundle
+          path: attestation
+
+      - name: "Create the release and upload"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          archives=(dist/skill-log-*-x86_64-unknown-linux-gnu.tar.gz)
+          [ "${#archives[@]}" -eq 1 ] || { echo "release: expected exactly one archive" >&2; exit 1; }
+          archive="${archives[0]}"
+          base="$(basename "$archive")"
+          version="$VERSION"
+          if [ -z "$version" ]; then
+            version="${base#skill-log-}"
+            version="${version%-x86_64-unknown-linux-gnu.tar.gz}"
+          fi
+          # The version is a release name, so its grammar is checked
+          # here too: it reaches `gh release create` as an argument, and
+          # a name that is not vX.Y.Z is not a release.
+          if ! printf '%s' "$version" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-ci\.[0-9]+)?$'; then
+            echo "release: version must look like vX.Y.Z, got: $version" >&2
+            exit 1
+          fi
+          [ -f "$archive.sha256" ] || { echo "release: $archive.sha256 is missing" >&2; exit 1; }
+
+          # The tag is the release; a dispatch publishing run may name a
+          # version that has no tag yet, so --verify-tag is a tag-run
+          # check rather than an unconditional flag.
+          if [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
+            verify=(--verify-tag)
+          else
+            verify=()
+          fi
+          gh release create "$version" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "skill-log $version" \
+            --notes "One archive: the static skill-log executable plus the licence material (SPEC.md §8). Install with: mise use -g github:Dahep/skill-log@$version" \
+            "${verify[@]}" \
+            "$archive" "$archive.sha256" || {
+              # A re-run of an existing release appends the assets.
+              gh release upload "$version" --clobber \
+                --repo "$GITHUB_REPOSITORY" \
+                "$archive" "$archive.sha256"
+            }
+
+          # The provenance attestation, as the Sigstore bundle the
+          # attestation action produced.
+          bundles=(attestation/*.json)
+          [ "${#bundles[@]}" -ge 1 ] || { echo "release: no attestation bundle" >&2; exit 1; }
+          gh release upload "$version" --clobber \
+            --repo "$GITHUB_REPOSITORY" "${bundles[@]}"
+
+  mise:
+    needs: [build, release]
+    if: always() && needs.release.result == 'success' && (github.ref_type == 'tag' || inputs.mise)
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    steps:
+      - name: "Install the released tag through mise's github: backend"
+        env:
+          # The version reaches the container through the environment.
+          SKILL_LOG_TAG: ${{ needs.build.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -z "$SKILL_LOG_TAG" ]; then
+            echo "mise: no version from the build job" >&2
+            exit 1
+          fi
+          docker run --rm -e SKILL_LOG_TAG="$SKILL_LOG_TAG" ubuntu:22.04 bash -c '
+            set -euo pipefail
+            apt-get update >/dev/null
+            apt-get install -y --no-install-recommends curl ca-certificates git >/dev/null
+            useradd -m user
+            cat > /tmp/inner.sh <<"INNER"
+          set -euo pipefail
+          curl -fsSL https://mise.run | MISE_QUIET=1 sh
+          export PATH="$HOME/.local/bin:$PATH"
+          mise use -g "github:Dahep/skill-log@$SKILL_LOG_TAG"
+          export PATH="$HOME/.local/share/mise/shims:$PATH"
+          skill-log --version
+          mkdir -p /tmp/scratch-repo
+          skill-log setup --dry-run --repo /tmp/scratch-repo --db /tmp/scratch-repo/store.db
+          INNER
+            chmod 644 /tmp/inner.sh
+            su user -c "bash /tmp/inner.sh"
+          '
