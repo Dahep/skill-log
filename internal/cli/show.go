@@ -174,7 +174,6 @@ func showTableColumns() []format.Column[store.Invocation] {
 		{Name: "skill", Cell: func(row store.Invocation) string { return format.Sanitize(row.Skill) }},
 		{Name: "fix", Cell: func(row store.Invocation) string { return format.Sanitize(row.Fix) }},
 		{Name: "resolved_at", Cell: func(row store.Invocation) string { return format.Sanitize(row.ResolvedAt) }},
-		{Name: "problems", Cell: func(row store.Invocation) string { return "" }, Under: showProblemLines},
 	}
 }
 
@@ -187,7 +186,7 @@ func showProblemLines(row store.Invocation) []string {
 }
 
 func renderShowTable(rows []store.Invocation) string {
-	return format.JoinLines(format.TableLines(showTableColumns(), rows))
+	return format.JoinLines(format.TableLinesUnder(showTableColumns(), rows, showProblemLines))
 }
 
 func handleShow(args []string) Outcome {

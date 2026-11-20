@@ -136,6 +136,42 @@ check_contains "the table shows the session" "$OUT" "ses-1"
 check_contains "the table shows the parent" "$OUT" "ses-1"
 check_contains "the table shows the t3 thread" "$OUT" "thr-9"
 
+# The header lists exactly the cells a row carries. The problems are
+# sub-lines under their invocation, not a column: a header for them would
+# name a column that never holds a value, and anything reading by header
+# offset would shift by one.
+check "the header names no problems column" \
+    "$(printf '%s\n' "$OUT" | head -1 | grep -c 'problems')" "0"
+check "the header ends with the last cell" \
+    "$(printf '%s\n' "$OUT" | head -1 | awk '{print $NF}')" "resolved_at"
+
+HEADER_DB="$SCRATCH/header.db"
+"$BIN" add --skill gamma --machine box3 --harness h --session s --parent p \
+    --model m --repo r --worktree /w --project pr --t3-thread t \
+    --db "$HEADER_DB" >/dev/null
+"$BIN" add --skill delta --machine box3 --harness h --session s --parent p \
+    --model m --repo r --worktree /w --project pr --t3-thread t \
+    --problem one --db "$HEADER_DB" >/dev/null
+"$BIN" resolve --id 1 --fix abc1234 --db "$HEADER_DB" >/dev/null
+count_cells() {
+    python3 -c 'import re,sys; print(len(re.split(r"  +", sys.stdin.read().strip())))'
+}
+for args in "" "--skill gamma" "--unresolved" "--last 1"; do
+    # shellcheck disable=SC2086  # $args is deliberately word-split
+    HOUT="$("$BIN" show --db "$HEADER_DB" $args)"
+    check "show $args: the header names no problems column" \
+        "$(printf '%s\n' "$HOUT" | head -1 | grep -c 'problems')" "0"
+    check "show $args: the header ends with the last cell" \
+        "$(printf '%s\n' "$HOUT" | head -1 | awk '{print $NF}')" "resolved_at"
+done
+# The row that carries every cell — resolved, so fix and resolved_at are
+# not empty — lines up cell for cell with the header.
+FULL="$(printf '%s\n' "$("$BIN" show --db "$HEADER_DB" --skill gamma)" | grep -m1 -E '^[0-9]+ ')"
+FULL_HEADER="$("$BIN" show --db "$HEADER_DB" --skill gamma | head -1)"
+check "a fully populated row has as many cells as the header" \
+    "$(printf '%s' "$FULL" | count_cells)" \
+    "$(printf '%s' "$FULL_HEADER" | count_cells)"
+
 check "the first problem is indented" \
     "$(printf '%s\n' "$OUT" | grep -c '^    problem 1: first issue$')" "1"
 check "the second problem is indented" \

@@ -6,12 +6,11 @@ import (
 	"unicode/utf8"
 )
 
-// Column describes one table column and the cells it renders. Under returns the
-// sub-lines emitted after the row's line: they are not padded as table cells.
+// Column describes one table column and the cells it renders. A column is a
+// header and one cell per row; it never renders a sub-line.
 type Column[T any] struct {
-	Name  string
-	Cell  func(T) string
-	Under func(T) []string
+	Name string
+	Cell func(T) string
 }
 
 func JoinLines(lines []string) string {
@@ -43,6 +42,13 @@ func ShortenHome(path string) string {
 // TableLines renders one table's header and rows. Columns are padded to their
 // widest value, separated by two spaces, and trailing spaces are removed.
 func TableLines[T any](columns []Column[T], rows []T) []string {
+	return TableLinesUnder(columns, rows, nil)
+}
+
+// TableLinesUnder is TableLines with sub-lines: under returns the lines emitted
+// after a row's line. They are not padded as cells, so the header keeps exactly
+// the columns the rows carry.
+func TableLinesUnder[T any](columns []Column[T], rows []T, under func(T) []string) []string {
 	widths := make([]int, len(columns))
 	for i, column := range columns {
 		widths[i] = utf8.RuneCountInString(column.Name)
@@ -61,11 +67,8 @@ func TableLines[T any](columns []Column[T], rows []T) []string {
 			cells = append(cells, column.Cell(row))
 		}
 		lines = append(lines, strings.TrimRight(tableLine(cells, widths), " "))
-		for _, column := range columns {
-			if column.Under == nil {
-				continue
-			}
-			lines = append(lines, column.Under(row)...)
+		if under != nil {
+			lines = append(lines, under(row)...)
 		}
 	}
 	return lines
