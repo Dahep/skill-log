@@ -14,11 +14,12 @@ parent, model, repo, worktree, project, machine, and how the skill was in play.
 Problems ride as separate rows attached to the invocation, so a clean run still
 counts as a denominator and problems-per-invocation stays measurable.
 
-`harvest` derives the other half from the harness's own store, read-only: every
-skill call and every hand-read of a skill file, plus every failed tool call,
-clustered into signatures and attributed to the invocation it followed. An
-error needs no skill to be recorded — the ones with no skill behind them are
-the documentation worklist, and they are the majority.
+`harvest` derives the other half from the harness's own store, read-only: the
+skill calls, the hand-reads of a skill file that no call covered, and every
+failed tool call, clustered into signatures and attributed to the invocation it
+followed when there is one. An error needs no skill to be recorded — the ones
+with no skill behind them are the documentation worklist, and they are the
+majority.
 
 The store is one SQLite file under the XDG state directory. There is no
 daemon and no network: one store per machine, and rows carry the machine that

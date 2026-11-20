@@ -1,13 +1,14 @@
 # ADR-0004: tool-error evidence and attribution
 
 **Status:** accepted, 2026-11-20.
-**Amends:** ADR-0002's invocation shape (two columns, one grade ladder);
-ADR-0003's seven-module map (an eighth module, three extended); the marker
-grammar in #1; and 1.0's scope: derived records move in, transcript mining
+**Amends:** ADR-0002's invocation shape (two columns, one grade ladder) and its
+command surface (two verbs, §5 renumbered); ADR-0003's seven-module map (an
+eighth module, three extended); the marker grammar in [SPEC.md](../../SPEC.md)
+§6 (from #1); and 1.0's scope: derived records move in, transcript mining
 stays out.
 **Reference measurement:** the user's own store and harness transcript, read
 2026-11-20 on `omarchy`. Numbers below are from that read.
-**Current rules:** [SPEC.md](../../SPEC.md) §3, §5.2, §5.4, §6.
+**Current rules:** [SPEC.md](../../SPEC.md) §2–§7, §9–§10.
 
 ## Context
 
@@ -28,12 +29,13 @@ Measured against the transcript it claims to describe, the instrument drifts:
 | …of those: skill body text in the run's context | 21 |
 | …of those: only the name and description in context | 71 |
 | …of those: a skill name that does not exist | 2 |
+| Rows this split does not classify | 6 |
 
 The 158 are not fabrications. 64 are agents hand-reading `SKILL.md` instead of
-calling the skill — 44 of 55 `ui-review` rows, and 46 of the 64 are subagents
-(`runner-worker` 23, `review-and-ship`'s reviewers 12). 71 are runs that
-followed a skill from the description alone. Those are real invocations, and
-they are exactly the ones where the harness records least.
+calling the skill — 44 of 55 `ui-review` rows — and 46 of the 64 are subagents
+(`runner-worker` 23 and `review-and-ship`'s reviewers 12 among them). 71 are
+runs that followed a skill from the description alone. Those are real
+invocations, and they are exactly the ones where the harness records least.
 
 The second half is worse. Friction that never becomes a sentence is invisible
 to `add`, and it is the majority:
@@ -42,6 +44,7 @@ to `add`, and it is the majority:
 |---|---|
 | In a session with no skill invocation at all | 1,035 (62%) |
 | With a skill call earlier in the same session | 556 |
+| Not bucketed by this split | 84 |
 
 And they cluster hard, into shapes a single change closes:
 
@@ -66,9 +69,10 @@ it ever looks at a failed call.
 
 ## Decision
 
-1. **Errors are derived, not reported.** Two tables join the 1.0 schema:
+1. **Errors are derived, not reported.** Two tables join the 1.0 schema's two,
    `errors` (one failed tool call) and `signatures` (one failure shape). Only
-   `harvest` writes them; `add` never does. The store is unreleased, so they
+   `harvest` creates them; `add` never does, though it re-attributes an
+   unresolved error in the session it wrote. The store is unreleased, so they
    are part of the first schema rather than a migration.
 
 2. **An invocation carries its evidence.** `invocations` gains `evidence` and
@@ -122,13 +126,17 @@ it ever looks at a failed call.
    blends a derived failure count into the invocation denominator.
 
 9. **One new module, three extended.** ADR-0003's map grows a `Reader`:
-   `read(source, window) → { invocations, errors, skipped }`, the only place a
-   harness schema is named, returning data and never SQL or a message. `Marker`
-   gains a row kind (`id`, `e<id>`, `s<id>`) and refuses an unknown prefix in
-   the same place it already refuses a bare id. `Store` gains the error and
-   signature operations and keeps SQL inside itself. `Resolution` expands a
-   signature marker to rows before applying its existing pure rules, so the
-   decision stays pure and gains no store access.
+   `read(source, window) → { invocations, errors, session_tree, skipped }`, and
+   it owns the normalizer — the one place a harness schema is named and the one
+   place a failure shape is derived, returning data and never SQL or a message.
+   `session_tree` is the harness's own parent chain, which `ancestor_session`
+   attribution needs and `invocations.parent` cannot supply because §4 forbids
+   an adapter from inventing it. `Marker` gains a row kind (`id`, `e<id>`,
+   `s<id>`) and refuses an unknown prefix in the same place it already refuses
+   an id with no machine. `Store` gains the error and signature operations and
+   keeps SQL inside itself. `Resolution` expands a signature marker to rows
+   before applying its existing pure rules, so the decision stays pure and
+   gains no store access.
 
 ## Why this shape
 
@@ -180,21 +188,11 @@ it ever looks at a failed call.
 
 ## Enforced by
 
-- A fixture harness store is harvested twice and the second run writes nothing;
-  the fixture file is byte-identical afterwards.
-- The attribution matrix: error before any skill in its session is `none`; an
-  error in a subagent session with the skill in the parent is
-  `ancestor_session`; two ancestors up is found; an error in another
-  repository's session is never attributed.
-- An attested row is upgraded in place exactly once, and a second harvest does
-  not add a second row.
-- Two messages differing only in paths and ids share a signature; two tools
-  emitting the same text do not.
-- `add --evidence call` exits 2.
-- A signature marker resolves its rows, skips the one logged after the commit,
-  and reports an unknown prefix as `unknown_id`.
-- `errors --attribution none` returns the unattributed corpus; on a store with
-  no errors it prints the empty message and exits 0.
+The error contract is [SPEC.md](../../SPEC.md) §9's fixture-store cases, which
+are the normative inventory. The ADR adds only the reasoning for two of them:
+`ancestor_session` needs the harness's session tree rather than
+`invocations.parent`, and a claimed `evidence_ref` must upgrade when its call
+arrives or the flag has no purpose.
 
 ## Alternatives rejected
 

@@ -1,6 +1,8 @@
 # ADR-0002: explicit harness context in the store
 
 **Status:** accepted, 2026-11-11.
+**Amended by:** [ADR-0004](0004-tool-error-attribution.md) — two columns on
+`invocations` (`evidence`, `evidence_ref`) and two verbs.
 **Current rules:** [SPEC.md](../../SPEC.md) §3–§5.
 
 ## Context
