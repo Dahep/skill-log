@@ -45,10 +45,12 @@ needs a name here, and a new rule needs a line in `SPEC.md`.
 - **Adapter** — opt-in code that fills context fields from a known harness's
   local state (`opencode` fills the session and model, `t3` fills the project).
   It never overrides an explicit flag and never runs by default.
-- **Marker** — `machine#id`, held as a value: parsed and formatted in one
-  place, never assembled by hand. The only way a row is named from outside the
-  store; the machine is required because ids are per store. A marker naming
-  another machine is **foreign**.
+- **Marker** — `machine#row`, held as a value: parsed and formatted in one
+  place, never assembled by hand. The row is a bare id for an invocation,
+  `e<id>` for an error row, `s<id>` for a signature. The only way a row is
+  named from outside the store; the machine is required because ids are per
+  store. A marker naming another machine is **foreign**. A signature marker
+  names a set and expands at resolution time.
 - **Located marker** — a marker plus the commit and time it was read from.
   Only the scan produces it, and only the resolution plan consumes it.
 - **Resolution plan** — the pure decision over located markers and stored

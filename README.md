@@ -27,7 +27,7 @@ daemon and no network: one store per machine, and rows carry the machine that
 wrote them so the marker grammar and any external consumer keep an origin.
 
 A change closes the rows it fixes by committing a report file (or, in repos
-that cannot carry one, a marker trailer) naming `machine#id` markers. A
+that cannot carry one, a marker trailer) naming `machine#row` markers. A
 post-merge hook stamps the resolved rows, so the log records when and where
 the friction closed.
 
