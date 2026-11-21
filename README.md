@@ -1,8 +1,8 @@
 # skill-log
 
 A local log of agent-skill invocations: one row per run, plus the problems
-that cost it, so friction can be counted, attributed to a skill, and closed by
-a specific change.
+that cost it and the tool calls that failed, so friction can be counted,
+attributed to a skill, and closed by a specific change.
 
 The specification is [SPEC.md](SPEC.md); the decisions behind it are in
 [docs/adr/](docs/adr/), and the vocabulary in [CONTEXT.md](CONTEXT.md).
@@ -10,16 +10,23 @@ The specification is [SPEC.md](SPEC.md); the decisions behind it are in
 ## What it is
 
 Agent skills end a run by writing one row: when, which skill, harness, session,
-parent, model, repo, worktree, project, and machine. Problems ride as separate
-rows attached to the invocation, so a clean run still counts as a denominator
-and problems-per-invocation stays measurable.
+parent, model, repo, worktree, project, machine, and how the skill was in play.
+Problems ride as separate rows attached to the invocation, so a clean run still
+counts as a denominator and problems-per-invocation stays measurable.
+
+`harvest` derives the other half from the harness's own store, read-only: the
+skill calls, the hand-reads of a skill file that no call covered, and every
+failed tool call, clustered into signatures and attributed to the invocation it
+followed when there is one. An error needs no skill to be recorded — the ones
+with no skill behind them are the documentation worklist, and they are the
+majority.
 
 The store is one SQLite file under the XDG state directory. There is no
 daemon and no network: one store per machine, and rows carry the machine that
 wrote them so the marker grammar and any external consumer keep an origin.
 
 A change closes the rows it fixes by committing a report file (or, in repos
-that cannot carry one, a marker trailer) naming `machine#id` markers. A
+that cannot carry one, a marker trailer) naming `machine#row` markers. A
 post-merge hook stamps the resolved rows, so the log records when and where
 the friction closed.
 
@@ -86,7 +93,9 @@ neither a toolchain nor a system SQLite.
 | Command | Purpose |
 | --- | --- |
 | `add` | Record one invocation and zero or more problems. |
+| `harvest` | Derive invocations and tool errors from the harness's own store, read-only. |
 | `show` | Recent rows, their problems, and the cuts: skill, machine, harness, repo, run, unresolved, last. |
+| `errors` | The tool-failure corpus, per row or grouped by signature, tool, attribution, skill or session. |
 | `stats` | Invocation, problem and resolved counts, and problems per invocation, per cut (`--by`). |
 | `resolve` | Stamp one local row with the commit that fixed it, by hand. |
 | `report` | Name the rows a change fixes: the committed report file, or the trailer in a repo without one. |
@@ -110,9 +119,10 @@ copy.
 
 - The CLI is the public surface. The store schema and the report format are
   contracts, not APIs.
-- A marker is `machine#id`; a marker naming another machine is `foreign`:
-  reported, never stamped.
-- Reports carry machine names and local ids only, never problem text.
+- A marker is `machine#row`: a bare id is an invocation, `e<id>` an error row,
+  `s<id>` a signature. A marker naming another machine is `foreign`: reported,
+  never stamped.
+- Reports carry machine names and local ids only, never problem or error text.
 - Generated skill text is owned only inside its fence.
 
 ## Documentation
@@ -124,6 +134,8 @@ copy.
 - [ADR-0002](docs/adr/0002-explicit-harness-context.md) — explicit harness
   context, adapters, `report`, one store per machine.
 - [ADR-0003](docs/adr/0003-module-map.md) — the module map behind the CLI.
+- [ADR-0004](docs/adr/0004-tool-error-attribution.md) — derived tool errors,
+  evidence grades, signatures, attribution.
 - [CONTEXT.md](CONTEXT.md) — vocabulary: what the terms mean.
 - [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) — the modules the binary
   includes, and their licences.
