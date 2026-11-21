@@ -5,6 +5,17 @@ problems that cost it, so friction can be counted, attributed to a skill, and
 closed by a specific change. The specification is `SPEC.md`; domain language
 lives in `CONTEXT.md`; design decisions in `docs/adr/`.
 
+## Branching
+
+`go/1.0` is the integration branch. It carries the Go implementation and the
+contract that implementation is being brought up to, so a change that edits one
+without the other leaves the branch describing something it does not do.
+
+- Work branches off `go/1.0`.
+- A pull request targets `go/1.0`, never `main`.
+- `main` takes the whole branch in one landing, once the implementation matches
+  `SPEC.md`.
+
 ## Specification
 
 - `SPEC.md` is the single source of truth for behavior. An issue body is never
