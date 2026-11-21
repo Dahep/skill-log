@@ -226,15 +226,26 @@ Attribution runs per error row, first hit wins:
    chain is walked outward, nearest first, and only when rule 1 finds nothing.
 3. `none` — no candidate.
 
-A reader that cannot see the harness's session tree attributes
+A caller that cannot see the harness's session tree attributes
 `prior_in_session` or `none` and nothing else. Attribution never crosses
 repositories and never rests on a bare time window: an error in one session is
 not attributed to a skill run in another that merely happened nearby.
 
-Attribution is derived, so it is re-derivable: `harvest` recomputes it for
-unresolved errors in its window, and `add` re-attributes unresolved errors in
-the session it wrote whose `ts` is at or after the new row's. The same inputs
-produce the same result, so both stay idempotent.
+Attribution is one pure function of three inputs — the error rows, the
+invocation rows and the session tree — and one module owns it. Every writer
+calls that function rather than restating the rules:
+
+- `harvest` recomputes attribution for unresolved errors in its window, with
+  the session tree its reader returns.
+- `add` re-attributes unresolved errors in the session it wrote whose `ts` is
+  at or after the new row's, with whatever tree it can obtain. Without one it
+  can only produce `prior_in_session` or `none`.
+
+Refinement is monotone. A later pass may raise `none` to `prior_in_session` or
+`ancestor_session`, and may replace a session-local attribution with an
+ancestral one; nothing ever lowers an attribution back to `none`. Because the
+function is pure over the rows it is given, both writers stay idempotent: the
+same rows and the same tree produce the same answer.
 
 ### Signatures
 
@@ -452,8 +463,12 @@ Derive invocations and errors from the harness's own store. Policy `create`.
 
 - Readers are the read side of §4's adapters, one per harness: `opencode`
   (`session_v2`, `session_message`), `t3` (`statev2.sqlite` turn items), and
-  `log` for failures that never became a tool call. A reader is enabled by
-  `SKILL_LOG_ADAPTERS`, and `--adapter <name>` enables one for the run.
+  `log` for failures that never became a tool call. `harvest` runs every
+  reader whose store it can find; `SKILL_LOG_ADAPTERS` or `--adapter <name>`
+  narrows the set to the names given, and a named reader that finds no store is
+  a skip, not a failure. The flag enables an adapter on `add` and narrows a
+  reader on `harvest`; that default is the asymmetry between the two
+  subsystems the name covers.
 - An invocation is derived in two cases: a `skill` tool call becomes a row
   with evidence `call`, and a read, grep, glob or shell call naming a skill
   directory becomes a row with evidence `read`. One run is one row.
@@ -978,14 +993,18 @@ session decides how the log gets read. Neither changes the other's contract.
   report edits not resolving rows; a non-git checkout; a missing or older CLI
   in the hook; a time guard across differing writer offsets.
 - **The error contract, against a fixture harness store**, never a live one:
-  harvest twice over one window and the second run writes nothing; the fixture
-  file is byte-identical after a harvest, and a read-only copy of it is
-  accepted; a drifted fixture is a named skip, exit 0, and exit 1 under
-  `--strict`; an error row and an inflated denominator for a read-then-call
-  session, which must stay one row; the attribution matrix
+  harvest twice over one window and the second run writes nothing; harvest with
+  no flag and no environment runs every reader whose store exists, and
+  `--adapter` narrows it to one; the fixture file is byte-identical after a
+  harvest, and a read-only copy of it is accepted; a drifted fixture is a named
+  skip, exit 0, and exit 1 under `--strict`; an error row and an inflated
+  denominator for a read-then-call session, which must stay one row; the
+  attribution matrix
   (`prior_in_session`, `ancestor_session`, `none`, an error before any skill,
   an error in a session with no skill, an error two ancestors up, an error in
-  another repository never attributed); a `body`, `listed` or `attested` row
+  another repository never attributed); an attribution raised by a later pass
+  and never lowered, with `add` and `harvest` agreeing on the rows both can
+  see; a `body`, `listed` or `attested` row
   upgraded in place by the matching call or read, once, and a claimed
   `evidence_ref` upgraded when its call arrives; a normalized text mapping two
   messages to one signature and two tools with the same text to two;
