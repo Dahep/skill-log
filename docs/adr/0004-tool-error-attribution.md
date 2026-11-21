@@ -2,10 +2,10 @@
 
 **Status:** accepted, 2026-11-20.
 **Amends:** ADR-0002's invocation shape (two columns, one grade ladder) and its
-command surface (two verbs, §5 renumbered); ADR-0003's seven-module map (an
-eighth module, three extended); the marker grammar in [SPEC.md](../../SPEC.md)
-§6 (from #1); and 1.0's scope: derived records move in, transcript mining
-stays out.
+command surface (two verbs, §5 renumbered); ADR-0003's seven-module map (two
+new modules, three extended); the marker grammar in
+[SPEC.md](../../SPEC.md) §6 (from #1); and 1.0's scope: derived records move
+in, transcript mining stays out.
 **Reference measurement:** the user's own store and harness transcript, read
 2026-11-20 on `omarchy`. Numbers below are from that read.
 **Current rules:** [SPEC.md](../../SPEC.md) §2–§7, §9–§10.
@@ -97,13 +97,17 @@ it ever looks at a failed call.
    a skip; an unreadable one is a named skip; `--strict` turns a skip into
    failure. It never writes the harness store.
 
-4. **Attribution is local, ordered and re-derivable.** Per error row, first hit
+4. **Attribution is one pure function with one owner.** Per error row, first hit
    wins: `prior_in_session` (latest invocation in the same session at or before
    the error), then `ancestor_session` (nearest ancestor session the harness
    records, same time rule), then `none`. Never a bare time window; never
-   across repositories. Attribution is recomputed for unresolved rows in the
-   harvest window, and by `add` for the session it wrote, because the row set
-   it reasons over can grow after the first pass.
+   across repositories. The rules live in one `Attribution` module and every
+   writer calls it — `harvest` with the reader's session tree, `add` with
+   whatever tree it can obtain — rather than each restating the order. A pass
+   that cannot see a tree can only produce `prior_in_session` or `none`, and
+   refinement is monotone: a later pass may raise `none` or replace a
+   session-local attribution with an ancestral one, never the reverse. Pure
+   over its inputs, so both writers stay idempotent.
 
 5. **A signature is allocated, not hashed.** One row per `(tool, normalized
    text)` in a store, created on first sight and never re-pointed. Normalizing
@@ -125,18 +129,20 @@ it ever looks at a failed call.
    none` is the documentation worklist, not a leftover, and `stats` never
    blends a derived failure count into the invocation denominator.
 
-9. **One new module, three extended.** ADR-0003's map grows a `Reader`:
+9. **Two new modules, three extended.** ADR-0003's map grows a `Reader`:
    `read(source, window) → { invocations, errors, session_tree, skipped }`, and
    it owns the normalizer — the one place a harness schema is named and the one
    place a failure shape is derived, returning data and never SQL or a message.
    `session_tree` is the harness's own parent chain, which `ancestor_session`
    attribution needs and `invocations.parent` cannot supply because §4 forbids
-   an adapter from inventing it. `Marker` gains a row kind (`id`, `e<id>`,
-   `s<id>`) and refuses an unknown prefix in the same place it already refuses
-   an id with no machine. `Store` gains the error and signature operations and
-   keeps SQL inside itself. `Resolution` expands a signature marker to rows
-   before applying its existing pure rules, so the decision stays pure and
-   gains no store access.
+   an adapter from inventing it. It also grows an `Attribution`:
+   `attribute(errors, invocations, tree) → errors`, pure, the only place the
+   three rules are written, called by `harvest` and `add` alike. `Marker` gains
+   a row kind (`id`, `e<id>`, `s<id>`) and refuses an unknown prefix in the
+   same place it already refuses an id with no machine. `Store` gains the error
+   and signature operations and keeps SQL inside itself. `Resolution` expands a
+   signature marker to rows before applying its existing pure rules, so the
+   decision stays pure and gains no store access.
 
 ## Why this shape
 
