@@ -101,13 +101,13 @@ it ever looks at a failed call.
    wins: `prior_in_session` (latest invocation in the same session at or before
    the error), then `ancestor_session` (nearest ancestor session the harness
    records, same time rule), then `none`. Never a bare time window; never
-   across repositories. The rules live in one `Attribution` module and every
-   writer calls it — `harvest` with the reader's session tree, `add` with
+   across repositories. The rules live in one `Attribution` module and both
+   verbs call it — `harvest` with the reader's session tree, `add` with
    whatever tree it can obtain — rather than each restating the order. A pass
    that cannot see a tree can only produce `prior_in_session` or `none`, and
    refinement is monotone: a later pass may raise `none` or replace a
    session-local attribution with an ancestral one, never the reverse. Pure
-   over its inputs, so both writers stay idempotent.
+   over its inputs, so the attribution step stays idempotent.
 
 5. **A signature is allocated, not hashed.** One row per `(tool, normalized
    text)` in a store, created on first sight and never re-pointed. Normalizing
@@ -135,7 +135,7 @@ it ever looks at a failed call.
    place a failure shape is derived, returning data and never SQL or a message.
    `session_tree` is the harness's own parent chain, which `ancestor_session`
    attribution needs and `invocations.parent` cannot supply because §4 forbids
-   an adapter from inventing it. It also grows an `Attribution`:
+   an adapter from inventing it. The map also grows an `Attribution`:
    `attribute(errors, invocations, tree) → errors`, pure, the only place the
    three rules are written, called by `harvest` and `add` alike. `Marker` gains
    a row kind (`id`, `e<id>`, `s<id>`) and refuses an unknown prefix in the

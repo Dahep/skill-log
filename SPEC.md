@@ -232,8 +232,8 @@ repositories and never rests on a bare time window: an error in one session is
 not attributed to a skill run in another that merely happened nearby.
 
 Attribution is one pure function of three inputs — the error rows, the
-invocation rows and the session tree — and one module owns it. Every writer
-calls that function rather than restating the rules:
+invocation rows and the session tree — and one module owns it. `harvest` and
+`add` use that function rather than restating the rules:
 
 - `harvest` recomputes attribution for unresolved errors in its window, with
   the session tree its reader returns.
@@ -244,8 +244,8 @@ calls that function rather than restating the rules:
 Refinement is monotone. A later pass may raise `none` to `prior_in_session` or
 `ancestor_session`, and may replace a session-local attribution with an
 ancestral one; nothing ever lowers an attribution back to `none`. Because the
-function is pure over the rows it is given, both writers stay idempotent: the
-same rows and the same tree produce the same answer.
+function is pure over the rows it is given, the attribution step stays
+idempotent: the same rows and the same tree produce the same answer.
 
 ### Signatures
 
@@ -356,9 +356,12 @@ Every context field resolves in this order: **explicit flag, then its
   `machine` from the hostname, `ts` from the local clock with the writer's
   offset. Outside a git repository `repo` and `worktree` are blank, not an
   error.
-- Adapters are opt-in and never run by default. `SKILL_LOG_ADAPTERS=opencode`
-  or `--adapter opencode` enables one. An adapter failure is a blank field,
-  never an error, and an adapter never invents a `parent` or a `t3_thread`.
+- Adapters are opt-in on `add`, where they fill context fields, and never run
+  by default: `SKILL_LOG_ADAPTERS=opencode` or `--adapter opencode` enables
+  one. Their read side is the readers of §5.2, which run by default —
+  `harvest` runs every reader whose store it can find, and the same names
+  narrow that set. An adapter failure is a blank field, never an error, and an
+  adapter never invents a `parent` or a `t3_thread`.
 - `opencode` (1.0 target) fills `harness`, `session` from the harness
   environment, and `model` from that harness's session store, read-only.
 - `t3` (optional) fills `project` from the worktree path; the thread id stays
@@ -467,8 +470,7 @@ Derive invocations and errors from the harness's own store. Policy `create`.
   reader whose store it can find; `SKILL_LOG_ADAPTERS` or `--adapter <name>`
   narrows the set to the names given, and a named reader that finds no store is
   a skip, not a failure. The flag enables an adapter on `add` and narrows a
-  reader on `harvest`; that default is the asymmetry between the two
-  subsystems the name covers.
+  reader on `harvest`.
 - An invocation is derived in two cases: a `skill` tool call becomes a row
   with evidence `call`, and a read, grep, glob or shell call naming a skill
   directory becomes a row with evidence `read`. One run is one row.
@@ -994,12 +996,12 @@ session decides how the log gets read. Neither changes the other's contract.
   in the hook; a time guard across differing writer offsets.
 - **The error contract, against a fixture harness store**, never a live one:
   harvest twice over one window and the second run writes nothing; harvest with
-  no flag and no environment runs every reader whose store exists, and
-  `--adapter` narrows it to one; the fixture file is byte-identical after a
-  harvest, and a read-only copy of it is accepted; a drifted fixture is a named
-  skip, exit 0, and exit 1 under `--strict`; an error row and an inflated
-  denominator for a read-then-call session, which must stay one row; the
-  attribution matrix
+  no `--adapter` and no `SKILL_LOG_ADAPTERS` runs every reader whose store
+  exists, and `--adapter` narrows it to one; the fixture file is byte-identical
+  after a harvest, and a read-only copy of it is accepted; a drifted fixture is
+  a named skip, exit 0, and exit 1 under `--strict`; an error row and an
+  inflated denominator for a read-then-call session, which must stay one row;
+  the attribution matrix
   (`prior_in_session`, `ancestor_session`, `none`, an error before any skill,
   an error in a session with no skill, an error two ancestors up, an error in
   another repository never attributed); an attribution raised by a later pass
