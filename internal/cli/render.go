@@ -32,6 +32,8 @@ func RenderRowJSON(row store.Invocation) string {
 		id,
 		format.Str("ts", row.TS),
 		format.Str("skill", row.Skill),
+		format.Str("evidence", row.Evidence),
+		format.Str("evidence_ref", row.EvidenceRef),
 		format.Str("harness", row.Harness),
 		format.Str("session", row.Session),
 		format.Str("parent", row.Parent),

@@ -85,12 +85,12 @@ func writeAttempt(path string, row *Invocation, problems []string, now string) (
 	row.TS = now
 	result, err := tx.Exec(
 		"INSERT INTO invocations"+
-			" (ts, skill, harness, session, parent, model, repo, worktree,"+
-			" project, t3_thread, machine, fix, resolved_at)"+
-			" VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		row.TS, row.Skill, row.Harness, row.Session, row.Parent, row.Model,
-		row.Repo, row.Worktree, row.Project, row.T3Thread, row.Machine,
-		row.Fix, row.ResolvedAt,
+			" (ts, skill, evidence, evidence_ref, harness, session, parent, model,"+
+			" repo, worktree, project, t3_thread, machine, fix, resolved_at)"+
+			" VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		row.TS, row.Skill, row.Evidence, row.EvidenceRef, row.Harness,
+		row.Session, row.Parent, row.Model, row.Repo, row.Worktree,
+		row.Project, row.T3Thread, row.Machine, row.Fix, row.ResolvedAt,
 	)
 	if err != nil {
 		return WriteResult{}, nil, err
@@ -112,6 +112,98 @@ func writeAttempt(path string, row *Invocation, problems []string, now string) (
 	}
 	committed = true
 	return WriteResult{ID: id}, nil, nil
+}
+
+// InvocationByRefPath reads the row a harness call id already names, or nil.
+// A read never creates a store.
+func InvocationByRefPath(path, ref string) (*Invocation, error) {
+	opened, refusal, err := openRead(path)
+	if err != nil {
+		return nil, err
+	}
+	if refusal != nil || opened == nil {
+		return nil, nil
+	}
+	defer opened.Close()
+	return opened.InvocationByRef(ref)
+}
+
+// RefAppend is what appending to an already-harvested row produced. A nil Row
+// means no row carries the ref yet, and the caller writes a new claimed row.
+type RefAppend struct {
+	Row     *Invocation
+	Refusal *Refusal
+}
+
+// AppendProblemsToRef appends problems to the row the harness call id already
+// names, continuing that row's ordinals, and writes no invocation row. The read
+// and the write share one transaction, so a concurrent writer cannot split them.
+func AppendProblemsToRef(path, ref string, problems []string) (RefAppend, error) {
+	result, _, err := withRetry(func() (RefAppend, *Refusal, error) {
+		return appendAttempt(path, ref, problems)
+	})
+	return result, err
+}
+
+func appendAttempt(path, ref string, problems []string) (RefAppend, *Refusal, error) {
+	var result RefAppend
+	if ref == "" || len(problems) == 0 {
+		return result, nil, nil
+	}
+	opened, refusal, err := openWrite(path)
+	if err != nil || refusal != nil {
+		return RefAppend{Refusal: refusal}, refusal, err
+	}
+	defer opened.Close()
+
+	tx, err := opened.db.Begin()
+	if err != nil {
+		return RefAppend{}, nil, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			tx.Rollback()
+		}
+	}()
+
+	var id int64
+	err = tx.QueryRow(
+		"SELECT id FROM invocations WHERE evidence_ref = ? AND evidence_ref <> ''"+
+			" ORDER BY id DESC LIMIT 1", ref,
+	).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		// No row claims this call: the caller writes one.
+		return RefAppend{}, nil, nil
+	}
+	if err != nil {
+		return RefAppend{}, nil, err
+	}
+	var last int
+	if err := tx.QueryRow(
+		"SELECT COALESCE(MAX(ordinal), 0) FROM problems WHERE invocation_id = ?", id,
+	).Scan(&last); err != nil {
+		return RefAppend{}, nil, err
+	}
+	for i, problem := range problems {
+		if _, err := tx.Exec(
+			"INSERT INTO problems (invocation_id, ordinal, problem) VALUES (?, ?, ?)",
+			id, last+1+i, problem,
+		); err != nil {
+			return RefAppend{}, nil, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return RefAppend{}, nil, err
+	}
+	committed = true
+
+	row, err := opened.ReadInvocation(id)
+	if err != nil {
+		return RefAppend{}, nil, err
+	}
+	result.Row = row
+	return result, nil, nil
 }
 
 // Resolved is one row's resolution after resolve touched it (or looked at it).

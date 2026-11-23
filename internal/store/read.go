@@ -11,21 +11,23 @@ import (
 // Invocation is one invocation row and its problems. The column order is the
 // schema's, and it is also the order JSON exposes.
 type Invocation struct {
-	ID         int64
-	TS         string
-	Skill      string
-	Harness    string
-	Session    string
-	Parent     string
-	Model      string
-	Repo       string
-	Worktree   string
-	Project    string
-	T3Thread   string
-	Machine    string
-	Fix        string
-	ResolvedAt string
-	Problems   []string
+	ID          int64
+	TS          string
+	Skill       string
+	Evidence    string
+	EvidenceRef string
+	Harness     string
+	Session     string
+	Parent      string
+	Model       string
+	Repo        string
+	Worktree    string
+	Project     string
+	T3Thread    string
+	Machine     string
+	Fix         string
+	ResolvedAt  string
+	Problems    []string
 }
 
 // Filters is what one read of the store selects. An empty string means the filter
@@ -70,6 +72,29 @@ func filterClause(filters Filters) (string, []any) {
 		return "", nil
 	}
 	return " WHERE " + strings.Join(clauses, " AND "), marks
+}
+
+// InvocationByRef reads the row a harness call id already names, or nil when no
+// row carries it. A store with no tables yet carries no refs.
+func (s *Store) InvocationByRef(ref string) (*Invocation, error) {
+	if ref == "" {
+		return nil, nil
+	}
+	if empty, err := s.isEmptyLog(); err != nil || empty {
+		return nil, err
+	}
+	row := s.db.QueryRow(invocationSelect+
+		" WHERE evidence_ref = ? AND evidence_ref <> '' ORDER BY id DESC LIMIT 1", ref)
+	invocation, err := scanInvocation(row)
+	if err != nil || invocation == nil {
+		return nil, err
+	}
+	problems, err := s.problemsFor(invocation.ID)
+	if err != nil {
+		return nil, err
+	}
+	invocation.Problems = problems
+	return invocation, nil
 }
 
 // ReadInvocation reads one invocation row and its problems. A store with no tables
@@ -147,7 +172,8 @@ type scanner interface {
 func scanInvocation(row scanner) (*Invocation, error) {
 	var invocation Invocation
 	err := row.Scan(
-		&invocation.ID, &invocation.TS, &invocation.Skill, &invocation.Harness,
+		&invocation.ID, &invocation.TS, &invocation.Skill, &invocation.Evidence,
+		&invocation.EvidenceRef, &invocation.Harness,
 		&invocation.Session, &invocation.Parent, &invocation.Model,
 		&invocation.Repo, &invocation.Worktree, &invocation.Project,
 		&invocation.T3Thread, &invocation.Machine, &invocation.Fix,

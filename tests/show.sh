@@ -72,6 +72,8 @@ CREATE TABLE invocations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts TEXT NOT NULL,
     skill TEXT NOT NULL,
+    evidence TEXT NOT NULL DEFAULT '',
+    evidence_ref TEXT NOT NULL DEFAULT '',
     harness TEXT NOT NULL DEFAULT '',
     session TEXT NOT NULL DEFAULT '',
     parent TEXT NOT NULL DEFAULT '',
@@ -208,7 +210,7 @@ run show --json
 check "json exits 0" "$STATUS" "0"
 check "json is one object per row" "$(printf '%s\n' "$OUT" | grep -c .)" "3"
 check "json carries exactly the row's keys" "$(json_keys "$(printf '%s\n' "$OUT" | head -1)")" \
-    "fix harness id machine marker model parent problems project repo resolved_at session skill t3_thread ts worktree"
+    "evidence evidence_ref fix harness id machine marker model parent problems project repo resolved_at session skill t3_thread ts worktree"
 check "json carries the problems array" \
     "$(printf '%s\n' "$OUT" | grep -c '"problems":\["first issue","second issue"\]')" "1"
 check "json carries the marker" \
@@ -367,6 +369,8 @@ CREATE TABLE invocations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts TEXT NOT NULL,
     skill TEXT NOT NULL,
+    evidence TEXT NOT NULL DEFAULT '',
+    evidence_ref TEXT NOT NULL DEFAULT '',
     harness TEXT NOT NULL DEFAULT '',
     session TEXT NOT NULL DEFAULT '',
     parent TEXT NOT NULL DEFAULT '',

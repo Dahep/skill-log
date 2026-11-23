@@ -22,6 +22,8 @@ const invocationDDL = `CREATE TABLE IF NOT EXISTS invocations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts TEXT NOT NULL DEFAULT '',
     skill TEXT NOT NULL DEFAULT '',
+    evidence TEXT NOT NULL DEFAULT '',
+    evidence_ref TEXT NOT NULL DEFAULT '',
     harness TEXT NOT NULL DEFAULT '',
     session TEXT NOT NULL DEFAULT '',
     parent TEXT NOT NULL DEFAULT '',
@@ -45,15 +47,16 @@ const problemDDL = `CREATE TABLE IF NOT EXISTS problems (
 // The invocations column list, written once and read by the DDL's readers, the
 // single-row read and the multi-row read.
 var invocationColumns = []string{
-	"id", "ts", "skill", "harness", "session", "parent", "model", "repo",
-	"worktree", "project", "t3_thread", "machine", "fix", "resolved_at",
+	"id", "ts", "skill", "evidence", "evidence_ref", "harness", "session",
+	"parent", "model", "repo", "worktree", "project", "t3_thread", "machine",
+	"fix", "resolved_at",
 }
 
 var problemColumns = []string{"invocation_id", "ordinal", "problem"}
 
-const invocationSelect = "SELECT id, ts, skill, harness, session, parent," +
-	" model, repo, worktree, project, t3_thread, machine, fix, resolved_at" +
-	" FROM invocations"
+const invocationSelect = "SELECT id, ts, skill, evidence, evidence_ref," +
+	" harness, session, parent, model, repo, worktree, project, t3_thread," +
+	" machine, fix, resolved_at FROM invocations"
 
 const (
 	writeBusyTimeout = 2000

@@ -802,6 +802,8 @@ CREATE TABLE invocations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts TEXT NOT NULL,
     skill TEXT NOT NULL,
+    evidence TEXT NOT NULL DEFAULT '',
+    evidence_ref TEXT NOT NULL DEFAULT '',
     harness TEXT NOT NULL DEFAULT '',
     session TEXT NOT NULL DEFAULT '',
     parent TEXT NOT NULL DEFAULT '',
@@ -884,6 +886,8 @@ CREATE TABLE invocations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts TEXT NOT NULL,
     skill TEXT NOT NULL,
+    evidence TEXT NOT NULL DEFAULT '',
+    evidence_ref TEXT NOT NULL DEFAULT '',
     harness TEXT NOT NULL DEFAULT '',
     session TEXT NOT NULL DEFAULT '',
     parent TEXT NOT NULL DEFAULT '',
@@ -1159,4 +1163,65 @@ check "the clock case exits 0" "$STATUS" "0"
 check "case 35: SKILL_LOG_NOW pins the writer's stamp" \
     "$(json_field "$OUT" ts)" "2020-01-02T03:04:05+00:00"
 check_absent "the clock case reports no error" "$(cat "$S/stderr")" "skill-log:"
+# ----------------------------------------------------------------- evidence
+
+say "contract: case 36 — an invocation says how the skill was in play"
+EV_DB="$DBT/evidence.db"
+
+run add --skill graded --db "$EV_DB" --json
+check "case 36: a row defaults to attested" "$(json_field "$OUT" evidence)" "attested"
+check "case 36: a row with no ref carries none" "$(json_field "$OUT" evidence_ref)" ""
+
+run add --skill graded --evidence listed --db "$EV_DB" --json
+check "case 36: --evidence listed is recorded" "$(json_field "$OUT" evidence)" "listed"
+
+run add --skill graded --evidence body --db "$EV_DB" --json
+check "case 36: --evidence body is recorded" "$(json_field "$OUT" evidence)" "body"
+
+run add --skill graded --evidence call --db "$EV_DB"
+check "case 36: --evidence call exits 2" "$STATUS" "2"
+check_one_line "case 36: --evidence call is one line" "$ERR"
+check_contains "case 36: --evidence call says harvest proves it" "$ERR" "harvest"
+
+run add --skill graded --evidence inherited --db "$EV_DB"
+check "case 36: an unknown grade exits 2" "$STATUS" "2"
+check_contains "case 36: an unknown grade lists the choices" "$ERR" "body, listed or attested"
+
+# --ref narrows the non-idempotency: the row is not duplicated, only its
+# problems are, so a second write for one call lands on the same row.
+run add --skill hand-read --ref call-1 --problem "first" --db "$EV_DB" --json
+check "case 36: a new ref writes a row" "$STATUS" "0"
+REF_ID="$(json_field "$OUT" id)"
+check "case 36: the new row claims the ref" "$(json_field "$OUT" evidence_ref)" "call-1"
+check "case 36: the claimed row is attested" "$(json_field "$OUT" evidence)" "attested"
+
+run add --skill hand-read --ref call-1 --problem "second" --db "$EV_DB" --json
+check "case 36: a repeated ref writes no second row" "$(json_field "$OUT" id)" "$REF_ID"
+check "case 36: the appended problems are both there" \
+    "$(printf '%s' "$OUT" | python3 -c 'import json,sys; print(len(json.loads(sys.stdin.read())["problems"]))')" \
+    "2"
+check "case 36: the store holds one row for the call" \
+    "$(sqlite3 "$EV_DB" "select count(*) from invocations where evidence_ref = 'call-1'")" "1"
+
+# --skills-dir refuses a name the directory does not hold.
+SK="$S/skills"
+mkdir -p "$SK/known"
+printf -- '---\nname: known\n---\nbody\n' >"$SK/known/SKILL.md"
+
+run add --skill known --skills-dir "$SK" --db "$EV_DB"
+check "case 36: a known skill is accepted" "$STATUS" "0"
+
+run add --skill absent --skills-dir "$SK" --db "$EV_DB"
+check "case 36: an unknown skill exits 2" "$STATUS" "2"
+check_contains "case 36: an unknown skill says why" "$ERR" "skews every rate"
+
+OUT="$(SKILL_LOG_SKILLS_DIR="$SK" "$BIN" add --skill absent --db "$EV_DB" 2>"$S/stderr")"
+STATUS=$?
+ERR="$(cat "$S/stderr")"
+check "case 36: the environment variable is honoured" "$STATUS" "2"
+
+run add --skill known --skills-dir "$S/no-such-dir" --db "$EV_DB"
+check "case 36: an unreadable skills directory exits 1" "$STATUS" "1"
+check_contains "case 36: an unreadable skills directory is named" "$ERR" "skills directory"
+
 tally
