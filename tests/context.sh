@@ -350,6 +350,23 @@ check "a missing session store is a blank model" "$(json_field "$OUT" model)" ""
 check "a missing session store still fills the harness" \
     "$(json_field "$OUT" harness)" "opencode"
 
+# The harness store is input, never output: a read-only copy still fills the
+# model, and a read leaves the file byte-identical.
+RO_HOME="$SCRATCH/oc-readonly-home"
+mkdir -p "$RO_HOME/.local/share/opencode"
+cp "$OC_HOME/.local/share/opencode/opencode.db" \
+    "$RO_HOME/.local/share/opencode/opencode.db"
+chmod 0444 "$RO_HOME/.local/share/opencode/opencode.db"
+chmod 0555 "$RO_HOME/.local/share/opencode"
+BEFORE="$(cksum "$RO_HOME/.local/share/opencode/opencode.db")"
+OUT="$(HOME="$RO_HOME" OPENCODE_SESSION_ID=ses_test SKILL_LOG_ADAPTERS=opencode \
+    "$BIN" add --skill adapters --dry-run --json)"
+check "a read-only harness store still fills the model" \
+    "$(json_field "$OUT" model)" "opencode/kimi-k3"
+check "reading the harness store leaves the file untouched" \
+    "$(cksum "$RO_HOME/.local/share/opencode/opencode.db")" "$BEFORE"
+chmod 0755 "$RO_HOME/.local/share/opencode"
+
 T3_HOME="$SCRATCH/t3"
 mkdir -p "$T3_HOME/worktrees/myproject/sub"
 OUT="$(T3CODE_HOME="$T3_HOME" "$BIN" add --skill adapters --dry-run --json \
