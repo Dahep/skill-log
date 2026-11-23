@@ -508,9 +508,9 @@ run_in "$R19" resolve-merged --db "$DB19"
 check_contains "case 19: an unknown id is named" "$ERR" \
     "$H#99 skipped: unknown_id"
 check_contains "case 19: a placeholder is reported" "$ERR" \
-    "not a Skill-log-Fix marker (machine#id): <id>"
+    "not a Skill-log-Fix marker (machine#row): <id>"
 check_contains "case 19: a bare id is refused" "$ERR" \
-    "not a Skill-log-Fix marker (machine#id): 7"
+    "not a Skill-log-Fix marker (machine#row): 7"
 check_contains "case 19: a foreign marker is reported" "$ERR" \
     "otherbox#4 skipped: foreign"
 # --since narrows the scan, and --dry-run writes nothing.
@@ -733,7 +733,7 @@ printf 'not-a-marker\n' >>"$REPORT24"
 run_in "$R24" report --check --slug report --db "$DB24"
 check "case 24: a malformed line fails --check" "$STATUS" "1"
 check_contains "case 24: the malformed line is named" "$ERR" \
-    "not a marker (machine#id): not-a-marker"
+    "not a marker (machine#row): not-a-marker"
 run_in "$R24" report --check --slug absent --db "$DB24"
 check "case 24: a branch with no report is not an error" "$STATUS" "0"
 run_in "$R24" report --id 1 --slug dry --db "$DB24" --dry-run
@@ -1075,7 +1075,7 @@ check "case 31: outside a checkout the worktree is blank" \
     "$(json_field "$OUT" worktree)" ""
 
 # --- case 32: the machine names the marker --------------------------------
-say "contract: case 32 — a marker is machine#id, and the machine is the hostname"
+say "contract: case 32 — a marker is machine#row, and the machine is the hostname"
 C32="$DBT/c32.db"
 OUT="$("$BIN" add --skill marker --db "$C32")"
 check "case 32: add prints the marker" "$OUT" "$H#1"

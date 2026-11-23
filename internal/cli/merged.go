@@ -97,14 +97,15 @@ type mergedScan struct {
 
 // addLocated keeps the first marker for a row: the scan walks commits newest
 // first, so the first marker it meets is the newest commit that names the row.
-func addLocated(located []store.Located, machine string, id int64, commit string, epoch int64) []store.Located {
+func addLocated(located []store.Located, parsed marker.Marker, commit string, epoch int64) []store.Located {
 	for _, item := range located {
-		if item.Machine == machine && item.ID == id {
+		if item.Machine == parsed.Machine && item.Kind == parsed.Kind && item.ID == parsed.ID {
 			return located
 		}
 	}
 	return append(located, store.Located{
-		Machine: machine, ID: id, Commit: commit, Epoch: epoch,
+		Machine: parsed.Machine, Kind: parsed.Kind, ID: parsed.ID,
+		Commit: commit, Epoch: epoch,
 	})
 }
 
@@ -240,9 +241,7 @@ func scanTrailers(root, since string) mergedScan {
 					scan.malformed = append(scan.malformed, format.Sanitize(value))
 					continue
 				}
-				scan.located = addLocated(
-					scan.located, parsed.Machine, parsed.ID, commit, epoch,
-				)
+				scan.located = addLocated(scan.located, parsed, commit, epoch)
 			}
 		}
 	}
@@ -356,9 +355,7 @@ func scanReports(root, since string) mergedScan {
 				format.Sanitize(file.path+": "+line.Text))
 		}
 		for _, parsed := range markers {
-			scan.located = addLocated(
-				scan.located, parsed.Machine, parsed.ID, file.commit, file.epoch,
-			)
+			scan.located = addLocated(scan.located, parsed, file.commit, file.epoch)
 		}
 	}
 	return scan
@@ -446,7 +443,7 @@ func mergedNotes(outcome mergedOutcome, result store.MergedResult, quiet bool) s
 	var lines []string
 	for _, value := range outcome.scan.malformed {
 		lines = append(lines,
-			"not a "+trailerKey+" marker (machine#id): "+value)
+			"not a "+trailerKey+" marker (machine#row): "+value)
 	}
 	for _, value := range outcome.hidden {
 		lines = append(lines, "ignored marker — "+value)

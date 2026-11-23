@@ -285,13 +285,13 @@ printf 'not a marker\n' >"$REPO/.skill-log/reports/broken.md"
 run report --check --slug broken
 check "a malformed line fails the check" "$STATUS" "1"
 check_contains "the malformed line names its position" "$ERR" \
-    "skill-log: .skill-log/reports/broken.md:1: not a marker (machine#id): not a marker"
+    "skill-log: .skill-log/reports/broken.md:1: not a marker (machine#row): not a marker"
 check "the failure is one summary line on top of the findings" \
     "$(printf '%s\n' "$ERR" | grep -c 'is not a valid report')" "1"
 run report --check --slug broken --json
 check "the check's json carries the problems" \
     "$(json_array "$OUT" problems)" \
-    ".skill-log/reports/broken.md:1: not a marker (machine#id): not a marker"
+    ".skill-log/reports/broken.md:1: not a marker (machine#row): not a marker"
 
 # A write over a malformed report refuses instead of deleting the line.
 printf 'not a marker\n' >"$REPO/.skill-log/reports/bad-write.md"
@@ -306,7 +306,7 @@ sqlite3 "$DB" "update invocations set machine = 'bad#machine' where id = 4"
 run report --id 4 --slug bad-machine
 check "an unnameable machine is refused" "$STATUS" "1"
 check "an unnameable machine is named" \
-    "$(printf '%s\n' "$ERR" | grep -c 'not a marker (machine#id)')" "1"
+    "$(printf '%s\n' "$ERR" | grep -c 'not a marker (machine#row)')" "1"
 if [ -e "$REPO/.skill-log/reports/bad-machine.md" ]; then
     fail "an unnameable machine wrote a report"
 else
@@ -316,7 +316,7 @@ printf 'bad#machine#4\n' >"$REPO/.skill-log/reports/bad-line.md"
 run report --check --slug bad-line
 check "a report with an unparseable marker is not valid" "$STATUS" "1"
 check_contains "the unparseable marker names its position" "$ERR" \
-    "not a marker (machine#id)"
+    "not a marker (machine#row)"
 sqlite3 "$DB" "update invocations set machine = '$H' where id = 4"
 
 run report --check --slug no-such-report
@@ -500,7 +500,7 @@ check "the absent store does not invalidate the report" "$OUT" \
 run report --check --slug broken --db "$SCRATCH/no-store.db"
 check "an absent store does not hide a malformed report" "$STATUS" "1"
 check_contains "the malformed report is still named" "$ERR" \
-    "not a marker (machine#id)"
+    "not a marker (machine#row)"
 
 # A report file that cannot be read is attributed to the report, not the
 # store.

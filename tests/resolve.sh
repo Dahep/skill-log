@@ -188,6 +188,31 @@ check "a newer store exits 1" "$STATUS" "1"
 check "a newer store is named with both versions" \
     "$(printf '%s\n' "$ERR" | grep -c 'has schema version 99.*understands 1')" "1"
 
+# --------------------------------------------------------------- row kinds
+
+# A marker names a row kind. An error marker is not an invocation row, so a
+# bare id that happens to match it is a different row and is never stamped.
+run add --skill row-kind --db "$SCRATCH/kinds.db"
+check "the row-kind fixture is written" "$STATUS" "0"
+
+run resolve --id e1 --fix a1b2c3d --db "$SCRATCH/kinds.db"
+check "an error marker exits 1" "$STATUS" "1"
+check_one_line "an error marker is one line" "$ERR"
+check_contains "an error marker names the row it asked for" "$ERR" "no error 1"
+check "an error marker does not stamp invocation 1" \
+    "$(sqlite3 "$SCRATCH/kinds.db" "select fix from invocations where id = 1")" ""
+
+run resolve --id s1 --fix a1b2c3d --db "$SCRATCH/kinds.db"
+check "a signature marker exits 2" "$STATUS" "2"
+check_one_line "a signature marker is one line" "$ERR"
+check_contains "a signature marker names resolve-merged" "$ERR" "resolve-merged"
+check "a signature marker does not stamp invocation 1" \
+    "$(sqlite3 "$SCRATCH/kinds.db" "select fix from invocations where id = 1")" ""
+
+run resolve --id x1 --fix a1b2c3d --db "$SCRATCH/kinds.db"
+check "an unknown row prefix exits 2" "$STATUS" "2"
+check_one_line "an unknown row prefix is one line" "$ERR"
+
 # ----------------------------------------------------------- usage errors
 
 run resolve
@@ -310,7 +335,7 @@ for flag in --id --fix --dry-run --json --db; do
     check_contains "resolve --help lists $flag" "$OUT" "$flag"
 done
 check "resolve --help ends with 2 to 4 real invocations" \
-    "$(printf '%s\n' "$OUT" | sed -n '/^examples:$/,$p' | grep -c '^  ')" "3"
+    "$(printf '%s\n' "$OUT" | sed -n '/^examples:$/,$p' | grep -c '^  ')" "4"
 check_contains "resolve --help names the hook path" "$OUT" "post-merge hook"
 
 # ----------------------------------------------------------------- report

@@ -51,7 +51,7 @@ func reportVerb() Verb {
 		// The dispatcher reads this to tell `--run -h` from a help request.
 		ValueFlags: reportFlags(&reportOptions{}).names(),
 		Notes: "The report is the transport: .skill-log/reports/<branch>.md,\n" +
-			"one machine#id per line, committed with the change. Markers are\n" +
+			"one machine#row per line, committed with the change. Markers are\n" +
 			"unioned with what the file already holds, and never carry problem\n" +
 			"text or project details.\n" +
 			"\n" +
@@ -318,7 +318,7 @@ func parseReport(text, relative string) existingReport {
 	for _, line := range bad {
 		report.bad = append(report.bad,
 			relative+":"+formatInt(int64(line.Line))+
-				": not a marker (machine#id): "+format.Sanitize(line.Text))
+				": not a marker (machine#row): "+format.Sanitize(line.Text))
 	}
 	return report
 }
@@ -404,7 +404,7 @@ func validateReport(text, relative string, opened *store.Store, haveStore bool, 
 	for _, line := range bad {
 		result.problems = append(result.problems,
 			relative+":"+formatInt(int64(line.Line))+
-				": not a marker (machine#id): "+format.Sanitize(line.Text))
+				": not a marker (machine#row): "+format.Sanitize(line.Text))
 	}
 	for _, parsed := range markers {
 		textMarker := parsed.Text()
@@ -603,7 +603,7 @@ func handleReport(args []string) Outcome {
 		if !ok || parsed.Text() != item {
 			return Fail(
 				"cannot report "+format.Sanitize(item)+
-					": not a marker (machine#id)",
+					": not a marker (machine#row)",
 				ExitFailure,
 			)
 		}
