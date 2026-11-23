@@ -280,6 +280,23 @@ check "a resolved marker is a warning, not a problem" "$STATUS" "0"
 check "the resolved marker names its commit" "$ERR" \
     "skill-log: $H#3: already resolved by abc123456"
 
+# An error or signature marker names another table. The invocation with the
+# same id is a different row, so the check never reads it as that invocation,
+# and a union keeps the line as it was written.
+printf '%s\n' "$H#e3" "$H#s3" >"$REPO/.skill-log/reports/kind.md"
+run report --check --slug kind
+check "a row-kind marker does not fail the check" "$STATUS" "0"
+check_absent "a row-kind marker is not read as its invocation" "$ERR" \
+    "already resolved"
+check_contains "an error marker names the table this store lacks" "$ERR" \
+    "skill-log: $H#e3: not in this db (no error rows yet)"
+check_contains "a signature marker names the table this store lacks" "$ERR" \
+    "skill-log: $H#s3: not in this db (no signature rows yet)"
+run report --id 4 --slug kind
+check "a union keeps a row-kind marker" \
+    "$(cat "$REPO/.skill-log/reports/kind.md")" \
+    "$(printf '%s\n' "$H#4" "$H#e3" "$H#s3" | LC_ALL=C sort)"
+
 # A line that is not a marker is a problem: fail, name the line.
 printf 'not a marker\n' >"$REPO/.skill-log/reports/broken.md"
 run report --check --slug broken

@@ -90,10 +90,9 @@ func ParseRef(value string) (Kind, int64, bool) {
 }
 
 // splitKind separates an optional row-kind prefix from the digits that follow.
-// An empty remainder, or a character that is neither a known prefix nor a digit,
-// is refused.
+// An empty remainder is refused; an unknown prefix stays with the digits, which
+// parseID then refuses.
 func splitKind(text string) (Kind, string, bool) {
-	text = strings.TrimSpace(text)
 	switch {
 	case strings.HasPrefix(text, "e"):
 		return Error, text[1:], text[1:] != ""

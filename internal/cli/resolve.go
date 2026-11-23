@@ -56,7 +56,7 @@ func resolveFlags(options *resolveOptions) *flagSet {
 	flags.value("--id", "a row", func(value string) error {
 		kind, id, ok := marker.ParseRef(value)
 		if !ok {
-			return usageError{"--id takes an id, an e<id> error row, or a marker"}
+			return usageError{"--id takes an id or an e<id> error row"}
 		}
 		if kind == marker.Signature {
 			return usageError{"--id cannot take a signature: a signature names a set, " +

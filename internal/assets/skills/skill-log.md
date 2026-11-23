@@ -43,8 +43,9 @@ answered from the same rows.
 A row is named `machine#row` — the machine plus the row, a bare id for
 an invocation and `e<id>` or `s<id>` for an error or a signature — and
 that marker is what every later command speaks. `show --json` prints
-each row's `marker` in exactly that form. A bare id, a placeholder, an
-empty machine and id 0 are refused, never guessed at. Every marker names
+each row's `marker` in exactly that form. An id with no machine, a
+placeholder, an empty machine, an id of 0 and an unknown row prefix are
+refused, never guessed at. Every marker names
 its machine, because one id means a different row in each machine's log
 and the same merged commit is read on all of them.
 

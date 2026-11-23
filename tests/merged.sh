@@ -141,7 +141,7 @@ check "a row-kind marker never restamps the invocation with the same id" \
 
 # ---------------------------------------------- unknown, malformed, hidden
 
-commit_file "$REPO" "Skill-log-Fix: $H#99, <id>, 7"
+commit_file "$REPO" "Skill-log-Fix: $H#99, <id>, 7, $H#x2, $H# 1"
 (
     cd "$REPO" || exit 1
     "$BIN" resolve-merged --db "$DB" --json >"$SCRATCH/bad.json" 2>"$SCRATCH/bad.err"
@@ -152,8 +152,16 @@ check_contains "a placeholder is reported" \
     "$(cat "$SCRATCH/bad.err")" "not a Skill-log-Fix marker (machine#row): <id>"
 check_contains "a bare id is reported" \
     "$(cat "$SCRATCH/bad.err")" "not a Skill-log-Fix marker (machine#row): 7"
+check_contains "an unknown row prefix is reported" \
+    "$(cat "$SCRATCH/bad.err")" \
+    "not a Skill-log-Fix marker (machine#row): $H#x2"
+check_contains "a space after the hash is not an id" \
+    "$(cat "$SCRATCH/bad.err")" \
+    "not a Skill-log-Fix marker (machine#row): $H# 1"
 check "a malformed marker stamps nothing" \
     "$(sqlite3 "$DB" "select count(*) from invocations where fix <> ''")" "2"
+check "a spaced id does not stamp the invocation it resembles" \
+    "$(sqlite3 "$DB" 'select fix from invocations where id = 1')" "$FIRST"
 check "the JSON names the unknown row" \
     "$(json_array "$(cat "$SCRATCH/bad.json")" skipped | grep -c "$H#99")" "1"
 check "the unknown id's reason is the contract token" \
@@ -167,10 +175,10 @@ check "a malformed marker is in the ignored array" \
     "$(json_array "$(cat "$SCRATCH/bad.json")" ignored | grep -c '<id>')" "1"
 check "a bare id is in the ignored array" \
     "$(json_array "$(cat "$SCRATCH/bad.json")" ignored | grep -c ',7')" "1"
-check "the ignored array holds both malformed markers" \
+check "the ignored array holds every malformed marker" \
     "$(printf '%s' "$(cat "$SCRATCH/bad.json")" \
         | python3 -c 'import json,sys; print(len(json.loads(sys.stdin.read())["ignored"]))')" \
-    "2"
+    "4"
 
 # The same answer with --quiet: the JSON keeps the report, the stderr
 # notes stay suppressed.

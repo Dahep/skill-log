@@ -412,6 +412,14 @@ func validateReport(text, relative string, opened *store.Store, haveStore bool, 
 		if !haveStore {
 			continue
 		}
+		// An error or signature marker names another table, which this store
+		// does not hold yet: an invocation with the same id is a different row,
+		// so it is never the one this line names.
+		if parsed.Kind != marker.Invocation {
+			result.warnings = append(result.warnings,
+				textMarker+": not in this db (no "+parsed.Kind.Label()+" rows yet)")
+			continue
+		}
 		row, err := opened.ReadInvocation(parsed.ID)
 		if err != nil {
 			return result, err
