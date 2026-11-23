@@ -83,13 +83,12 @@ func (s *Store) InvocationByRef(ref string) (*Invocation, error) {
 	if empty, err := s.isEmptyLog(); err != nil || empty {
 		return nil, err
 	}
-	row := s.db.QueryRow(invocationSelect+
-		" WHERE evidence_ref = ? AND evidence_ref <> '' ORDER BY id DESC LIMIT 1", ref)
+	row := s.db.QueryRow(invocationSelect+refLookup, ref)
 	invocation, err := scanInvocation(row)
 	if err != nil || invocation == nil {
 		return nil, err
 	}
-	problems, err := s.problemsFor(invocation.ID)
+	problems, err := problemsFor(s.db, invocation.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -111,7 +110,7 @@ func (s *Store) ReadInvocation(id int64) (*Invocation, error) {
 	if invocation == nil {
 		return nil, nil
 	}
-	problems, err := s.problemsFor(id)
+	problems, err := problemsFor(s.db, id)
 	if err != nil {
 		return nil, err
 	}
@@ -155,7 +154,7 @@ func (s *Store) Rows(filters Filters) ([]Invocation, error) {
 		if invocation == nil {
 			continue
 		}
-		problems, err := s.problemsFor(invocation.ID)
+		problems, err := problemsFor(s.db, invocation.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -188,8 +187,14 @@ func scanInvocation(row scanner) (*Invocation, error) {
 	return &invocation, nil
 }
 
-func (s *Store) problemsFor(id int64) ([]string, error) {
-	rows, err := s.db.Query(
+// queryer is the read half both a store handle and a transaction carry, so one
+// problems query serves a plain read and a read inside a write transaction.
+type queryer interface {
+	Query(query string, args ...any) (*sql.Rows, error)
+}
+
+func problemsFor(q queryer, id int64) ([]string, error) {
+	rows, err := q.Query(
 		"SELECT problem FROM problems WHERE invocation_id = ? ORDER BY ordinal", id,
 	)
 	if err != nil {

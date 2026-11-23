@@ -26,6 +26,8 @@ needs a name here, and a new rule needs a line in `SPEC.md`.
   run's context), `listed` (only its name and description were), `attested`
   (nothing but the agent's sentence). The first two are derived; the last three
   are attested.
+- **Claim** — an `evidence_ref` recorded by `add` without proof. It never raises
+  a grade by itself; only the reader that finds the call does.
 - **Harvest** — deriving invocations and error rows from the harness's own
   store, read-only.
 - **Reader** — the per-harness half of `harvest`: the one place a harness's

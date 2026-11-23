@@ -1171,6 +1171,9 @@ EV_DB="$DBT/evidence.db"
 run add --skill graded --db "$EV_DB" --json
 check "case 36: a row defaults to attested" "$(json_field "$OUT" evidence)" "attested"
 check "case 36: a row with no ref carries none" "$(json_field "$OUT" evidence_ref)" ""
+check "case 36: add --json carries the evidence_ref key" \
+    "$(printf '%s' "$OUT" | python3 -c 'import json,sys; o=json.loads(sys.stdin.read()); print("evidence_ref" in o and o["evidence_ref"] == "")')" \
+    "True"
 
 run add --skill graded --evidence listed --db "$EV_DB" --json
 check "case 36: --evidence listed is recorded" "$(json_field "$OUT" evidence)" "listed"
@@ -1182,6 +1185,12 @@ run add --skill graded --evidence call --db "$EV_DB"
 check "case 36: --evidence call exits 2" "$STATUS" "2"
 check_one_line "case 36: --evidence call is one line" "$ERR"
 check_contains "case 36: --evidence call says harvest proves it" "$ERR" "harvest"
+
+run add --skill graded --evidence read --db "$EV_DB"
+check "case 36: --evidence read exits 2" "$STATUS" "2"
+
+run add --skill graded --evidence call --dry-run --db "$EV_DB"
+check "case 36: --evidence call exits 2 in --dry-run" "$STATUS" "2"
 
 run add --skill graded --evidence inherited --db "$EV_DB"
 check "case 36: an unknown grade exits 2" "$STATUS" "2"
@@ -1203,6 +1212,34 @@ check "case 36: the appended problems are both there" \
 check "case 36: the store holds one row for the call" \
     "$(sqlite3 "$EV_DB" "select count(*) from invocations where evidence_ref = 'call-1'")" "1"
 
+# A clean repeat (no problem) must still land on the row, not write a second one.
+run add --skill hand-read --ref call-1 --db "$EV_DB" --json
+check "case 36: a clean repeat reports the row it landed on" "$(json_field "$OUT" id)" "$REF_ID"
+check "case 36: a clean repeat writes no second row" \
+    "$(sqlite3 "$EV_DB" "select count(*) from invocations where evidence_ref = 'call-1'")" "1"
+
+# The dry run merges the previewed problems and writes none of them.
+EV_PROBLEMS="$(sqlite3 "$EV_DB" \
+    "select count(*) from problems p join invocations i on i.id = p.invocation_id where i.evidence_ref = 'call-1'")"
+run add --skill hand-read --ref call-1 --problem "third" --dry-run --json --db "$EV_DB"
+check "case 36: the dry run previews the merged problems" \
+    "$(printf '%s' "$OUT" | python3 -c 'import json,sys; print(len(json.loads(sys.stdin.read())["problems"]))')" \
+    "3"
+check "case 36: the dry run writes no problem" \
+    "$(sqlite3 "$EV_DB" "select count(*) from problems p join invocations i on i.id = p.invocation_id where i.evidence_ref = 'call-1'")" \
+    "$EV_PROBLEMS"
+
+# The explicit grade wins over the default the --ref sentence describes.
+run add --skill hand-read --ref call-2 --evidence body --db "$EV_DB" --json
+check "case 36: --evidence body wins on a claimed row" "$(json_field "$OUT" evidence)" "body"
+check "case 36: the explicit grade keeps the ref" "$(json_field "$OUT" evidence_ref)" "call-2"
+
+# A dry run still refuses a store the real run would refuse.
+printf 'not a database' >"$EV_DB.corrupt"
+run add --skill hand-read --ref call-1 --dry-run --db "$EV_DB.corrupt"
+check "case 36: a dry run refuses a corrupt store" "$STATUS" "1"
+check_contains "case 36: the corrupt store is named" "$ERR" "damaged store"
+
 # --skills-dir refuses a name the directory does not hold.
 SK="$S/skills"
 mkdir -p "$SK/known"
@@ -1210,6 +1247,11 @@ printf -- '---\nname: known\n---\nbody\n' >"$SK/known/SKILL.md"
 
 run add --skill known --skills-dir "$SK" --db "$EV_DB"
 check "case 36: a known skill is accepted" "$STATUS" "0"
+
+mkdir -p "$HOME/expanded-skills/known"
+printf -- '---\nname: known\n---\nbody\n' >"$HOME/expanded-skills/known/SKILL.md"
+run add --skill known --skills-dir '~/expanded-skills' --db "$EV_DB"
+check "case 36: --skills-dir expands a leading ~" "$STATUS" "0"
 
 run add --skill absent --skills-dir "$SK" --db "$EV_DB"
 check "case 36: an unknown skill exits 2" "$STATUS" "2"

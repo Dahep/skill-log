@@ -194,10 +194,7 @@ func handleAdd(args []string) Outcome {
 		clean = append(clean, format.Sanitize(problem))
 	}
 
-	skillsDir := strings.TrimSpace(options.skillsDir)
-	if skillsDir == "" {
-		skillsDir = strings.TrimSpace(os.Getenv("SKILL_LOG_SKILLS_DIR"))
-	}
+	skillsDir := settings.ResolveSkillsDir(options.skillsDir)
 	if skillsDir != "" {
 		found, err := skillExists(skillsDir, row.Skill)
 		if err != nil {
@@ -211,36 +208,23 @@ func handleAdd(args []string) Outcome {
 		}
 	}
 
+	now := settings.LocalTimestamp()
 	// --ref narrows the non-idempotency: when a row already carries the call,
 	// the problems append to it and no second invocation is written.
 	if row.EvidenceRef != "" {
-		if options.dryRun {
-			existing, err := store.InvocationByRefPath(path, row.EvidenceRef)
-			if failure := writeOutcome(path, nil, err); failure != nil {
-				return Fail(failure.Message, failure.Code)
+		added, refusal, err := store.WriteOrAppendToRef(
+			path, &row, clean, now, options.dryRun)
+		if failure := writeOutcome(path, refusal, err); failure != nil {
+			return Fail(failure.Message, failure.Code)
+		}
+		if added.Row != nil {
+			if options.json {
+				return OK(RenderRowJSON(*added.Row))
 			}
-			if existing != nil {
-				existing.Problems = append(existing.Problems, clean...)
-				if options.json {
-					return OK(RenderRowJSON(*existing))
-				}
-				return OK(marker.Format(existing.Machine, existing.ID))
-			}
-		} else {
-			appended, err := store.AppendProblemsToRef(path, row.EvidenceRef, clean)
-			if failure := writeOutcome(path, appended.Refusal, err); failure != nil {
-				return Fail(failure.Message, failure.Code)
-			}
-			if appended.Row != nil {
-				if options.json {
-					return OK(RenderRowJSON(*appended.Row))
-				}
-				return OK(marker.Format(appended.Row.Machine, appended.Row.ID))
-			}
+			return OK(marker.Format(added.Row.Machine, added.Row.ID))
 		}
 	}
 
-	now := settings.LocalTimestamp()
 	if options.dryRun {
 		row.TS = now
 		row.Problems = clean
@@ -269,12 +253,8 @@ func skillExists(dir, name string) (bool, error) {
 		return false, err
 	}
 	for _, entry := range entries {
-		if entry.Name() != name {
-			continue
-		}
-		sub := format.JoinPath(dir, name)
-		if format.IsDir(sub) && format.IsRegularFile(format.JoinPath(sub, "SKILL.md")) {
-			return true, nil
+		if entry.Name() == name {
+			return isSkillDir(dir, name), nil
 		}
 	}
 	return false, nil

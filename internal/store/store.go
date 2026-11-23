@@ -58,6 +58,11 @@ const invocationSelect = "SELECT id, ts, skill, evidence, evidence_ref," +
 	" harness, session, parent, model, repo, worktree, project, t3_thread," +
 	" machine, fix, resolved_at FROM invocations"
 
+// refLookup finds the row a harness call id claims. It is one clause so the dry
+// run and the write ask the same question.
+const refLookup = " WHERE evidence_ref = ? AND evidence_ref <> ''" +
+	" ORDER BY id DESC LIMIT 1"
+
 const (
 	writeBusyTimeout = 2000
 	readBusyTimeout  = 5000
