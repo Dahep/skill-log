@@ -53,7 +53,7 @@ DEFAULTS="$(sqlite3 "$DB" \
         from pragma_table_info('invocations')
         where type = 'TEXT'")"
 check "every text column of invocations has a default" "$DEFAULTS" \
-    "ts:''|skill:''|harness:''|session:''|parent:''|model:''|repo:''|worktree:''|project:''|t3_thread:''|machine:''|fix:''|resolved_at:''"
+    "ts:''|skill:''|evidence:''|evidence_ref:''|harness:''|session:''|parent:''|model:''|repo:''|worktree:''|project:''|t3_thread:''|machine:''|fix:''|resolved_at:''"
 check "the row carries a local ISO 8601 stamp with an offset" \
     "$(sqlite3 "$DB" 'select ts from invocations order by id limit 1' \
         | grep -cE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[+-][0-9]{2}:[0-9]{2}$')" "1"
@@ -231,7 +231,7 @@ check "json exits 0" "$STATUS" "0"
 check "json is one flat object" \
     "$(printf '%s' "$OUT" | grep -c '^{.*}$')" "1"
 check "json carries exactly the row's keys" "$(json_keys "$OUT")" \
-    "fix harness id machine marker model parent problems project repo resolved_at session skill t3_thread ts worktree"
+    "evidence evidence_ref fix harness id machine marker model parent problems project repo resolved_at session skill t3_thread ts worktree"
 check "json carries the problems array" \
     "$(json_problem "$OUT")" "one"
 
@@ -300,6 +300,8 @@ CREATE TABLE invocations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts TEXT NOT NULL,
     skill TEXT NOT NULL,
+    evidence TEXT NOT NULL DEFAULT '',
+    evidence_ref TEXT NOT NULL DEFAULT '',
     harness TEXT NOT NULL DEFAULT '',
     session TEXT NOT NULL DEFAULT '',
     parent TEXT NOT NULL DEFAULT '',

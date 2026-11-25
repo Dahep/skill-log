@@ -48,6 +48,16 @@ func ResolveDB(flag string) string {
 	return DefaultDB()
 }
 
+// ResolveSkillsDir is the skills directory the skills-name guard checks:
+// --skills-dir first, then SKILL_LOG_SKILLS_DIR, both home-expanded. An empty
+// answer means no guard.
+func ResolveSkillsDir(flag string) string {
+	if dir := strings.TrimSpace(flag); dir != "" {
+		return ExpandHome(dir)
+	}
+	return ExpandHome(strings.TrimSpace(os.Getenv("SKILL_LOG_SKILLS_DIR")))
+}
+
 // StateDir is the per-machine skill-log state directory: where the seeded template
 // record lives, beside the store.
 func StateDir() string {

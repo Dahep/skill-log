@@ -155,6 +155,13 @@ func movedSuffix(moved string) string {
 	return "; " + moved
 }
 
+// isSkillDir reports whether dir/name is a skill: a directory carrying its own
+// SKILL.md.
+func isSkillDir(dir, name string) bool {
+	sub := format.JoinPath(dir, name)
+	return format.IsDir(sub) && format.IsRegularFile(format.JoinPath(sub, "SKILL.md"))
+}
+
 func skillDirs(dir string) []string {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -166,8 +173,7 @@ func skillDirs(dir string) []string {
 		if name == "." || name == ".." {
 			continue
 		}
-		sub := format.JoinPath(dir, name)
-		if format.IsDir(sub) && format.IsRegularFile(format.JoinPath(sub, "SKILL.md")) {
+		if isSkillDir(dir, name) {
 			names = append(names, name)
 		}
 	}

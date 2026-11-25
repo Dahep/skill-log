@@ -11,21 +11,23 @@ import (
 // Invocation is one invocation row and its problems. The column order is the
 // schema's, and it is also the order JSON exposes.
 type Invocation struct {
-	ID         int64
-	TS         string
-	Skill      string
-	Harness    string
-	Session    string
-	Parent     string
-	Model      string
-	Repo       string
-	Worktree   string
-	Project    string
-	T3Thread   string
-	Machine    string
-	Fix        string
-	ResolvedAt string
-	Problems   []string
+	ID          int64
+	TS          string
+	Skill       string
+	Evidence    string
+	EvidenceRef string
+	Harness     string
+	Session     string
+	Parent      string
+	Model       string
+	Repo        string
+	Worktree    string
+	Project     string
+	T3Thread    string
+	Machine     string
+	Fix         string
+	ResolvedAt  string
+	Problems    []string
 }
 
 // Filters is what one read of the store selects. An empty string means the filter
@@ -72,6 +74,28 @@ func filterClause(filters Filters) (string, []any) {
 	return " WHERE " + strings.Join(clauses, " AND "), marks
 }
 
+// InvocationByRef reads the row a harness call id already names, or nil when no
+// row carries it. A store with no tables yet carries no refs.
+func (s *Store) InvocationByRef(ref string) (*Invocation, error) {
+	if ref == "" {
+		return nil, nil
+	}
+	if empty, err := s.isEmptyLog(); err != nil || empty {
+		return nil, err
+	}
+	row := s.db.QueryRow(invocationSelect+refLookup, ref)
+	invocation, err := scanInvocation(row)
+	if err != nil || invocation == nil {
+		return nil, err
+	}
+	problems, err := problemsFor(s.db, invocation.ID)
+	if err != nil {
+		return nil, err
+	}
+	invocation.Problems = problems
+	return invocation, nil
+}
+
 // ReadInvocation reads one invocation row and its problems. A store with no tables
 // yet is an empty log: the id cannot exist, so the answer is no row.
 func (s *Store) ReadInvocation(id int64) (*Invocation, error) {
@@ -86,7 +110,7 @@ func (s *Store) ReadInvocation(id int64) (*Invocation, error) {
 	if invocation == nil {
 		return nil, nil
 	}
-	problems, err := s.problemsFor(id)
+	problems, err := problemsFor(s.db, id)
 	if err != nil {
 		return nil, err
 	}
@@ -130,7 +154,7 @@ func (s *Store) Rows(filters Filters) ([]Invocation, error) {
 		if invocation == nil {
 			continue
 		}
-		problems, err := s.problemsFor(invocation.ID)
+		problems, err := problemsFor(s.db, invocation.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -147,7 +171,8 @@ type scanner interface {
 func scanInvocation(row scanner) (*Invocation, error) {
 	var invocation Invocation
 	err := row.Scan(
-		&invocation.ID, &invocation.TS, &invocation.Skill, &invocation.Harness,
+		&invocation.ID, &invocation.TS, &invocation.Skill, &invocation.Evidence,
+		&invocation.EvidenceRef, &invocation.Harness,
 		&invocation.Session, &invocation.Parent, &invocation.Model,
 		&invocation.Repo, &invocation.Worktree, &invocation.Project,
 		&invocation.T3Thread, &invocation.Machine, &invocation.Fix,
@@ -162,8 +187,14 @@ func scanInvocation(row scanner) (*Invocation, error) {
 	return &invocation, nil
 }
 
-func (s *Store) problemsFor(id int64) ([]string, error) {
-	rows, err := s.db.Query(
+// queryer is the read half both a store handle and a transaction carry, so one
+// problems query serves a plain read and a read inside a write transaction.
+type queryer interface {
+	Query(query string, args ...any) (*sql.Rows, error)
+}
+
+func problemsFor(q queryer, id int64) ([]string, error) {
+	rows, err := q.Query(
 		"SELECT problem FROM problems WHERE invocation_id = ? ORDER BY ordinal", id,
 	)
 	if err != nil {
