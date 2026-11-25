@@ -350,6 +350,49 @@ check "a missing session store is a blank model" "$(json_field "$OUT" model)" ""
 check "a missing session store still fills the harness" \
     "$(json_field "$OUT" harness)" "opencode"
 
+# The harness store is input, never output: a read-only copy still fills the
+# model, and a read leaves the file byte-identical.
+RO_HOME="$SCRATCH/oc-readonly-home"
+mkdir -p "$RO_HOME/.local/share/opencode"
+cp "$OC_HOME/.local/share/opencode/opencode.db" \
+    "$RO_HOME/.local/share/opencode/opencode.db"
+chmod 0444 "$RO_HOME/.local/share/opencode/opencode.db"
+chmod 0555 "$RO_HOME/.local/share/opencode"
+BEFORE="$(cksum "$RO_HOME/.local/share/opencode/opencode.db")"
+OUT="$(HOME="$RO_HOME" OPENCODE_SESSION_ID=ses_test SKILL_LOG_ADAPTERS=opencode \
+    "$BIN" add --skill adapters --dry-run --json)"
+check "a read-only harness store still fills the model" \
+    "$(json_field "$OUT" model)" "opencode/kimi-k3"
+check "reading the harness store leaves the file untouched" \
+    "$(cksum "$RO_HOME/.local/share/opencode/opencode.db")" "$BEFORE"
+chmod 0755 "$RO_HOME/.local/share/opencode"
+
+# Any other failure of the harness store is the same blank, never this tool's
+# error: a file that is not a database, and a database whose schema drifted from
+# what the one read expects. Both exit 0 and leave the model empty.
+BROKEN_HOME="$SCRATCH/oc-broken-home"
+mkdir -p "$BROKEN_HOME/.local/share/opencode"
+printf 'not a database\n' >"$BROKEN_HOME/.local/share/opencode/opencode.db"
+OUT="$(HOME="$BROKEN_HOME" OPENCODE_SESSION_ID=ses_test SKILL_LOG_ADAPTERS=opencode \
+    "$BIN" add --skill adapters --dry-run --json)"
+STATUS=$?
+check "a damaged harness store still exits 0" "$STATUS" "0"
+check "a damaged harness store is a blank model" "$(json_field "$OUT" model)" ""
+check "a damaged harness store still fills the harness" \
+    "$(json_field "$OUT" harness)" "opencode"
+
+DRIFT_HOME="$SCRATCH/oc-drifted-home"
+mkdir -p "$DRIFT_HOME/.local/share/opencode"
+sqlite3 "$DRIFT_HOME/.local/share/opencode/opencode.db" \
+    'CREATE TABLE other (id TEXT)'
+OUT="$(HOME="$DRIFT_HOME" OPENCODE_SESSION_ID=ses_test SKILL_LOG_ADAPTERS=opencode \
+    "$BIN" add --skill adapters --dry-run --json)"
+STATUS=$?
+check "a drifted harness store still exits 0" "$STATUS" "0"
+check "a drifted harness store is a blank model" "$(json_field "$OUT" model)" ""
+check "a drifted harness store still fills the harness" \
+    "$(json_field "$OUT" harness)" "opencode"
+
 T3_HOME="$SCRATCH/t3"
 mkdir -p "$T3_HOME/worktrees/myproject/sub"
 OUT="$(T3CODE_HOME="$T3_HOME" "$BIN" add --skill adapters --dry-run --json \
