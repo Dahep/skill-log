@@ -280,18 +280,35 @@ check "a resolved marker is a warning, not a problem" "$STATUS" "0"
 check "the resolved marker names its commit" "$ERR" \
     "skill-log: $H#3: already resolved by abc123456"
 
+# An error or signature marker names another table. The invocation with the
+# same id is a different row, so the check never reads it as that invocation,
+# and a union keeps the line as it was written.
+printf '%s\n' "$H#e3" "$H#s3" >"$REPO/.skill-log/reports/kind.md"
+run report --check --slug kind
+check "a row-kind marker does not fail the check" "$STATUS" "0"
+check_absent "a row-kind marker is not read as its invocation" "$ERR" \
+    "already resolved"
+check_contains "an error marker names the table this store lacks" "$ERR" \
+    "skill-log: $H#e3: not in this db (no error rows yet)"
+check_contains "a signature marker names the table this store lacks" "$ERR" \
+    "skill-log: $H#s3: not in this db (no signature rows yet)"
+run report --id 4 --slug kind
+check "a union keeps a row-kind marker" \
+    "$(cat "$REPO/.skill-log/reports/kind.md")" \
+    "$(printf '%s\n' "$H#4" "$H#e3" "$H#s3" | LC_ALL=C sort)"
+
 # A line that is not a marker is a problem: fail, name the line.
 printf 'not a marker\n' >"$REPO/.skill-log/reports/broken.md"
 run report --check --slug broken
 check "a malformed line fails the check" "$STATUS" "1"
 check_contains "the malformed line names its position" "$ERR" \
-    "skill-log: .skill-log/reports/broken.md:1: not a marker (machine#id): not a marker"
+    "skill-log: .skill-log/reports/broken.md:1: not a marker (machine#row): not a marker"
 check "the failure is one summary line on top of the findings" \
     "$(printf '%s\n' "$ERR" | grep -c 'is not a valid report')" "1"
 run report --check --slug broken --json
 check "the check's json carries the problems" \
     "$(json_array "$OUT" problems)" \
-    ".skill-log/reports/broken.md:1: not a marker (machine#id): not a marker"
+    ".skill-log/reports/broken.md:1: not a marker (machine#row): not a marker"
 
 # A write over a malformed report refuses instead of deleting the line.
 printf 'not a marker\n' >"$REPO/.skill-log/reports/bad-write.md"
@@ -306,7 +323,7 @@ sqlite3 "$DB" "update invocations set machine = 'bad#machine' where id = 4"
 run report --id 4 --slug bad-machine
 check "an unnameable machine is refused" "$STATUS" "1"
 check "an unnameable machine is named" \
-    "$(printf '%s\n' "$ERR" | grep -c 'not a marker (machine#id)')" "1"
+    "$(printf '%s\n' "$ERR" | grep -c 'not a marker (machine#row)')" "1"
 if [ -e "$REPO/.skill-log/reports/bad-machine.md" ]; then
     fail "an unnameable machine wrote a report"
 else
@@ -316,7 +333,7 @@ printf 'bad#machine#4\n' >"$REPO/.skill-log/reports/bad-line.md"
 run report --check --slug bad-line
 check "a report with an unparseable marker is not valid" "$STATUS" "1"
 check_contains "the unparseable marker names its position" "$ERR" \
-    "not a marker (machine#id)"
+    "not a marker (machine#row)"
 sqlite3 "$DB" "update invocations set machine = '$H' where id = 4"
 
 run report --check --slug no-such-report
@@ -500,7 +517,7 @@ check "the absent store does not invalidate the report" "$OUT" \
 run report --check --slug broken --db "$SCRATCH/no-store.db"
 check "an absent store does not hide a malformed report" "$STATUS" "1"
 check_contains "the malformed report is still named" "$ERR" \
-    "not a marker (machine#id)"
+    "not a marker (machine#row)"
 
 # A report file that cannot be read is attributed to the report, not the
 # store.

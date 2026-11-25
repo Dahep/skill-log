@@ -5,11 +5,13 @@ import (
 	"strings"
 
 	"github.com/Dahep/skill-log/internal/format"
+	"github.com/Dahep/skill-log/internal/marker"
 	"github.com/Dahep/skill-log/internal/settings"
 	"github.com/Dahep/skill-log/internal/store"
 )
 
 type resolveOptions struct {
+	kind   marker.Kind
 	id     int64
 	fix    string
 	dryRun bool
@@ -21,10 +23,11 @@ func resolveVerb() Verb {
 	return Verb{
 		Name:    "resolve",
 		Summary: "stamp one row with the commit that fixes it, by hand",
-		Usage: "skill-log resolve --id <n> --fix <commit> [--dry-run]\n" +
+		Usage: "skill-log resolve --id <row> --fix <commit> [--dry-run]\n" +
 			"                      [--json] [--db <path>]",
 		Examples: []string{
 			"skill-log resolve --id 42 --fix a1b2c3d",
+			"skill-log resolve --id e7 --fix a1b2c3d",
 			"skill-log resolve --id 42 --fix a1b2c3d --dry-run",
 			"skill-log resolve --id 42 --fix a1b2c3d --json",
 		},
@@ -50,12 +53,16 @@ func init() { register(resolveVerb()) }
 
 func resolveFlags(options *resolveOptions) *flagSet {
 	flags := &flagSet{}
-	flags.value("--id", "an id", func(value string) error {
-		id, err := parsePositive(value, "--id takes a positive integer")
-		if err != nil {
-			return err
+	flags.value("--id", "a row", func(value string) error {
+		kind, id, ok := marker.ParseRef(value)
+		if !ok {
+			return usageError{"--id takes an id or an e<id> error row"}
 		}
-		options.id = id
+		if kind == marker.Signature {
+			return usageError{"--id cannot take a signature: a signature names a set, " +
+				"and resolve-merged is the verb that expands one"}
+		}
+		options.kind, options.id = kind, id
 		return nil
 	})
 	flags.value("--fix", "a commit", func(value string) error { options.fix = value; return nil })
@@ -122,7 +129,8 @@ func handleResolve(args []string) Outcome {
 		return Fail(hostErr.Error(), ExitFailure)
 	}
 	row, refusal, err := store.ResolveRow(
-		path, options.id, options.fix, host, settings.LocalTimestamp(), options.dryRun,
+		path, options.kind, options.id, options.fix, host,
+		settings.LocalTimestamp(), options.dryRun,
 	)
 	var foreign *store.ForeignMarker
 	if errors.As(err, &foreign) {
@@ -132,7 +140,7 @@ func handleResolve(args []string) Outcome {
 		return Fail(failure.Message, failure.Code)
 	}
 	if !row.Found {
-		return Fail("no invocation "+formatInt(options.id)+" in "+path, ExitFailure)
+		return Fail("no "+options.kind.Label()+" "+formatInt(options.id)+" in "+path, ExitFailure)
 	}
 
 	if options.json {

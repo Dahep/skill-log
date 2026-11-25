@@ -179,5 +179,5 @@ func handleAdd(args []string) Outcome {
 	if options.json {
 		return OK(RenderRowJSON(row))
 	}
-	return OK(marker.Format(row.Machine, row.ID))
+	return OK(marker.Format(row.Machine, marker.Invocation, row.ID))
 }
