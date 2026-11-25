@@ -1,8 +1,8 @@
 # ADR-0003: the module map behind the CLI
 
 **Status:** accepted, 2026-11-12.
-**Amended by:** [ADR-0004](0004-tool-error-attribution.md) — an eighth module
-(`Reader`), and `Marker`, `Store` and `Resolution` extended.
+**Amended by:** [ADR-0004](0004-tool-error-attribution.md) — two new modules
+(`Reader`, `Attribution`), and `Marker`, `Store` and `Resolution` extended.
 **Current rules:** [SPEC.md](../../SPEC.md).
 
 ## Context
