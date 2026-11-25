@@ -284,8 +284,13 @@ func foreignRow(machine, host string) bool {
 // first: a row already carrying this fix is answered without a write. host is
 // this machine's hostname (or "" when it cannot be read); now is the caller's
 // stamp, which a dry run reports instead of writing.
-func ResolveRow(path string, id int64, fix, host, now string, dryRun bool) (Resolved, *Refusal, error) {
+func ResolveRow(path string, kind marker.Kind, id int64, fix, host, now string, dryRun bool) (Resolved, *Refusal, error) {
 	var result Resolved
+	if kind != marker.Invocation {
+		// An error or signature marker is not an invocation row: the caller
+		// names the row it asked for, and nothing is stamped under this table.
+		return result, nil, nil
+	}
 	opened, refusal, err := openRead(path)
 	if err != nil || refusal != nil {
 		return result, refusal, err
@@ -302,7 +307,7 @@ func ResolveRow(path string, id int64, fix, host, now string, dryRun bool) (Reso
 		return result, nil, nil
 	}
 	if foreignRow(row.Machine, host) {
-		return result, nil, &ForeignMarker{Marker: marker.Format(row.Machine, id)}
+		return result, nil, &ForeignMarker{Marker: marker.Format(row.Machine, marker.Invocation, id)}
 	}
 	result.Found = true
 	result.Skill = row.Skill
@@ -363,7 +368,7 @@ func stampAttempt(path string, id int64, fix, host, now string) (Resolved, *Refu
 	}
 	if foreignRow(machine, host) {
 		// The stamp is the write: the guard repeats where it lands.
-		return result, nil, &ForeignMarker{Marker: marker.Format(machine, id)}
+		return result, nil, &ForeignMarker{Marker: marker.Format(machine, marker.Invocation, id)}
 	}
 	result.Found = true
 	result.Skill = skill

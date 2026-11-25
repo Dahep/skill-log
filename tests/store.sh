@@ -190,8 +190,8 @@ check "a pipe written in two chunks keeps both parts" \
 # ----------------------------------------------------------------- marker
 
 case "$OUT" in
-    *"#"*) pass "the marker is machine#id" ;;
-    *) fail "the marker is not machine#id: '$OUT'" ;;
+    *"#"*) pass "the marker is machine#row" ;;
+    *) fail "the marker is not machine#row: '$OUT'" ;;
 esac
 
 # ---------------------------------------------------------------- dry run

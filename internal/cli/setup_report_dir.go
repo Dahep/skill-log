@@ -16,7 +16,7 @@ The report a change commits when it fixes friction recorded in the local
 skill log. Resolution reads it after the merge, so the fix cannot be
 forgotten.
 
-- ` + "`" + `<slug>.md` + "`" + ` — one report per fix change, one ` + "`" + `machine#id` + "`" + ` per line.
+- ` + "`" + `<slug>.md` + "`" + ` — one report per fix change, one ` + "`" + `machine#row` + "`" + ` per line.
   ` + "`" + `skill-log report --id …` + "`" + ` writes it (and validates the ids against the
   local log); commit it with the change.
 - ` + "`" + `resolve-merged` + "`" + ` (the ` + "`" + `post-merge` + "`" + ` hook) reads the files a pull added or

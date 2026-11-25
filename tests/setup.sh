@@ -647,7 +647,7 @@ if [ -f "$REVIEW_DOC" ]; then pass "skills install: the review skill lands"; els
 fi
 
 check_contains "the body teaches the marker grammar" \
-    "$(cat "$LOG_DOC")" "machine#id"
+    "$(cat "$LOG_DOC")" "machine#row"
 check_contains "the body teaches report" "$(cat "$LOG_DOC")" "report"
 check_contains "the body teaches show --run" "$(cat "$LOG_DOC")" "show --run"
 check_contains "the body teaches stats --by" "$(cat "$LOG_DOC")" "stats --by"

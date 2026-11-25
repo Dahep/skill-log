@@ -221,7 +221,7 @@ func handleAdd(args []string) Outcome {
 			if options.json {
 				return OK(RenderRowJSON(*added.Row))
 			}
-			return OK(marker.Format(added.Row.Machine, added.Row.ID))
+			return OK(marker.Format(added.Row.Machine, marker.Invocation, added.Row.ID))
 		}
 	}
 
@@ -241,7 +241,7 @@ func handleAdd(args []string) Outcome {
 	if options.json {
 		return OK(RenderRowJSON(row))
 	}
-	return OK(marker.Format(row.Machine, row.ID))
+	return OK(marker.Format(row.Machine, marker.Invocation, row.ID))
 }
 
 // skillExists reports whether dir holds a skill of this name: a directory

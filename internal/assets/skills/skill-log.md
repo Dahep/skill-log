@@ -40,10 +40,12 @@ answered from the same rows.
 
 ## Markers
 
-A row is named `machine#id` — the machine plus the invocation id — and
+A row is named `machine#row` — the machine plus the row, a bare id for
+an invocation and `e<id>` or `s<id>` for an error or a signature — and
 that marker is what every later command speaks. `show --json` prints
-each row's `marker` in exactly that form. A bare id, a placeholder, an
-empty machine and id 0 are refused, never guessed at. Every marker names
+each row's `marker` in exactly that form. An id with no machine, a
+placeholder, an empty machine, an id of 0 and an unknown row prefix are
+refused, never guessed at. Every marker names
 its machine, because one id means a different row in each machine's log
 and the same merged commit is read on all of them.
 
@@ -57,7 +59,7 @@ in a report file committed with it:
     skill-log report --skill <name>      # the rows of one skill
 
 That writes `.skill-log/reports/<slug>.md`, named for the branch
-(`--slug` overrides): one `machine#id` per line and nothing else — no
+(`--slug` overrides): one `machine#row` per line and nothing else — no
 problem text, no project details. New markers are unioned with the
 file's current marker lines. No existing marker is removed, including a
 marker naming another machine: the tool never adds a foreign marker and

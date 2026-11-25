@@ -28,7 +28,8 @@ Read the log back through the same command: `show` for recent
 invocations and their problems, `show --run <id>` for one run, `stats`
 and `stats --by <column>` for counts and the problems-per-invocation
 rate, `report` and `resolve` to name and stamp the rows a change fixes. A
-row is named `machine#id` — the machine plus the invocation id — and that
+row is named `machine#row` — the machine plus the row, a bare id for an
+invocation and `e<id>` or `s<id>` for an error or a signature — and that
 marker is what every later command speaks. A reader never calls `add`.
 
 When <command> does not exist, skip the write silently and carry on:

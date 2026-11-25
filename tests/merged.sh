@@ -122,9 +122,26 @@ check "the skip reason in JSON is the contract token" \
             s["reason"] for s in json.loads(sys.stdin.read())["skipped"])))')" \
     "logged_after_commit"
 
+# ------------------------------------------------------------- row kinds
+
+# An error or signature marker names a different table. A bare id that matches
+# an invocation is a different row, so neither of these stamps invocation 1.
+commit_file "$REPO" "Skill-log-Fix: $H#e1, $H#s1"
+(
+    cd "$REPO" || exit 1
+    "$BIN" resolve-merged --db "$DB" --json \
+        >"$SCRATCH/kinds.json" 2>"$SCRATCH/kinds.err"
+)
+check_contains "an error marker is unknown to a bare-id table" \
+    "$(cat "$SCRATCH/kinds.err")" "$H#e1 skipped: unknown_id"
+check_contains "a signature marker is unknown until a signature exists" \
+    "$(cat "$SCRATCH/kinds.err")" "$H#s1 skipped: unknown_id"
+check "a row-kind marker never restamps the invocation with the same id" \
+    "$(sqlite3 "$DB" 'select fix from invocations where id = 1')" "$FIRST"
+
 # ---------------------------------------------- unknown, malformed, hidden
 
-commit_file "$REPO" "Skill-log-Fix: $H#99, <id>, 7"
+commit_file "$REPO" "Skill-log-Fix: $H#99, <id>, 7, $H#x2, $H# 1"
 (
     cd "$REPO" || exit 1
     "$BIN" resolve-merged --db "$DB" --json >"$SCRATCH/bad.json" 2>"$SCRATCH/bad.err"
@@ -132,11 +149,19 @@ commit_file "$REPO" "Skill-log-Fix: $H#99, <id>, 7"
 check_contains "an unknown id is reported by name" \
     "$(cat "$SCRATCH/bad.err")" "$H#99 skipped: unknown_id"
 check_contains "a placeholder is reported" \
-    "$(cat "$SCRATCH/bad.err")" "not a Skill-log-Fix marker (machine#id): <id>"
+    "$(cat "$SCRATCH/bad.err")" "not a Skill-log-Fix marker (machine#row): <id>"
 check_contains "a bare id is reported" \
-    "$(cat "$SCRATCH/bad.err")" "not a Skill-log-Fix marker (machine#id): 7"
+    "$(cat "$SCRATCH/bad.err")" "not a Skill-log-Fix marker (machine#row): 7"
+check_contains "an unknown row prefix is reported" \
+    "$(cat "$SCRATCH/bad.err")" \
+    "not a Skill-log-Fix marker (machine#row): $H#x2"
+check_contains "a space after the hash is not an id" \
+    "$(cat "$SCRATCH/bad.err")" \
+    "not a Skill-log-Fix marker (machine#row): $H# 1"
 check "a malformed marker stamps nothing" \
     "$(sqlite3 "$DB" "select count(*) from invocations where fix <> ''")" "2"
+check "a spaced id does not stamp the invocation it resembles" \
+    "$(sqlite3 "$DB" 'select fix from invocations where id = 1')" "$FIRST"
 check "the JSON names the unknown row" \
     "$(json_array "$(cat "$SCRATCH/bad.json")" skipped | grep -c "$H#99")" "1"
 check "the unknown id's reason is the contract token" \
@@ -150,10 +175,10 @@ check "a malformed marker is in the ignored array" \
     "$(json_array "$(cat "$SCRATCH/bad.json")" ignored | grep -c '<id>')" "1"
 check "a bare id is in the ignored array" \
     "$(json_array "$(cat "$SCRATCH/bad.json")" ignored | grep -c ',7')" "1"
-check "the ignored array holds both malformed markers" \
+check "the ignored array holds every malformed marker" \
     "$(printf '%s' "$(cat "$SCRATCH/bad.json")" \
         | python3 -c 'import json,sys; print(len(json.loads(sys.stdin.read())["ignored"]))')" \
-    "2"
+    "4"
 
 # The same answer with --quiet: the JSON keeps the report, the stderr
 # notes stay suppressed.
@@ -540,7 +565,7 @@ git -C "$REPO6" commit -q -m "a hand-edited report"
 )
 check_contains "a malformed report line is reported with its file" \
     "$(cat "$SCRATCH/hand.err")" \
-    "skill-log: not a Skill-log-Fix marker (machine#id): .skill-log/reports/bad.md: not-a-marker"
+    "skill-log: not a Skill-log-Fix marker (machine#row): .skill-log/reports/bad.md: not-a-marker"
 check "the good line in the same report still resolves" \
     "$(sqlite3 "$DB6" "select fix <> '' from invocations where id = 3")" "1"
 
@@ -559,7 +584,7 @@ check "a full scan reads every report file" \
 
 REPO_README="$(new_repo report-readme)"
 mkdir -p "$REPO_README/.skill-log/reports"
-printf '# Reports\n\nThis directory holds machine#id marker files.\n' >"$REPO_README/.skill-log/reports/README.md"
+printf '# Reports\n\nThis directory holds machine#row marker files.\n' >"$REPO_README/.skill-log/reports/README.md"
 : >"$REPO_README/.skill-log/reports/.gitkeep"
 git -C "$REPO_README" add -A
 git -C "$REPO_README" commit -q -m "add report directory"

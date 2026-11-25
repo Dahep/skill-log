@@ -19,7 +19,7 @@ func rowMarker(machine string, id int64) string {
 		}
 		machine = host
 	}
-	return marker.Format(machine, id)
+	return marker.Format(machine, marker.Invocation, id)
 }
 
 // RenderRowJSON renders one invocation as a flat JSON object.

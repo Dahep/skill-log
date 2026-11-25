@@ -18,12 +18,13 @@ const (
 // Epoch is the commit time in seconds, compared against a row's log time.
 type Located struct {
 	Machine string
+	Kind    marker.Kind
 	ID      int64
 	Commit  string
 	Epoch   int64
 }
 
-func (l Located) Text() string { return marker.Format(l.Machine, l.ID) }
+func (l Located) Text() string { return marker.Format(l.Machine, l.Kind, l.ID) }
 
 type MergedSkip struct {
 	Row    string
@@ -78,6 +79,13 @@ func plan(located []Located, rows []resolutionRow, localHost string) MergedResul
 		text := item.Text()
 		if item.Machine != localHost {
 			result.Skipped = append(result.Skipped, MergedSkip{Row: text, Reason: SkipForeign})
+			continue
+		}
+		// Only an invocation is a row this plan can stamp. An error or
+		// signature marker names a different table, so a bare id that happens
+		// to match it is a different row and never this one.
+		if item.Kind != marker.Invocation {
+			result.Skipped = append(result.Skipped, MergedSkip{Row: text, Reason: SkipUnknownID})
 			continue
 		}
 		index := mergedRowIndex(rows, item.Machine, item.ID, localHost)
